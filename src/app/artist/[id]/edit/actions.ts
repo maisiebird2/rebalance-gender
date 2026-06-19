@@ -98,20 +98,19 @@ export async function saveArtist(
 
   // ── 2. Parse form data ────────────────────────────────────────
   const artistId = formData.get("artist_id") as string;
-  const name = (formData.get("name") as string).trim();
-  const pronounsValue = (formData.get("pronouns") as string).trim();
-  const labels = (formData.get("labels") as string).trim() || null;
+  const name = ((formData.get("name") ?? "") as string).trim();
+  const pronounsValue = ((formData.get("pronouns") ?? "") as string).trim();
+  const labels = ((formData.get("labels") ?? "") as string).trim() || null;
   const status = formData.get("status") as ArtistStatus;
-  const locationsRaw = formData.get("locations") as string;
-  const labelListRaw = formData.get("label_list") as string;
-  const genresRaw = formData.get("genres") as string;
-  const linksRaw = formData.get("links") as string;
+  const locationsRaw = (formData.get("locations") ?? "[]") as string;
+  const labelListRaw = (formData.get("label_list") ?? "[]") as string;
+  const genresRaw = (formData.get("genres") ?? "[]") as string;
+  const linksRaw = (formData.get("links") ?? "[]") as string;
 
-  const bio = (formData.get("bio") as string).trim() || null;
-  const bookingInfo = (formData.get("booking_info") as string).trim() || null;
-  const managementInfo =
-    (formData.get("management_info") as string).trim() || null;
-  const contactInfo = (formData.get("contact_info") as string).trim() || null;
+  const bio = ((formData.get("bio") ?? "") as string).trim() || null;
+  const bookingInfo = ((formData.get("booking_info") ?? "") as string).trim() || null;
+  const managementInfo = ((formData.get("management_info") ?? "") as string).trim() || null;
+  const contactInfo = ((formData.get("contact_info") ?? "") as string).trim() || null;
 
   if (!artistId || !name) return { error: "Missing required fields" };
 
