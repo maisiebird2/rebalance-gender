@@ -1,0 +1,40 @@
+{
+  "name": "wem-directory",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "migrate": "node scripts/migrate.mjs",
+    "enrich-images": "node scripts/enrich-images.mjs",
+    "enrich-bios": "node scripts/enrich-bios.mjs",
+    "clean-linktree-bios": "node scripts/clean-linktree-bios.mjs",
+    "add-beatport-links": "node scripts/add-beatport-links.mjs",
+    "enrich-bandcamp": "node scripts/enrich-bandcamp.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.108.1",
+    "next": "^16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "overrides": {
+    "postcss": ">=8.5.10"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
+  }
+}

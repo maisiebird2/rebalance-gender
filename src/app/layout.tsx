@@ -1,0 +1,51 @@
+import type { Metadata } from "next";
+import { createClient } from "@/lib/supabase/server";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Rebalance Gender",
+  description:
+    "A directory of women, femmes, and enby producers and DJs in electronic music.",
+};
+
+export default async function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  return (
+    <html lang="en" className="h-full antialiased">
+      <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black">
+        <header className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+            <a href="/" className="text-lg font-semibold">
+              Rebalance Gender
+            </a>
+            <nav className="flex gap-4 text-sm">
+              <a href="/" className="hover:underline">
+                Directory
+              </a>
+              <a href="/submit" className="hover:underline">
+                Submit an artist
+              </a>
+              {user && (
+                <a
+                  href="/admin/submissions"
+                  className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+                >
+                  Submissions
+                </a>
+              )}
+            </nav>
+          </div>
+        </header>
+        <main className="flex-1">{children}</main>
+      </body>
+    </html>
+  );
+}

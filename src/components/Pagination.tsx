@@ -1,0 +1,65 @@
+import Link from "next/link";
+
+interface PaginationProps {
+  currentPage: number;
+  totalPages: number;
+  /** Current search params, used to build links that preserve filters. */
+  searchParams: { [key: string]: string | string[] | undefined };
+}
+
+function pageHref(
+  page: number,
+  searchParams: PaginationProps["searchParams"]
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "page") continue;
+    if (typeof value === "string" && value) params.set(key, value);
+  }
+  if (page > 1) params.set("page", String(page));
+  const qs = params.toString();
+  return qs ? `/?${qs}` : "/";
+}
+
+export default function Pagination({
+  currentPage,
+  totalPages,
+  searchParams,
+}: PaginationProps) {
+  if (totalPages <= 1) return null;
+
+  const prevDisabled = currentPage <= 1;
+  const nextDisabled = currentPage >= totalPages;
+
+  const linkClass =
+    "rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900";
+  const disabledClass =
+    "rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-400 dark:border-gray-800 dark:text-gray-600";
+
+  return (
+    <nav
+      aria-label="Pagination"
+      className="mt-8 flex items-center justify-center gap-3"
+    >
+      {prevDisabled ? (
+        <span className={disabledClass}>← Previous</span>
+      ) : (
+        <Link href={pageHref(currentPage - 1, searchParams)} className={linkClass}>
+          ← Previous
+        </Link>
+      )}
+
+      <span className="text-sm text-gray-600 dark:text-gray-400">
+        Page {currentPage} of {totalPages}
+      </span>
+
+      {nextDisabled ? (
+        <span className={disabledClass}>Next →</span>
+      ) : (
+        <Link href={pageHref(currentPage + 1, searchParams)} className={linkClass}>
+          Next →
+        </Link>
+      )}
+    </nav>
+  );
+}

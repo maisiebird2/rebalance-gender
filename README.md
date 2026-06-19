@@ -120,9 +120,26 @@ profile until cleaned up during the enrichment pass.
 
 ### 5. Deploy
 
-Push this repo to GitHub and import it into [Vercel](https://vercel.com/new).
-Add the same three environment variables in the Vercel project settings
-(Settings → Environment Variables).
+**Deploy to Vercel**
+
+1. Push this repo to GitHub and import it at [vercel.com/new](https://vercel.com/new).
+2. Add the same three environment variables under **Settings → Environment Variables**.
+3. Click **Deploy**. Vercel gives you a default `*.vercel.app` URL straight away.
+
+**Connect your Porkbun domain**
+
+To use your own domain instead of the default Vercel URL:
+
+1. In Vercel, go to your project → **Settings → Domains** → **Add Domain**. Enter your domain (e.g. `rebalance-gender.com`).
+2. Vercel will show the DNS records to add. Copy the values — for an apex domain (`example.com`) it's an **A record**; for a `www` subdomain it's a **CNAME record**.
+3. In Porkbun, go to **Domain Management**, find your domain, and click **DNS**.
+4. Add the record(s) Vercel specified:
+   - **A record** (apex, e.g. `rebalance-gender.com`): Type = `A`, Host = leave blank or `@`, Answer = IP from Vercel (typically `76.76.21.21`), TTL = `600`
+   - **CNAME record** (`www`): Type = `CNAME`, Host = `www`, Answer = the CNAME value Vercel gave you, TTL = `600`
+5. Delete any existing A or CNAME records on those same hosts that Porkbun added by default, to avoid conflicts.
+6. Back in Vercel, it will verify the records automatically — once propagated (usually a few minutes, up to 48 hours) the domain status turns green.
+
+> **Tip:** Add both `rebalance-gender.com` and `www.rebalance-gender.com` in Vercel's Domains settings and set one to redirect to the other so both work.
 
 ## Project structure
 
