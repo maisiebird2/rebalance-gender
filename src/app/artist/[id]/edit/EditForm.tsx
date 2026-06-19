@@ -1,14 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { PLATFORM_LABELS } from "@/lib/platforms";
 import { saveArtist, deleteArtist } from "./actions";
 import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistLabel } from "@/lib/types";
-
-interface LinkRow {
-  platform: LinkPlatform;
-  url: string;
-}
 
 interface LocationRow {
   city: string;
@@ -20,7 +14,18 @@ interface Props {
   allGenres: string[];
 }
 
-const PLATFORMS = Object.keys(PLATFORM_LABELS) as LinkPlatform[];
+const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string }[] = [
+  { platform: "soundcloud", label: "SoundCloud", placeholder: "https://soundcloud.com/..." },
+  { platform: "instagram", label: "Instagram", placeholder: "https://instagram.com/..." },
+  { platform: "resident_advisor", label: "Resident Advisor", placeholder: "https://ra.co/dj/..." },
+  { platform: "bandcamp", label: "Bandcamp", placeholder: "https://...bandcamp.com" },
+  { platform: "beatport", label: "Beatport", placeholder: "https://beatport.com/artist/..." },
+  { platform: "qobuz", label: "Qobuz", placeholder: "https://qobuz.com/..." },
+  { platform: "discogs", label: "Discogs", placeholder: "https://discogs.com/artist/..." },
+  { platform: "linktree", label: "Linktree", placeholder: "https://linktr.ee/..." },
+  { platform: "other", label: "Other link", placeholder: "https://..." },
+];
+
 const STATUSES: ArtistStatus[] = ["approved", "pending", "rejected"];
 
 export default function EditForm({ artist, allGenres }: Props) {
@@ -31,25 +36,16 @@ export default function EditForm({ artist, allGenres }: Props) {
   const formRef = useRef<HTMLFormElement>(null);
 
   // ── Link state ────────────────────────────────────────────────
-  const [links, setLinks] = useState<LinkRow[]>(
-    artist.links?.map((l) => ({
-      platform: l.platform,
-      url: l.url,
-    })) ?? []
-  );
+  const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const { platform } of LINK_FIELDS) {
+      map[platform] = artist.links?.find((l) => l.platform === platform)?.url ?? "";
+    }
+    return map;
+  });
 
-  function addLink() {
-    setLinks((prev) => [...prev, { platform: "other", handle: "", url: "" }]);
-  }
-
-  function removeLink(i: number) {
-    setLinks((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  function updateLink(i: number, field: keyof LinkRow, value: string) {
-    setLinks((prev) =>
-      prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l))
-    );
+  function updateLinkUrl(platform: string, url: string) {
+    setLinkUrls((prev) => ({ ...prev, [platform]: url }));
   }
 
   // ── Submit ────────────────────────────────────────────────────
@@ -62,6 +58,9 @@ export default function EditForm({ artist, allGenres }: Props) {
 
     const formData = new FormData(form);
     // Overwrite hidden inputs with current React state
+    const links = LINK_FIELDS
+      .filter(({ platform }) => linkUrls[platform]?.trim())
+      .map(({ platform }) => ({ platform, url: linkUrls[platform].trim() }));
     formData.set("links", JSON.stringify(links));
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
@@ -151,7 +150,7 @@ export default function EditForm({ artist, allGenres }: Props) {
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-8">
       <input type="hidden" name="artist_id" value={artist.id} />
       {/* hidden inputs — values are overwritten in handleSubmit */}
-      <input type="hidden" name="links" value={JSON.stringify(links)} />
+      <input type="hidden" name="links" value={JSON.stringify(LINK_FIELDS.filter(({ platform }) => linkUrls[platform]?.trim()).map(({ platform }) => ({ platform, url: linkUrls[platform].trim() })))} />
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
       <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
@@ -320,66 +319,27 @@ export default function EditForm({ artist, allGenres }: Props) {
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}
-      <fieldset className="space-y-4">
-        <legend className="text-base font-semibold">Profile links</legend>
-
-        {links.map((link, i) => (
-          <div
-            key={i}
-            className="grid grid-cols-[130px_1fr_auto] items-end gap-2"
-          >
-            <div className="flex flex-col gap-1">
-              {i === 0 && (
-                <span className="text-xs font-medium text-gray-500">
-                  Platform
-                </span>
-              )}
-              <select
-                value={link.platform}
-                onChange={(e) =>
-                  updateLink(i, "platform", e.target.value as LinkPlatform)
-                }
-                className="rounded-md border border-gray-300 px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-              >
-                {PLATFORMS.map((p) => (
-                  <option key={p} value={p}>
-                    {PLATFORM_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              {i === 0 && (
-                <span className="text-xs font-medium text-gray-500">URL</span>
-              )}
+      <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+        <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">
+          Profile links
+        </legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {LINK_FIELDS.map(({ platform, label, placeholder }) => (
+            <div key={platform} className="flex flex-col gap-1">
+              <label htmlFor={`link_${platform}`} className="text-sm font-medium">
+                {label}
+              </label>
               <input
+                id={`link_${platform}`}
                 type="url"
-                value={link.url}
-                onChange={(e) => updateLink(i, "url", e.target.value)}
-                placeholder="https://…"
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                value={linkUrls[platform] ?? ""}
+                onChange={(e) => updateLinkUrl(platform, e.target.value)}
+                placeholder={placeholder}
+                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
               />
             </div>
-
-            <button
-              type="button"
-              onClick={() => removeLink(i)}
-              className="mb-0.5 rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-              aria-label="Remove link"
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-
-        <button
-          type="button"
-          onClick={addLink}
-          className="text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
-          + Add link
-        </button>
+          ))}
+        </div>
       </fieldset>
 
       {/* ── Bio & contact ──────────────────────────────────────── */}
