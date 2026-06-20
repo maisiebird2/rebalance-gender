@@ -7,6 +7,22 @@ import type {
 
 export const PAGE_SIZE = 24;
 
+/**
+ * Normalizes a search string to match the `name_search` generated column:
+ * strips accents (NFD decompose + remove combining marks), lowercases,
+ * and removes spaces. Must stay in sync with the Postgres expression:
+ *   lower(replace(unaccent(name), ' ', ''))
+ */
+function normalizeSearch(s: string): string {
+  // NFD decomposes e.g. "é" into "e" + combining acute; the regex then
+  // strips all combining diacritical marks (U+0300-U+036F).
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
 // Shared select string: pulls the artist plus all joined relations
 // (pronoun, genres via the artist_genres junction table, locations,
 // links, and cached enrichment data).
@@ -75,7 +91,7 @@ export async function getArtists(
     query = query.eq("locations.country", filters.country);
   }
   if (filters.search) {
-    query = query.ilike("name", `%${filters.search}%`);
+    query = query.ilike("name_search", `%${normalizeSearch(filters.search)}%`);
   }
 
   const page = Math.max(1, filters.page ?? 1);
