@@ -23,6 +23,8 @@ const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string 
   { platform: "linktree", label: "Linktree", placeholder: "https://linktr.ee/..." },
   { platform: "apple_music", label: "Apple Music", placeholder: "https://music.apple.com/..." },
   { platform: "spotify", label: "Spotify", placeholder: "https://open.spotify.com/artist/..." },
+  { platform: "musicbrainz", label: "MusicBrainz", placeholder: "https://musicbrainz.org/artist/..." },
+  { platform: "lastfm", label: "Last.fm", placeholder: "https://last.fm/music/..." },
   { platform: "homepage", label: "Homepage", placeholder: "https://..." },
   { platform: "other", label: "Other link", placeholder: "https://..." },
 ];

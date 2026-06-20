@@ -13,6 +13,8 @@ export type LinkPlatform =
   | "linktree"
   | "apple_music"
   | "spotify"
+  | "musicbrainz"
+  | "lastfm"
   | "homepage"
   | "other";
 

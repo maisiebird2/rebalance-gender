@@ -11,6 +11,8 @@ export const PLATFORM_LABELS: Record<LinkPlatform, string> = {
   linktree: "Linktree",
   apple_music: "Apple Music",
   spotify: "Spotify",
+  musicbrainz: "MusicBrainz",
+  lastfm: "Last.fm",
   homepage: "Homepage",
   other: "Other",
 };
