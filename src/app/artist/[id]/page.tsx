@@ -5,6 +5,7 @@ import { getArtistById } from "@/lib/queries";
 import { PLATFORM_LABELS } from "@/lib/platforms";
 import EditButton from "@/components/EditButton";
 import BandcampWidget from "@/components/BandcampWidget";
+import { linkify } from "@/lib/linkify";
 
 export const revalidate = 3600; // re-fetch from Supabase at most hourly
 
@@ -123,7 +124,23 @@ export default async function ArtistPage({ params }: PageProps) {
           <strong className="font-semibold">SoundCloud bio:</strong>
           <div className="mt-1 space-y-1.5">
             {soundcloudBio.split("\n").map((line, i) => (
-              <p key={i}>{line}</p>
+              <p key={i}>
+                {linkify(line).map((seg, j) =>
+                  seg.type === "url" ? (
+                    <a
+                      key={j}
+                      href={seg.value}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-violet-600 hover:underline dark:text-violet-400"
+                    >
+                      {seg.value}
+                    </a>
+                  ) : (
+                    seg.value
+                  )
+                )}
+              </p>
             ))}
           </div>
         </div>

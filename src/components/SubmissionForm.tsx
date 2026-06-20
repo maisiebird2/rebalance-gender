@@ -26,6 +26,7 @@ const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string 
   { platform: "musicbrainz", label: "MusicBrainz", placeholder: "https://musicbrainz.org/artist/..." },
   { platform: "lastfm", label: "Last.fm", placeholder: "https://last.fm/music/..." },
   { platform: "homepage", label: "Homepage", placeholder: "https://..." },
+  { platform: "wikipedia", label: "Wikipedia", placeholder: "https://en.wikipedia.org/wiki/..." },
   { platform: "other", label: "Other link", placeholder: "https://..." },
 ];
 

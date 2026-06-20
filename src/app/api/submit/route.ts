@@ -11,6 +11,7 @@ const LINK_PLATFORMS: LinkPlatform[] = [
   "qobuz",
   "discogs",
   "linktree",
+  "wikipedia",
   "other",
 ];
 

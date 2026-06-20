@@ -16,6 +16,7 @@ export type LinkPlatform =
   | "musicbrainz"
   | "lastfm"
   | "homepage"
+  | "wikipedia"
   | "other";
 
 export interface Genre {
