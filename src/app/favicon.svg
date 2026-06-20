@@ -1,0 +1,12 @@
+<svg width="32" height="32" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="circle-clip">
+      <circle cx="48" cy="48" r="45"/>
+    </clipPath>
+  </defs>
+  <circle cx="48" cy="48" r="46" fill="#D4537E"/>
+  <path d="M 2 48 C 14 18 34 18 48 48 C 62 78 82 78 94 48"
+        stroke="white" stroke-width="8" fill="none"
+        clip-path="url(#circle-clip)"
+        stroke-linecap="round"/>
+</svg>
