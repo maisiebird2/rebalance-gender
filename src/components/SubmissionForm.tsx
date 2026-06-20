@@ -21,6 +21,9 @@ const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string 
   { platform: "qobuz", label: "Qobuz", placeholder: "https://qobuz.com/..." },
   { platform: "discogs", label: "Discogs", placeholder: "https://discogs.com/artist/..." },
   { platform: "linktree", label: "Linktree", placeholder: "https://linktr.ee/..." },
+  { platform: "apple_music", label: "Apple Music", placeholder: "https://music.apple.com/..." },
+  { platform: "spotify", label: "Spotify", placeholder: "https://open.spotify.com/artist/..." },
+  { platform: "homepage", label: "Homepage", placeholder: "https://..." },
   { platform: "other", label: "Other link", placeholder: "https://..." },
 ];
 

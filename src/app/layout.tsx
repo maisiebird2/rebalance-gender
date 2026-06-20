@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Rebalance Gender",
   description:
-    "A directory of women, femmes, and enby producers and DJs in electronic music.",
+    "A directory of women and gender-expansive producers and DJs in electronic music.",
 };
 
 export default async function RootLayout({

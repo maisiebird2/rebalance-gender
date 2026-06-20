@@ -11,6 +11,9 @@ export type LinkPlatform =
   | "qobuz"
   | "discogs"
   | "linktree"
+  | "apple_music"
+  | "spotify"
+  | "homepage"
   | "other";
 
 export interface Genre {
