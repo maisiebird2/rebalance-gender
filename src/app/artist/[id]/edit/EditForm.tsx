@@ -152,7 +152,7 @@ export default function EditForm({ artist, allGenres }: Props) {
     artist.enrichment?.find((e) => e.platform === "soundcloud")?.bio ?? "";
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-8">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-8 pb-20">
       <input type="hidden" name="artist_id" value={artist.id} />
       {/* hidden inputs — values are overwritten in handleSubmit */}
       <input type="hidden" name="links" value={JSON.stringify(LINK_FIELDS.filter(({ platform }) => linkUrls[platform]?.trim()).map(({ platform }) => ({ platform, url: linkUrls[platform].trim() })))} />
@@ -380,57 +380,59 @@ export default function EditForm({ artist, allGenres }: Props) {
         />
       </fieldset>
 
-      {/* ── Actions ────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={isPending}
-            className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
-          >
-            {isPending ? "Saving…" : "Save changes"}
-          </button>
-          <a
-            href={`/artist/${artist.id}`}
-            className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"
-          >
-            Cancel
-          </a>
-        </div>
-
-        {!confirmDelete ? (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            className="rounded-md px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-          >
-            Delete artist
-          </button>
-        ) : (
-          <div className="flex items-center gap-3 rounded-md border border-red-300 bg-red-50 px-4 py-2 dark:border-red-800 dark:bg-red-950">
-            <span className="text-sm text-red-700 dark:text-red-300">
-              Delete {artist.name}?
-            </span>
+      {/* ── Floating action bar ────────────────────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-950">
+        <div className="mx-auto flex max-w-3xl items-center justify-between">
+          <div className="flex gap-3">
             <button
-              type="button"
-              disabled={isDeleting}
-              onClick={async () => {
-                setIsDeleting(true);
-                await deleteArtist(artist.id);
-              }}
-              className="rounded-md bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              type="submit"
+              disabled={isPending}
+              className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
             >
-              {isDeleting ? "Deleting…" : "Yes, delete"}
+              {isPending ? "Saving…" : "Save changes"}
             </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              className="rounded-md px-3 py-1 text-sm font-medium text-red-700 hover:underline dark:text-red-300"
+            <a
+              href={`/artist/${artist.id}`}
+              className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"
             >
-              No, cancel
-            </button>
+              Cancel
+            </a>
           </div>
-        )}
+
+          {!confirmDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              className="rounded-md px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            >
+              Delete artist
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 rounded-md border border-red-300 bg-red-50 px-4 py-2 dark:border-red-800 dark:bg-red-950">
+              <span className="text-sm text-red-700 dark:text-red-300">
+                Delete {artist.name}?
+              </span>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={async () => {
+                  setIsDeleting(true);
+                  await deleteArtist(artist.id);
+                }}
+                className="rounded-md bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="rounded-md px-3 py-1 text-sm font-medium text-red-700 hover:underline dark:text-red-300"
+              >
+                No, cancel
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </form>
   );

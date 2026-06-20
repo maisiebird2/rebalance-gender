@@ -141,7 +141,7 @@ export default function SubmissionForm({ allGenres }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4 pb-20">
       <Field label="Name *" name="name" required />
       <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her" />
 
@@ -292,13 +292,24 @@ export default function SubmissionForm({ allGenres }: Props) {
         <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
       )}
 
-      <button
-        type="submit"
-        disabled={status === "submitting"}
-        className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
-      >
-        {status === "submitting" ? "Submitting…" : "Submit"}
-      </button>
+      {/* ── Floating action bar ────────────────────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-950">
+        <div className="mx-auto flex max-w-xl items-center gap-3">
+          <button
+            type="submit"
+            disabled={status === "submitting"}
+            className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
+          >
+            {status === "submitting" ? "Submitting…" : "Submit"}
+          </button>
+          <a
+            href="/"
+            className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"
+          >
+            Cancel
+          </a>
+        </div>
+      </div>
     </form>
   );
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
+import { signOut } from "./auth-actions";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -40,6 +41,16 @@ export default async function RootLayout({
                 >
                   Submissions
                 </a>
+              )}
+              {user && (
+                <form action={signOut}>
+                  <button
+                    type="submit"
+                    className="text-gray-500 hover:underline dark:text-gray-400"
+                  >
+                    Sign out
+                  </button>
+                </form>
               )}
             </nav>
           </div>
