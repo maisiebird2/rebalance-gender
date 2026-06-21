@@ -31,3 +31,16 @@ export function platformLabel(platforms: Platform[], key: string): string {
 export function platformPlaceholder(label: string): string {
   return `https://... (${label})`;
 }
+
+/**
+ * Cleans tracking/query-string cruft from profile link URLs before they're
+ * saved. Spotify share links append `?si=...&nd=...&dlsi=...` tracking
+ * params — strip everything from the `?` onward so we store the bare
+ * canonical URL.
+ */
+export function cleanLinkUrl(platform: string, url: string): string {
+  if (platform === "spotify") {
+    return url.split("?")[0];
+  }
+  return url;
+}

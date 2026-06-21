@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { getPlatforms } from "@/lib/platforms";
+import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
 import type { LinkPlatform } from "@/lib/types";
 
 interface LocationInput {
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
       .map((platform) => ({
         artist_id: artistId,
         platform,
-        url: body.links![platform]!.trim(),
+        url: cleanLinkUrl(platform, body.links![platform]!.trim()),
       }));
 
     if (rows.length > 0) {

@@ -12,7 +12,10 @@
     "enrich-bios": "node scripts/enrich-bios.mjs",
     "clean-linktree-bios": "node scripts/clean-linktree-bios.mjs",
     "add-beatport-links": "node scripts/add-beatport-links.mjs",
-    "enrich-bandcamp": "node scripts/enrich-bandcamp.mjs"
+    "enrich-bandcamp": "node scripts/enrich-bandcamp.mjs",
+    "harvest-soundcloud-links-and-bio": "node scripts/harvest-soundcloud-links-and-bio.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
@@ -32,7 +35,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   },
   "allowScripts": {
     "sharp@0.34.5": true

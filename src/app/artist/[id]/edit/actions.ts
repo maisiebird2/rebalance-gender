@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { cleanLinkUrl } from "@/lib/platforms";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -248,7 +249,7 @@ export async function saveArtist(
     if (validLinks.length > 0) {
       const { error: lErr } = await admin.from("artist_links").insert(
         validLinks.map((l) => {
-          const url = l.url.trim();
+          const url = cleanLinkUrl(l.platform, l.url.trim());
           return {
             artist_id: artistId,
             platform: l.platform,
