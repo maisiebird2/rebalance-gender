@@ -2,7 +2,8 @@
 
 import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist } from "./actions";
-import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistLabel } from "@/lib/types";
+import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistLabel, Platform } from "@/lib/types";
+import { platformPlaceholder } from "@/lib/platforms";
 
 interface LocationRow {
   city: string;
@@ -12,29 +13,19 @@ interface LocationRow {
 interface Props {
   artist: ArtistWithRelations;
   allGenres: string[];
+  platforms: Platform[];
 }
-
-const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string }[] = [
-  { platform: "soundcloud", label: "SoundCloud", placeholder: "https://soundcloud.com/..." },
-  { platform: "instagram", label: "Instagram", placeholder: "https://instagram.com/..." },
-  { platform: "resident_advisor", label: "Resident Advisor", placeholder: "https://ra.co/dj/..." },
-  { platform: "bandcamp", label: "Bandcamp", placeholder: "https://...bandcamp.com" },
-  { platform: "beatport", label: "Beatport", placeholder: "https://beatport.com/artist/..." },
-  { platform: "qobuz", label: "Qobuz", placeholder: "https://qobuz.com/..." },
-  { platform: "discogs", label: "Discogs", placeholder: "https://discogs.com/artist/..." },
-  { platform: "linktree", label: "Linktree", placeholder: "https://linktr.ee/..." },
-  { platform: "apple_music", label: "Apple Music", placeholder: "https://music.apple.com/..." },
-  { platform: "spotify", label: "Spotify", placeholder: "https://open.spotify.com/artist/..." },
-  { platform: "musicbrainz", label: "MusicBrainz", placeholder: "https://musicbrainz.org/artist/..." },
-  { platform: "lastfm", label: "Last.fm", placeholder: "https://last.fm/music/..." },
-  { platform: "wikipedia", label: "Wikipedia", placeholder: "https://en.wikipedia.org/wiki/..." },
-  { platform: "homepage", label: "Homepage", placeholder: "https://..." },
-  { platform: "other", label: "Other link", placeholder: "https://..." },
-];
 
 const STATUSES: ArtistStatus[] = ["approved", "pending", "rejected"];
 
-export default function EditForm({ artist, allGenres }: Props) {
+export default function EditForm({ artist, allGenres, platforms }: Props) {
+  const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string }[] =
+    platforms.map((p) => ({
+      platform: p.key,
+      label: p.label,
+      placeholder: platformPlaceholder(p.label),
+    }));
+
   const [isPending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);

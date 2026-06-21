@@ -2,22 +2,17 @@
 
 export type ArtistStatus = "approved" | "pending" | "rejected";
 
-export type LinkPlatform =
-  | "soundcloud"
-  | "instagram"
-  | "resident_advisor"
-  | "bandcamp"
-  | "beatport"
-  | "qobuz"
-  | "discogs"
-  | "linktree"
-  | "apple_music"
-  | "spotify"
-  | "musicbrainz"
-  | "lastfm"
-  | "homepage"
-  | "wikipedia"
-  | "other";
+// Profile-link platform key. Backed by the `platforms` lookup table
+// (not a fixed enum) so new categories can be added from the admin
+// panel without a code change. See lib/platforms.ts for fetching the
+// full list and resolving keys to display labels.
+export type LinkPlatform = string;
+
+export interface Platform {
+  key: string;
+  label: string;
+  sort_order: number;
+}
 
 export interface Genre {
   id: number;

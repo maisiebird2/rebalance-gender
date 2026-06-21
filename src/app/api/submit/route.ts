@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { getPlatforms } from "@/lib/platforms";
 import type { LinkPlatform } from "@/lib/types";
-
-const LINK_PLATFORMS: LinkPlatform[] = [
-  "soundcloud",
-  "instagram",
-  "resident_advisor",
-  "bandcamp",
-  "beatport",
-  "qobuz",
-  "discogs",
-  "linktree",
-  "wikipedia",
-  "other",
-];
 
 interface LocationInput {
   city?: string;
@@ -145,9 +133,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 5. Links — one row per non-empty platform URL.
+  // 5. Links — one row per non-empty platform URL. Validate against the
+  // `platforms` lookup table rather than a hardcoded list, since the
+  // admin panel can add new categories at runtime.
   if (body.links) {
-    const rows = LINK_PLATFORMS.filter((platform) => body.links?.[platform])
+    const platforms = await getPlatforms(supabase);
+    const validKeys = new Set(platforms.map((p) => p.key));
+
+    const rows = (Object.keys(body.links) as LinkPlatform[])
+      .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
       .map((platform) => ({
         artist_id: artistId,
         platform,

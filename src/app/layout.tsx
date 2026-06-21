@@ -36,10 +36,10 @@ export default async function RootLayout({
               </a>
               {user && (
                 <a
-                  href="/admin/submissions"
+                  href="/admin"
                   className="font-medium text-violet-600 hover:underline dark:text-violet-400"
                 >
-                  Submissions
+                  Admin panel
                 </a>
               )}
               {user && (

@@ -2,6 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
 import type { ArtistWithRelations } from "@/lib/types";
 
@@ -33,7 +34,7 @@ function normalizeArtist(row: any): ArtistWithRelations {
 export default async function ArtistEditPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const { from } = await searchParams;
-  const fromSubmissions = from === "submissions";
+  const fromSubmissions = from === "admin" || from === "submissions";
 
   // ── Auth guard ────────────────────────────────────────────────
   const supabase = await createClient();
@@ -45,15 +46,16 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
     redirect(`/login?next=/artist/${id}/edit`);
   }
 
-  // ── Load artist (all statuses) and all genres ────────────────
+  // ── Load artist (all statuses), all genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, { data: genreRows }] = await Promise.all([
+  const [{ data, error }, { data: genreRows }, platforms] = await Promise.all([
     admin
       .from("artists")
       .select(ARTIST_ADMIN_SELECT)
       .eq("id", id)
       .maybeSingle(),
     admin.from("genres").select("name").order("name"),
+    getPlatforms(admin),
   ]);
 
   if (error) {
@@ -69,10 +71,10 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
     <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6">
         <Link
-          href={fromSubmissions ? "/admin/submissions" : `/artist/${id}`}
+          href={fromSubmissions ? "/admin" : `/artist/${id}`}
           className="text-sm text-violet-600 hover:underline dark:text-violet-400"
         >
-          {fromSubmissions ? "← Back to submissions" : "← Back to artist page"}
+          {fromSubmissions ? "← Back to admin panel" : "← Back to artist page"}
         </Link>
       </div>
 
@@ -80,7 +82,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         Editing: {artist.name}
       </h1>
 
-      <EditForm artist={artist} allGenres={allGenres} />
+      <EditForm artist={artist} allGenres={allGenres} platforms={platforms} />
     </div>
   );
 }

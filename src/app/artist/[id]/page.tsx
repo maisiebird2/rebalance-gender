@@ -2,7 +2,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArtistById } from "@/lib/queries";
-import { PLATFORM_LABELS } from "@/lib/platforms";
+import { getPlatforms, platformLabel } from "@/lib/platforms";
+import { getSupabaseClient } from "@/lib/supabase";
 import EditButton from "@/components/EditButton";
 import BandcampWidget from "@/components/BandcampWidget";
 import { linkify } from "@/lib/linkify";
@@ -15,7 +16,10 @@ interface PageProps {
 
 export default async function ArtistPage({ params }: PageProps) {
   const { id } = await params;
-  const artist = await getArtistById(id);
+  const [artist, platforms] = await Promise.all([
+    getArtistById(id),
+    getPlatforms(getSupabaseClient()),
+  ]);
 
   if (!artist) notFound();
 
@@ -111,7 +115,7 @@ export default async function ArtistPage({ params }: PageProps) {
                   rel="noopener noreferrer"
                   className="text-violet-600 hover:underline dark:text-violet-400"
                 >
-                  {PLATFORM_LABELS[link.platform] ?? link.platform}
+                  {platformLabel(platforms, link.platform)}
                 </a>
               ))}
 
