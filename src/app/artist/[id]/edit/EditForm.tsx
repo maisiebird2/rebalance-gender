@@ -22,12 +22,21 @@ const STATUSES: ArtistStatus[] = [
   "rejected",
   "not_eligible",
   "search_input",
+  "sc_followee",
 ];
+
+// Words shown as acronyms rather than title-cased, e.g. "sc_followee" -> "SC followee".
+const ACRONYM_WORDS = new Set(["sc", "mb"]);
 
 // Display label for a status value, e.g. "not_eligible" -> "Not eligible".
 function statusLabel(status: ArtistStatus): string {
   const words = status.split("_");
-  return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+  return words
+    .map((w, i) => {
+      if (ACRONYM_WORDS.has(w)) return w.toUpperCase();
+      return i === 0 ? w[0].toUpperCase() + w.slice(1) : w;
+    })
+    .join(" ");
 }
 
 export default function EditForm({ artist, allGenres, platforms }: Props) {

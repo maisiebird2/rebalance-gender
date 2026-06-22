@@ -12,10 +12,13 @@
 //      sc_follow_edges.
 //   2. For any followed account not already in the `artists` table
 //      (matched by their SoundCloud profile URL), creates a new
-//      artist row with directory_status = 'not_eligible' and a
+//      artist row with directory_status = 'sc_followee' and a
 //      `soundcloud` artist_links row — this is the primary mechanism
 //      by which non-directory artists (e.g. male DJs, or potential
 //      future directory members not yet discovered) enter the graph.
+//      'sc_followee' marks "discovered via the follow graph, never
+//      reviewed" — distinct from 'not_eligible', which is reserved for
+//      artists a human has actually looked at and ruled out.
 //
 // New artists are deliberately seeded with nothing beyond name +
 // SoundCloud link — profile pictures are left to the existing
@@ -485,7 +488,7 @@ async function main() {
         if (!DRY_RUN) {
           const { data: inserted, error: insertArtistError } = await supabase
             .from("artists")
-            .insert({ name, directory_status: "not_eligible" })
+            .insert({ name, directory_status: "sc_followee" })
             .select("id")
             .single();
 
