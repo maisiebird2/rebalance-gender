@@ -23,6 +23,7 @@ const STATUSES: ArtistStatus[] = [
   "not_eligible",
   "search_input",
   "sc_followee",
+  "duplicate",
 ];
 
 // Words shown as acronyms rather than title-cased, e.g. "sc_followee" -> "SC followee".

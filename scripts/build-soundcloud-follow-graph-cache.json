@@ -1,9 +1,359 @@
 {
+  "https://soundcloud.com/3lnaberlin": {
+    "checkedAt": "2026-06-22T22:36:07.531Z",
+    "followingsFetched": 80,
+    "newArtistsCreated": 78,
+    "edgesWritten": 80,
+    "truncated": false
+  },
+  "https://soundcloud.com/20cust": {
+    "checkedAt": "2026-06-22T22:37:54.895Z",
+    "followingsFetched": 1,
+    "newArtistsCreated": 1,
+    "edgesWritten": 1,
+    "truncated": false
+  },
+  "https://soundcloud.com/2xni": {
+    "checkedAt": "2026-06-22T22:41:19.675Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 491,
+    "edgesWritten": 500,
+    "truncated": true
+  },
   "https://soundcloud.com/wushanmin": {
-    "checkedAt": "2026-06-22T21:24:24.170Z",
+    "checkedAt": "2026-06-22T22:41:21.093Z",
     "followingsFetched": 55,
-    "newArtistsCreated": 53,
+    "newArtistsCreated": 0,
     "edgesWritten": 55,
     "truncated": false
+  },
+  "https://soundcloud.com/3l3d3p": {
+    "checkedAt": "2026-06-22T22:41:28.254Z",
+    "followingsFetched": 15,
+    "newArtistsCreated": 15,
+    "edgesWritten": 15,
+    "truncated": false
+  },
+  "https://soundcloud.com/6arelyhuman": {
+    "checkedAt": "2026-06-22T22:41:38.490Z",
+    "followingsFetched": 22,
+    "newArtistsCreated": 22,
+    "edgesWritten": 22,
+    "truncated": false
+  },
+  "https://soundcloud.com/pincode8485": {
+    "checkedAt": "2026-06-22T22:43:55.117Z",
+    "followingsFetched": 337,
+    "newArtistsCreated": 327,
+    "edgesWritten": 337,
+    "truncated": false
+  },
+  "https://soundcloud.com/ahundreddrums": {
+    "checkedAt": "2026-06-22T22:47:20.307Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 491,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alittlesounduk": {
+    "checkedAt": "2026-06-22T22:47:53.679Z",
+    "followingsFetched": 85,
+    "newArtistsCreated": 78,
+    "edgesWritten": 85,
+    "truncated": false
+  },
+  "https://soundcloud.com/ak-trancecore": {
+    "checkedAt": "2026-06-22T22:48:31.634Z",
+    "followingsFetched": 98,
+    "newArtistsCreated": 89,
+    "edgesWritten": 98,
+    "truncated": false
+  },
+  "https://soundcloud.com/angeliquemorin": {
+    "checkedAt": "2026-06-22T22:50:56.829Z",
+    "followingsFetched": 366,
+    "newArtistsCreated": 348,
+    "edgesWritten": 366,
+    "truncated": false
+  },
+  "https://soundcloud.com/anice": {
+    "checkedAt": "2026-06-22T22:52:37.335Z",
+    "followingsFetched": 255,
+    "newArtistsCreated": 239,
+    "edgesWritten": 255,
+    "truncated": false
+  },
+  "https://soundcloud.com/abearsounds": {
+    "checkedAt": "2026-06-22T22:55:52.891Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 467,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/djaariaa": {
+    "checkedAt": "2026-06-22T22:56:36.657Z",
+    "followingsFetched": 109,
+    "newArtistsCreated": 102,
+    "edgesWritten": 109,
+    "truncated": false
+  },
+  "https://soundcloud.com/abyssxxx": {
+    "checkedAt": "2026-06-22T22:56:38.381Z",
+    "followingsFetched": 1,
+    "newArtistsCreated": 1,
+    "edgesWritten": 1,
+    "truncated": false
+  },
+  "https://soundcloud.com/acida-dominga": {
+    "checkedAt": "2026-06-22T22:56:46.547Z",
+    "followingsFetched": 18,
+    "newArtistsCreated": 17,
+    "edgesWritten": 18,
+    "truncated": false
+  },
+  "https://soundcloud.com/adaofficial": {
+    "checkedAt": "2026-06-22T22:58:09.128Z",
+    "followingsFetched": 211,
+    "newArtistsCreated": 195,
+    "edgesWritten": 211,
+    "truncated": false
+  },
+  "https://soundcloud.com/ama-diver": {
+    "checkedAt": "2026-06-22T22:58:32.776Z",
+    "followingsFetched": 62,
+    "newArtistsCreated": 53,
+    "edgesWritten": 62,
+    "truncated": false
+  },
+  "https://soundcloud.com/a-diel": {
+    "checkedAt": "2026-06-22T22:58:34.278Z",
+    "followingsFetched": 1,
+    "newArtistsCreated": 1,
+    "edgesWritten": 1,
+    "truncated": false
+  },
+  "https://soundcloud.com/aereanegrot": {
+    "checkedAt": "2026-06-22T22:59:53.118Z",
+    "followingsFetched": 220,
+    "newArtistsCreated": 186,
+    "edgesWritten": 220,
+    "truncated": false
+  },
+  "https://soundcloud.com/afr0disiac": {
+    "checkedAt": "2026-06-22T23:02:41.625Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 471,
+    "edgesWritten": 500,
+    "truncated": false
+  },
+  "https://soundcloud.com/aida-arko": {
+    "checkedAt": "2026-06-22T23:04:59.214Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 439,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/aidenmusik": {
+    "checkedAt": "2026-06-22T23:05:23.238Z",
+    "followingsFetched": 97,
+    "newArtistsCreated": 75,
+    "edgesWritten": 97,
+    "truncated": false
+  },
+  "https://soundcloud.com/aksportsdj": {
+    "checkedAt": "2026-06-22T23:07:14.388Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 355,
+    "edgesWritten": 500,
+    "truncated": false
+  },
+  "https://soundcloud.com/akanedj": {
+    "checkedAt": "2026-06-22T23:07:47.652Z",
+    "followingsFetched": 122,
+    "newArtistsCreated": 104,
+    "edgesWritten": 122,
+    "truncated": false
+  },
+  "https://soundcloud.com/akikoharuna": {
+    "checkedAt": "2026-06-22T23:08:07.255Z",
+    "followingsFetched": 81,
+    "newArtistsCreated": 58,
+    "edgesWritten": 81,
+    "truncated": false
+  },
+  "https://soundcloud.com/akua_dj": {
+    "checkedAt": "2026-06-22T23:09:09.388Z",
+    "followingsFetched": 259,
+    "newArtistsCreated": 198,
+    "edgesWritten": 259,
+    "truncated": false
+  },
+  "https://soundcloud.com/djalejasanchez": {
+    "checkedAt": "2026-06-22T23:11:25.899Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 440,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alex-monster": {
+    "checkedAt": "2026-06-22T23:11:45.883Z",
+    "followingsFetched": 62,
+    "newArtistsCreated": 60,
+    "edgesWritten": 62,
+    "truncated": false
+  },
+  "https://soundcloud.com/alex-nantaya": {
+    "checkedAt": "2026-06-22T23:12:32.838Z",
+    "followingsFetched": 196,
+    "newArtistsCreated": 148,
+    "edgesWritten": 196,
+    "truncated": false
+  },
+  "https://soundcloud.com/alexis_andrews": {
+    "checkedAt": "2026-06-22T23:14:29.713Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 375,
+    "edgesWritten": 500,
+    "truncated": false
+  },
+  "https://soundcloud.com/ali_rq": {
+    "checkedAt": "2026-06-22T23:14:43.658Z",
+    "followingsFetched": 55,
+    "newArtistsCreated": 41,
+    "edgesWritten": 55,
+    "truncated": false
+  },
+  "https://soundcloud.com/alice4ever": {
+    "checkedAt": "2026-06-22T23:16:56.825Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 426,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alicedimar": {
+    "checkedAt": "2026-06-22T23:19:30.738Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 461,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alice-longyu-gao": {
+    "checkedAt": "2026-06-22T23:19:37.511Z",
+    "followingsFetched": 27,
+    "newArtistsCreated": 16,
+    "edgesWritten": 27,
+    "truncated": false
+  },
+  "https://soundcloud.com/alina_viktoria": {
+    "checkedAt": "2026-06-22T23:22:03.996Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 409,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alisxlis": {
+    "checkedAt": "2026-06-22T23:23:27.512Z",
+    "followingsFetched": 333,
+    "newArtistsCreated": 234,
+    "edgesWritten": 333,
+    "truncated": false
+  },
+  "https://soundcloud.com/djalishauk": {
+    "checkedAt": "2026-06-22T23:24:47.560Z",
+    "followingsFetched": 226,
+    "newArtistsCreated": 224,
+    "edgesWritten": 226,
+    "truncated": false
+  },
+  "https://soundcloud.com/alisonwonderland": {
+    "checkedAt": "2026-06-22T23:25:51.373Z",
+    "followingsFetched": 211,
+    "newArtistsCreated": 177,
+    "edgesWritten": 211,
+    "truncated": false
+  },
+  "https://soundcloud.com/alisu": {
+    "checkedAt": "2026-06-22T23:28:25.501Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 432,
+    "edgesWritten": 500,
+    "truncated": false
+  },
+  "https://soundcloud.com/almagold": {
+    "checkedAt": "2026-06-22T23:30:52.971Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 414,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/alphonsinekoh": {
+    "checkedAt": "2026-06-22T23:32:16.849Z",
+    "followingsFetched": 330,
+    "newArtistsCreated": 234,
+    "edgesWritten": 330,
+    "truncated": false
+  },
+  "https://soundcloud.com/alyss_hz": {
+    "checkedAt": "2026-06-22T23:32:36.799Z",
+    "followingsFetched": 55,
+    "newArtistsCreated": 52,
+    "edgesWritten": 55,
+    "truncated": false
+  },
+  "https://soundcloud.com/jmo-844048447": {
+    "checkedAt": "2026-06-22T23:33:22.458Z",
+    "followingsFetched": 199,
+    "newArtistsCreated": 126,
+    "edgesWritten": 199,
+    "truncated": false
+  },
+  "https://soundcloud.com/amavii": {
+    "checkedAt": "2026-06-22T23:34:38.292Z",
+    "followingsFetched": 293,
+    "newArtistsCreated": 208,
+    "edgesWritten": 293,
+    "truncated": false
+  },
+  "https://soundcloud.com/amber-broos": {
+    "checkedAt": "2026-06-22T23:35:01.422Z",
+    "followingsFetched": 87,
+    "newArtistsCreated": 62,
+    "edgesWritten": 87,
+    "truncated": false
+  },
+  "https://soundcloud.com/ambien-baby": {
+    "checkedAt": "2026-06-22T23:35:31.863Z",
+    "followingsFetched": 111,
+    "newArtistsCreated": 83,
+    "edgesWritten": 111,
+    "truncated": false
+  },
+  "https://soundcloud.com/amoralish": {
+    "checkedAt": "2026-06-22T23:37:36.212Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 349,
+    "edgesWritten": 500,
+    "truncated": true
+  },
+  "https://soundcloud.com/ampfeminine": {
+    "checkedAt": "2026-06-22T23:37:47.464Z",
+    "followingsFetched": 53,
+    "newArtistsCreated": 28,
+    "edgesWritten": 53,
+    "truncated": false
+  },
+  "https://soundcloud.com/its-ams": {
+    "checkedAt": "2026-06-22T23:38:55.946Z",
+    "followingsFetched": 283,
+    "newArtistsCreated": 195,
+    "edgesWritten": 283,
+    "truncated": false
+  },
+  "https://soundcloud.com/amybeckerdj": {
+    "checkedAt": "2026-06-22T23:41:00.009Z",
+    "followingsFetched": 500,
+    "newArtistsCreated": 387,
+    "edgesWritten": 500,
+    "truncated": true
   }
 }

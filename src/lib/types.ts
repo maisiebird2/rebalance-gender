@@ -6,7 +6,8 @@ export type ArtistStatus =
   | "rejected"
   | "not_eligible"
   | "search_input"
-  | "sc_followee";
+  | "sc_followee"
+  | "duplicate";
 
 // Profile-link platform key. Backed by the `platforms` lookup table
 // (not a fixed enum) so new categories can be added from the admin
