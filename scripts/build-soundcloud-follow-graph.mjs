@@ -20,11 +20,14 @@
 //      reviewed" — distinct from 'not_eligible', which is reserved for
 //      artists a human has actually looked at and ruled out.
 //
-// New artists are deliberately seeded with nothing beyond name +
-// SoundCloud link — profile pictures are left to the existing
-// enrich-images.mjs pass (og:image scraping, no API key needed),
-// which will pick these rows up automatically since it just looks
-// for artists missing profile_image_url with a linked profile.
+// For every artist touched — both source directory artists (via the
+// /resolve call) and newly-discovered followed artists (from the
+// followings collection) — the full SoundCloud user object is already
+// returned by the API at no extra cost and is written to
+// `artist_enrichment`: follower_count, track_count, bio, avatar URL
+// (upgraded to 500×500), plus the raw user object as JSONB for future
+// re-processing. Already-existing followed artists are not re-enriched
+// here; a dedicated enrichment pipeline handles those.
 //
 // Uses the OFFICIAL SoundCloud API (api.soundcloud.com), same OAuth
 // Client Credentials flow as harvest-soundcloud-links-and-bio.mjs.
@@ -361,6 +364,60 @@ function normalizeScUrl(url) {
   }
 }
 
+// Strips tracking query strings/fragments from a SoundCloud profile URL
+// before it's written to artist_links, e.g.
+//   https://soundcloud.com/damacha?utm_medium=api&utm_campaign=social_sharing&utm_source=id_332561
+//   -> https://soundcloud.com/damacha
+// Unlike normalizeScUrl (used only for in-memory dedupe-key matching),
+// this preserves the original case/trailing slash exactly as SoundCloud
+// returned it, since this is the value that actually gets saved.
+function cleanScUrl(url) {
+  try {
+    const u = new URL(url);
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+// SoundCloud CDN avatar URLs default to a 100×100 "-large" variant.
+// Replacing the suffix with "-t500x500" gets the 500×500 version,
+// which is the largest size the CDN serves without a separate request.
+function upgradeAvatarUrl(url) {
+  if (typeof url !== "string" || !url) return null;
+  return url.replace(/-large(\.\w+)$/, "-t500x500$1").replace(/-large$/, "-t500x500");
+}
+
+// Upsert enrichment data from a SoundCloud user object into
+// artist_enrichment. Called for both source artists (from /resolve)
+// and newly-created followed artists (from the followings collection)
+// — the data is already in hand from those API responses, so no
+// extra API calls are needed.
+async function upsertEnrichment(artistId, user) {
+  if (DRY_RUN) return { error: null };
+
+  return supabase.from("artist_enrichment").upsert(
+    {
+      artist_id: artistId,
+      platform: "soundcloud",
+      external_id: user.id != null ? String(user.id) : null,
+      profile_image_url: upgradeAvatarUrl(user.avatar_url),
+      bio: typeof user.description === "string" && user.description.trim()
+        ? user.description.trim()
+        : null,
+      follower_count: user.followers_count ?? null,
+      track_count: user.track_count ?? null,
+      recent_tracks: null, // tracks not fetched in this script
+      raw_data: user,
+      last_synced_at: new Date().toISOString(),
+      sync_error: null,
+    },
+    { onConflict: "artist_id,platform" }
+  );
+}
+
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
@@ -425,6 +482,7 @@ async function main() {
   let newArtistsCreated = 0;
   let edgesWritten = 0;
   let truncatedCount = 0;
+  let enrichmentUpserted = 0;
 
   for (const row of rows) {
     const sourceName = row.artists?.name ?? row.artist_id;
@@ -454,6 +512,15 @@ async function main() {
       console.log(`✗ ${sourceName}: resolved user has no urn, skipping`);
       await sleep(300);
       continue;
+    }
+
+    // The resolve response already contains the full user object for the
+    // source artist — upsert their enrichment at no extra API cost.
+    const { error: sourceEnrichError } = await upsertEnrichment(sourceArtistId, userRes.data);
+    if (sourceEnrichError) {
+      console.error(`  failed to upsert enrichment for ${sourceName}: ${sourceEnrichError.message}`);
+    } else {
+      enrichmentUpserted++;
     }
 
     const { ok, users, truncated } = await getFollowings(urn, FOLLOWINGS_CAP);
@@ -503,10 +570,19 @@ async function main() {
             artist_id: followedArtistId,
             platform: "soundcloud",
             handle: followed.username ?? null,
-            url: permalinkUrl,
+            url: cleanScUrl(permalinkUrl),
           });
           if (insertLinkError) {
             console.error(`  failed to save soundcloud link for ${name}: ${insertLinkError.message}`);
+          }
+
+          // The followings response already contains the full user object
+          // — upsert enrichment for this new artist at no extra API cost.
+          const { error: enrichError } = await upsertEnrichment(followedArtistId, followed);
+          if (enrichError) {
+            console.error(`  failed to save enrichment for ${name}: ${enrichError.message}`);
+          } else {
+            enrichmentUpserted++;
           }
         } else {
           // DRY_RUN: synthesize a placeholder id so edge-counting logic
@@ -573,6 +649,7 @@ async function main() {
   console.log(`  capped (more remain):     ${truncatedCount}`);
   console.log(`  new artists created:      ${newArtistsCreated}`);
   console.log(`  follow edges ${DRY_RUN ? "(would be) written" : "written"}:    ${edgesWritten}`);
+  console.log(`  enrichment upserted:      ${DRY_RUN ? "(dry run — no writes)" : enrichmentUpserted}`);
 }
 
 main().catch((err) => {
