@@ -14,6 +14,7 @@
     "add-beatport-links": "node scripts/add-beatport-links.mjs",
     "enrich-bandcamp": "node scripts/enrich-bandcamp.mjs",
     "harvest-soundcloud-links-and-bio": "node scripts/harvest-soundcloud-links-and-bio.mjs",
+    "build-soundcloud-follow-graph": "node scripts/build-soundcloud-follow-graph.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "test": "vitest run",
