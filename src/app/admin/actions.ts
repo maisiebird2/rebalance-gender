@@ -20,7 +20,7 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")
-    .update({ status: "approved" })
+    .update({ directory_status: "approved" })
     .eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/admin");
@@ -32,7 +32,7 @@ export async function quickReject(id: string): Promise<{ error: string } | void>
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")
-    .update({ status: "rejected" })
+    .update({ directory_status: "rejected" })
     .eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/admin");

@@ -16,7 +16,19 @@ interface Props {
   platforms: Platform[];
 }
 
-const STATUSES: ArtistStatus[] = ["approved", "pending", "rejected"];
+const STATUSES: ArtistStatus[] = [
+  "approved",
+  "pending",
+  "rejected",
+  "not_eligible",
+  "search_input",
+];
+
+// Display label for a status value, e.g. "not_eligible" -> "Not eligible".
+function statusLabel(status: ArtistStatus): string {
+  const words = status.split("_");
+  return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+}
 
 export default function EditForm({ artist, allGenres, platforms }: Props) {
   const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string }[] =
@@ -204,18 +216,18 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium" htmlFor="status">
+          <label className="text-sm font-medium" htmlFor="directory_status">
             Status
           </label>
           <select
-            id="status"
-            name="status"
-            defaultValue={artist.status}
+            id="directory_status"
+            name="directory_status"
+            defaultValue={artist.directory_status}
             className="w-40 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
             {STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {statusLabel(s)}
               </option>
             ))}
           </select>

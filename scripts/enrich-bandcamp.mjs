@@ -193,7 +193,7 @@ async function main() {
        links:artist_links(platform, url),
        bandcamp_albums:artist_bandcamp_albums(bandcamp_id)`
     )
-    .eq("status", "approved");
+    .eq("directory_status", "approved");
 
   const { data: artists, error } = await query;
   if (error) throw error;

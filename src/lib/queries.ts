@@ -80,7 +80,7 @@ export async function getArtists(
   let query = supabase
     .from("artists")
     .select(select, { count: "exact" })
-    .eq("status", "approved")
+    .eq("directory_status", "approved")
     .eq("deleted", false)
     .order("name");
 
@@ -119,7 +119,7 @@ export async function getArtistById(
     .from("artists")
     .select(ARTIST_SELECT)
     .eq("id", id)
-    .eq("status", "approved")
+    .eq("directory_status", "approved")
     .eq("deleted", false)
     .maybeSingle();
 
@@ -145,7 +145,7 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   const { data: idRows, error: idError, count } = await supabase
     .from("artists")
     .select("id", { count: "exact" })
-    .eq("status", "approved")
+    .eq("directory_status", "approved")
     .eq("deleted", false);
 
   if (idError || !idRows) {
@@ -170,7 +170,7 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
     .from("artists")
     .select(ARTIST_SELECT)
     .in("id", pageIds)
-    .eq("status", "approved")
+    .eq("directory_status", "approved")
     .eq("deleted", false);
 
   if (error) {
@@ -196,8 +196,8 @@ export async function getGenreOptions(): Promise<string[]> {
 
   const { data, error } = await supabase
     .from("artist_genres")
-    .select("genres!inner(name), artists!inner(status, deleted)")
-    .eq("artists.status", "approved")
+    .select("genres!inner(name), artists!inner(directory_status, deleted)")
+    .eq("artists.directory_status", "approved")
     .eq("artists.deleted", false);
 
   if (error) {
@@ -219,8 +219,8 @@ export async function getCountryOptions(): Promise<string[]> {
 
   const { data, error } = await supabase
     .from("artist_locations")
-    .select("country, artists!inner(status, deleted)")
-    .eq("artists.status", "approved")
+    .select("country, artists!inner(directory_status, deleted)")
+    .eq("artists.directory_status", "approved")
     .eq("artists.deleted", false)
     .not("country", "is", null);
 

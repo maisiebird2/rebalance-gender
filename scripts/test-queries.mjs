@@ -49,7 +49,7 @@ console.log("\n--- approved artists count ---");
   const { count, error } = await supabase
     .from("artists")
     .select("*", { count: "exact", head: true })
-    .eq("status", "approved");
+    .eq("directory_status", "approved");
   console.log("approved artists:", count, "error:", error?.message ?? null);
 }
 
@@ -57,8 +57,8 @@ console.log("\n--- getGenreOptions query ---");
 {
   const { data, error } = await supabase
     .from("artist_genres")
-    .select("genres!inner(name), artists!inner(status)")
-    .eq("artists.status", "approved")
+    .select("genres!inner(name), artists!inner(directory_status)")
+    .eq("artists.directory_status", "approved")
     .limit(5);
   console.log("error:", error);
   console.log("sample data:", JSON.stringify(data, null, 2));
@@ -68,8 +68,8 @@ console.log("\n--- getCountryOptions query ---");
 {
   const { data, error } = await supabase
     .from("artist_locations")
-    .select("country, artists!inner(status)")
-    .eq("artists.status", "approved")
+    .select("country, artists!inner(directory_status)")
+    .eq("artists.directory_status", "approved")
     .not("country", "is", null)
     .limit(5);
   console.log("error:", error);

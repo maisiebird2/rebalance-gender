@@ -49,7 +49,7 @@ export default async function AdminPage() {
     admin
       .from("artists")
       .select(SUBMISSION_SELECT)
-      .eq("status", "pending")
+      .eq("directory_status", "pending")
       .eq("deleted", false)
       .order("created_at", { ascending: true }),
     admin.from("genres").select("name").order("name"),

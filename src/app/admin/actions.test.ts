@@ -234,7 +234,7 @@ describe("quickApprove", () => {
     const result = await quickApprove("artist-1");
 
     expect(result).toBeUndefined();
-    expect(updateChain.update).toHaveBeenCalledWith({ status: "approved" });
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "approved" });
     expect(updateChain.eq).toHaveBeenCalledWith("id", "artist-1");
   });
 
@@ -257,6 +257,6 @@ describe("quickReject", () => {
     const result = await quickReject("artist-1");
 
     expect(result).toBeUndefined();
-    expect(updateChain.update).toHaveBeenCalledWith({ status: "rejected" });
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "rejected" });
   });
 });

@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       name,
       pronoun_id: pronounId,
       notes: body.notes?.trim() || null,
-      status: "pending",
+      directory_status: "pending",
       submitted_by_email: body.submittedByEmail?.trim() || null,
       submitted_at: new Date().toISOString(),
     })

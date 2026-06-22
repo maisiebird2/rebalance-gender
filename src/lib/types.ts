@@ -1,6 +1,11 @@
 // TypeScript types mirroring supabase_schema.sql
 
-export type ArtistStatus = "approved" | "pending" | "rejected";
+export type ArtistStatus =
+  | "approved"
+  | "pending"
+  | "rejected"
+  | "not_eligible"
+  | "search_input";
 
 // Profile-link platform key. Backed by the `platforms` lookup table
 // (not a fixed enum) so new categories can be added from the admin
@@ -84,7 +89,7 @@ export interface Artist {
   pronoun_id: number | null;
   labels: string | null;
   notes: string | null;
-  status: ArtistStatus;
+  directory_status: ArtistStatus;
   profile_image_url: string | null;
   profile_image_source: LinkPlatform | null;
   profile_image_fetched_at: string | null;

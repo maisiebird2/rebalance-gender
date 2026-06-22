@@ -333,7 +333,7 @@ async function main() {
       pronoun_id: DRY_RUN ? null : pronounId,
       labels: row["labels etc"]?.trim() || null,
       notes: noteParts.length ? noteParts.join(" | ") : null,
-      status: "approved",
+      directory_status: "approved",
     };
   }
 

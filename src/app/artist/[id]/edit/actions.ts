@@ -102,7 +102,7 @@ export async function saveArtist(
   const name = ((formData.get("name") ?? "") as string).trim();
   const pronounsValue = ((formData.get("pronouns") ?? "") as string).trim();
   const labels = ((formData.get("labels") ?? "") as string).trim() || null;
-  const status = formData.get("status") as ArtistStatus;
+  const directoryStatus = formData.get("directory_status") as ArtistStatus;
   const locationsRaw = (formData.get("locations") ?? "[]") as string;
   const labelListRaw = (formData.get("label_list") ?? "[]") as string;
   const genresRaw = (formData.get("genres") ?? "[]") as string;
@@ -174,7 +174,7 @@ export async function saveArtist(
     .update({
       name,
       pronoun_id: pronounId,
-      status,
+      directory_status: directoryStatus,
       booking_info: bookingInfo,
       management_info: managementInfo,
       contact_info: contactInfo,
