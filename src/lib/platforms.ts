@@ -34,12 +34,24 @@ export function platformPlaceholder(label: string): string {
 
 /**
  * Cleans tracking/query-string cruft from profile link URLs before they're
- * saved. Spotify share links append `?si=...&nd=...&dlsi=...` tracking
- * params — strip everything from the `?` onward so we store the bare
- * canonical URL.
+ * saved.
+ *
+ * - Spotify: strips everything from `?` onward (e.g. `?si=...&nd=...`).
+ * - SoundCloud: same, except search URLs (`/search?q=...`) are left intact
+ *   because the query string is the content, not a tracking param.
  */
 export function cleanLinkUrl(platform: string, url: string): string {
   if (platform === "spotify") {
+    return url.split("?")[0];
+  }
+  if (platform === "soundcloud") {
+    try {
+      const parsed = new URL(url);
+      if (parsed.pathname.startsWith("/search")) return url;
+    } catch {
+      // malformed URL — fall through and return as-is
+      return url;
+    }
     return url.split("?")[0];
   }
   return url;
