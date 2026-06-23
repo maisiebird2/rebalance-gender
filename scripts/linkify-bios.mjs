@@ -95,6 +95,8 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY);
 
 // ------------------------------------------------------------
 // Linkification logic
+// NOTE: keep this logic in sync with src/lib/sanitize-bio.ts,
+// which is the version used by the saveArtist server action.
 // ------------------------------------------------------------
 
 /**
@@ -107,22 +109,27 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY);
 function transformTextSegment(text) {
   return text.replace(
     // @mention: @ must be at the start of the string, or preceded by
-    // a space or <br> tag (the latter appearing as text in HTML).
-    // This intentionally excludes @ in the middle of words like email
-    // addresses (e.g. artist@gmail.com).
+    // whitespace. Excludes email addresses (e.g. artist@gmail.com).
     //
-    // URL: bare https?:// links. Trailing punctuation that is likely
-    // not part of the URL (.,;:!?) is stripped before linking.
-    /((?:^|(?<=[\s]))@([A-Za-z0-9_-]+))|(https?:\/\/[^\s<>"']+)/g,
-    (match, atMatch, username, url) => {
+    // https?:// URL: standard absolute URLs.
+    //
+    // www. URL: bare www. domains not already preceded by :// (so
+    // https://www.domain.com is caught by the https? branch first).
+    // Must be at start or after whitespace. https:// is prepended to
+    // the href automatically.
+    /((?:^|(?<=\s))@([A-Za-z0-9_-]+))|(https?:\/\/[^\s<>"']+)|((?:^|(?<=\s))www\.[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}[^\s<>"']*)/g,
+    (_match, atMatch, username, httpsUrl, wwwUrl) => {
       if (atMatch) {
         const slug = username.toLowerCase();
         return `<a href="https://soundcloud.com/${slug}" target="_blank" rel="noopener noreferrer">${username}</a>`;
       } else {
+        const raw = httpsUrl ?? wwwUrl;
+        const href = wwwUrl ? `https://${raw}` : raw;
         // Strip trailing punctuation that's likely not part of the URL.
-        const cleaned = url.replace(/[.,;:!?)\]}'">]+$/, "");
-        const trailing = url.slice(cleaned.length);
-        return `<a href="${cleaned}" target="_blank" rel="noopener noreferrer">${cleaned}</a>${trailing}`;
+        const cleanedHref = href.replace(/[.,;:!?)\]}'">]+$/, "");
+        const cleanedRaw = raw.slice(0, raw.length - (href.length - cleanedHref.length));
+        const trailing = raw.slice(cleanedRaw.length);
+        return `<a href="${cleanedHref}" target="_blank" rel="noopener noreferrer">${cleanedRaw}</a>${trailing}`;
       }
     }
   );

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
+import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -275,10 +276,11 @@ export async function saveArtist(
 
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────
   if (bio !== null) {
+    const bio_sanitized = sanitizeAndLinkifyBio(bio);
     const { error: enrichErr } = await admin
       .from("artist_enrichment")
       .upsert(
-        { artist_id: artistId, platform: "soundcloud", bio },
+        { artist_id: artistId, platform: "soundcloud", bio, bio_sanitized },
         { onConflict: "artist_id,platform" }
       );
     if (enrichErr)

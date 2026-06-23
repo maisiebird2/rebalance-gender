@@ -98,6 +98,8 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY);
 
 // ------------------------------------------------------------
 // DOMPurify config
+// NOTE: keep this logic in sync with src/lib/sanitize-bio.ts,
+// which is the version used by the saveArtist server action.
 // ------------------------------------------------------------
 
 // Tags we want to preserve from the source HTML.
