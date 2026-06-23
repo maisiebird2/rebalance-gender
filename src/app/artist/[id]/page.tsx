@@ -8,6 +8,7 @@ import EditButton from "@/components/EditButton";
 import BandcampWidget from "@/components/BandcampWidget";
 import { linkify } from "@/lib/linkify";
 
+
 export const revalidate = 3600; // re-fetch from Supabase at most hourly
 
 interface PageProps {
@@ -40,9 +41,10 @@ export default async function ArtistPage({ params }: PageProps) {
   const soundcloudLink = artist.links?.find((l) => l.platform === "soundcloud" && !l.not_found);
   const soundcloudUrl = soundcloudTrack?.url ?? soundcloudLink?.url;
 
-  const soundcloudBio = artist.enrichment?.find(
+  const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
-  )?.bio;
+  );
+  const soundcloudBio = soundcloudEnrichment?.bio_sanitized ?? soundcloudEnrichment?.bio ?? null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -198,27 +200,38 @@ export default async function ArtistPage({ params }: PageProps) {
               <strong className="font-semibold text-gray-900 dark:text-gray-100">
                 SoundCloud bio
               </strong>
-              <div className="mt-2 space-y-1.5">
-                {soundcloudBio.split("\n").map((line, i) => (
-                  <p key={i}>
-                    {linkify(line).map((seg, j) =>
-                      seg.type === "url" ? (
-                        <a
-                          key={j}
-                          href={seg.value}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-violet-600 hover:underline dark:text-violet-400"
-                        >
-                          {seg.value}
-                        </a>
-                      ) : (
-                        seg.value
-                      )
-                    )}
-                  </p>
-                ))}
-              </div>
+              {soundcloudEnrichment?.bio_sanitized ? (
+                // Sanitized HTML from DOMPurify — safe to render as HTML.
+                // Links, line breaks, and basic formatting are preserved.
+                <div
+                  className="mt-2 space-y-1.5 [&_a]:text-violet-600 [&_a]:hover:underline dark:[&_a]:text-violet-400"
+                  dangerouslySetInnerHTML={{ __html: soundcloudEnrichment.bio_sanitized }}
+                />
+              ) : (
+                // Plain-text fallback for bios not yet run through sanitize-bios.mjs.
+                // Bare URLs are linkified; no HTML is rendered.
+                <div className="mt-2 space-y-1.5">
+                  {soundcloudBio.split("\n").map((line, i) => (
+                    <p key={i}>
+                      {linkify(line).map((seg, j) =>
+                        seg.type === "url" ? (
+                          <a
+                            key={j}
+                            href={seg.value}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-violet-600 hover:underline dark:text-violet-400"
+                          >
+                            {seg.value}
+                          </a>
+                        ) : (
+                          seg.value
+                        )
+                      )}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           </aside>
         )}

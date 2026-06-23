@@ -79,6 +79,8 @@ export interface ArtistEnrichment {
   external_id: string | null;
   profile_image_url: string | null;
   bio: string | null;
+  /** DOMPurify-sanitized HTML version of bio. Rendered via dangerouslySetInnerHTML on the artist page. */
+  bio_sanitized: string | null;
   follower_count: number | null;
   track_count: number | null;
   recent_tracks: RecentTrack[] | null;

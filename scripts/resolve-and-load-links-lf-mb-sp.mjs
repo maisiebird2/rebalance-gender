@@ -23,17 +23,13 @@
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --dry-run          # score only, no DB writes or CSV
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --no-load          # stage candidates but skip loading into artist_links
  */
-
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { createHash } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
-
 // ── Environment ───────────────────────────────────────────────────────────────
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
 ;(function loadEnv() {
   const envPath = path.resolve(__dirname, '..', '.env.local')
   try {
@@ -48,9 +44,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
     }
   } catch { /* no .env.local — rely on existing env vars */ }
 })()
-
 const REQUIRED_VARS = [
-  'NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY',
+  'NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SECRET_KEY',
   'LASTFM_API_KEY', 'SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET',
 ]
 const missing = REQUIRED_VARS.filter(k => !process.env[k])
@@ -58,47 +53,36 @@ if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`)
   process.exit(1)
 }
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  process.env.SUPABASE_SECRET_KEY,
 )
-
 // ── CLI ───────────────────────────────────────────────────────────────────────
-
 const argv = process.argv.slice(2)
 const getArg  = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null }
 const hasFlag = name => argv.includes(name)
-
 const OPT_ARTIST  = getArg('--artist')
 const OPT_LIMIT   = getArg('--limit') ? parseInt(getArg('--limit'), 10) : null
 const OPT_SERVICE = getArg('--service')
 const OPT_FORCE   = hasFlag('--force')
 const OPT_DRY_RUN = hasFlag('--dry-run')
 const OPT_NO_LOAD = hasFlag('--no-load')
-
 const ALL_SERVICES = ['lastfm', 'musicbrainz', 'spotify']
 if (OPT_SERVICE && !ALL_SERVICES.includes(OPT_SERVICE)) {
   console.error(`Unknown service "${OPT_SERVICE}". Choose from: ${ALL_SERVICES.join(', ')}`)
   process.exit(1)
 }
 const SERVICES = OPT_SERVICE ? [OPT_SERVICE] : ALL_SERVICES
-
 const CANDIDATES_PER_SERVICE = 5
 const CLOSE_MATCH_THRESHOLD  = 0.95
-
 // ── Logging ───────────────────────────────────────────────────────────────────
-
 const fmt = (level, msg) =>
   `${new Date().toTimeString().slice(0, 8)} ${level.padEnd(8)} ${msg}`
 const log  = (msg, ...a) => console.log(fmt('INFO',    msg), ...a)
 const warn = (msg, ...a) => console.warn(fmt('WARNING', msg), ...a)
 const err  = (msg, ...a) => console.error(fmt('ERROR',  msg), ...a)
-
 // ── Disk cache ────────────────────────────────────────────────────────────────
-
 const CACHE_DIR = path.resolve(__dirname, '..', '.cache')
-
 function cacheGet(ns, key) {
   try {
     return JSON.parse(fs.readFileSync(
@@ -106,7 +90,6 @@ function cacheGet(ns, key) {
     ))
   } catch { return null }
 }
-
 function cacheSet(ns, key, value) {
   const dir = path.join(CACHE_DIR, ns)
   fs.mkdirSync(dir, { recursive: true })
@@ -115,9 +98,7 @@ function cacheSet(ns, key, value) {
     JSON.stringify(value)
   )
 }
-
 // ── Rate limiters ─────────────────────────────────────────────────────────────
-
 function makeThrottle(ms) {
   let last = 0
   return () => {
@@ -126,18 +107,14 @@ function makeThrottle(ms) {
     return new Promise(r => setTimeout(() => { last = Date.now(); r() }, wait))
   }
 }
-
 const throttleLfm     = makeThrottle(260)   // Last.fm: ~4 req/s
 const throttleMb      = makeThrottle(1100)  // MusicBrainz: 1 req/s (strict)
 const throttleSpotify = makeThrottle(100)   // Spotify: generous
-
 // ── Scoring ───────────────────────────────────────────────────────────────────
 //
 // Ported from recommender/scoring.py. Each signal returns 0–1 (or null if
 // data is unavailable). Weights are renormalised when a signal is absent.
-
 const SCORE_WEIGHTS = { name: 0.67, location: 0.20, bio: 0.09, popularity: 0.04 }
-
 const NAME_STOPS = new Set([
   'the','a','an','and','or','of','in','at','de','la','el','les','los','das','die','der',
 ])
@@ -148,7 +125,6 @@ const BIO_STOPS = new Set([
   'that','this','with','from','have','been','their','they','were','also','some','more',
   'when','which','band','artist','music','song','album','known',
 ])
-
 // Levenshtein distance (O(m·n) — fine for short artist names)
 function lev(s, t) {
   const m = s.length, n = t.length
@@ -164,12 +140,10 @@ function lev(s, t) {
   }
   return row[n]
 }
-
 function strRatio(a, b) {
   const max = Math.max(a.length, b.length)
   return max === 0 ? 1.0 : (max - lev(a, b)) / max
 }
-
 // token_set_ratio equivalent: handles word-order differences and "The X" vs "X"
 function tokenSetRatio(a, b) {
   const tok = s => s.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(Boolean)
@@ -182,7 +156,6 @@ function tokenSetRatio(a, b) {
   const sIB    = [sI, ...onlyB].filter(Boolean).join(' ')
   return Math.max(strRatio(sI, sIA), strRatio(sI, sIB), strRatio(sIA, sIB))
 }
-
 function scoreName(ours, theirs) {
   if (!ours || !theirs) return 0.0
   const tsr = tokenSetRatio(ours, theirs)
@@ -196,7 +169,6 @@ function scoreName(ours, theirs) {
   const f1   = (covO + covT) > 0 ? 2 * covO * covT / (covO + covT) : 0
   return tsr * f1
 }
-
 function scoreLocation(ours, theirs) {
   if (!ours || !theirs) return null
   const tok = s => new Set(s.toLowerCase().split(/[,/\s]+/).filter(t => t && !LOC_STOPS.has(t)))
@@ -205,7 +177,6 @@ function scoreLocation(ours, theirs) {
   const inter = [...tO].filter(t => tT.has(t)).length
   return Math.min(inter / Math.min(tO.size, tT.size), 1.0)
 }
-
 function scoreBio(ours, theirs) {
   if (!ours || !theirs) return null
   const kw = s => new Set((s.toLowerCase().match(/\b[a-z]{4,}\b/g) ?? []).filter(w => !BIO_STOPS.has(w)))
@@ -213,7 +184,6 @@ function scoreBio(ours, theirs) {
   if (!kO.size || !kT.size) return null
   return Math.min([...kO].filter(w => kT.has(w)).length / kO.size, 1.0)
 }
-
 function scorePopularity(ourBio, popularity, listeners) {
   let score = null
   if (popularity != null) {
@@ -228,7 +198,6 @@ function scorePopularity(ourBio, popularity, listeners) {
   }
   return score
 }
-
 function combineScores(scores) {
   let wSum = 0, wTotal = 0
   for (const [sig, val] of Object.entries(scores)) {
@@ -238,7 +207,6 @@ function combineScores(scores) {
   }
   return wTotal > 0 ? wSum / wTotal : 0.0
 }
-
 function scoreCandidate({ ourName, ourLocation, ourBio, candidateName, candidateLocation, candidateBio, candidatePopularity = null, candidateListeners = null }) {
   const sName = scoreName(ourName, candidateName)
   const sLoc  = scoreLocation(ourLocation, candidateLocation)
@@ -253,9 +221,7 @@ function scoreCandidate({ ourName, ourLocation, ourBio, candidateName, candidate
     score_popularity: sPop,
   }
 }
-
 // ── Status assignment ─────────────────────────────────────────────────────────
-
 function breakTie(ourName, candidates) {
   const exact = candidates.filter(c => c.external_name.trim().toLowerCase() === ourName.trim().toLowerCase())
   if (exact.length === 1) return exact[0]
@@ -264,7 +230,6 @@ function breakTie(ourName, candidates) {
   const short  = pool.filter(c => c.external_name.length === minLen)
   return short.length === 1 ? short[0] : null
 }
-
 function assignStatuses(ourName, candidates) {
   if (!candidates.length) return []
   candidates.sort((a, b) => b.scores.confidence - a.scores.confidence)
@@ -286,16 +251,13 @@ function assignStatuses(ourName, candidates) {
           : 'pending',
   }))
 }
-
 function buildUrl(service, externalId, externalName) {
   if (service === 'lastfm')      return `https://www.last.fm/music/${encodeURIComponent(externalName)}`
   if (service === 'musicbrainz') return `https://musicbrainz.org/artist/${externalId}`
   if (service === 'spotify')     return `https://open.spotify.com/artist/${externalId}`
   throw new Error(`Unknown service: ${service}`)
 }
-
 // ── API: Last.fm ──────────────────────────────────────────────────────────────
-
 async function lfmRequest(params) {
   await throttleLfm()
   const qs = new URLSearchParams({ ...params, api_key: process.env.LASTFM_API_KEY, format: 'json' })
@@ -303,7 +265,6 @@ async function lfmRequest(params) {
   if (!res.ok) throw new Error(`Last.fm HTTP ${res.status}`)
   return res.json()
 }
-
 async function lfmTopTags(artistName) {
   const ck = `tags:${artistName}`
   const hit = cacheGet('lastfm_tags', ck)
@@ -316,16 +277,13 @@ async function lfmTopTags(artistName) {
     return tags
   } catch { return [] }
 }
-
 async function searchLastfm(artistName, limit) {
   const ck = `search:${artistName}:${limit}`
   const hit = cacheGet('lastfm_search', ck)
   if (hit !== null) return hit
-
   const data = await lfmRequest({ method: 'artist.search', artist: artistName, limit: String(limit) })
   let raw = data?.results?.artistmatches?.artist ?? []
   if (!Array.isArray(raw)) raw = [raw]
-
   const candidates = []
   for (const a of raw) {
     const name      = a.name ?? ''
@@ -343,14 +301,11 @@ async function searchLastfm(artistName, limit) {
   cacheSet('lastfm_search', ck, candidates)
   return candidates
 }
-
 // ── API: MusicBrainz ──────────────────────────────────────────────────────────
-
 async function searchMusicBrainz(artistName, limit) {
   const ck = `search:${artistName}:${limit}`
   const hit = cacheGet('mb_search', ck)
   if (hit !== null) return hit
-
   await throttleMb()
   const qs  = new URLSearchParams({ query: `artist:"${artistName}"`, limit: String(limit), fmt: 'json' })
   const res = await fetch(`https://musicbrainz.org/ws/2/artist?${qs}`, {
@@ -358,7 +313,6 @@ async function searchMusicBrainz(artistName, limit) {
   })
   if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`)
   const data = await res.json()
-
   const candidates = (data.artists ?? []).map(a => {
     const beginArea = a['begin-area']?.name ?? null
     const area      = a.area?.name ?? null
@@ -384,11 +338,8 @@ async function searchMusicBrainz(artistName, limit) {
   cacheSet('mb_search', ck, candidates)
   return candidates
 }
-
 // ── API: Spotify ──────────────────────────────────────────────────────────────
-
 let _spotifyToken = null, _spotifyExpiry = 0
-
 async function spotifyToken() {
   if (_spotifyToken && Date.now() < _spotifyExpiry) return _spotifyToken
   const res = await fetch('https://accounts.spotify.com/api/token', {
@@ -407,12 +358,10 @@ async function spotifyToken() {
   _spotifyExpiry = Date.now() + (data.expires_in - 60) * 1000
   return _spotifyToken
 }
-
 async function searchSpotify(artistName, limit) {
   const ck  = `search:${artistName}:${limit}`
   const hit = cacheGet('spotify_search', ck)
   if (hit !== null) return hit
-
   await throttleSpotify()
   const token = await spotifyToken()
   const qs    = new URLSearchParams({ q: `artist:${artistName}`, type: 'artist', limit: String(limit) })
@@ -422,7 +371,6 @@ async function searchSpotify(artistName, limit) {
   if (res.status === 401) { _spotifyToken = null; return searchSpotify(artistName, limit) }
   if (!res.ok) throw new Error(`Spotify HTTP ${res.status}`)
   const data = await res.json()
-
   const candidates = (data?.artists?.items ?? []).map(a => ({
     external_id:   a.id,
     external_name: a.name,
@@ -442,39 +390,32 @@ async function searchSpotify(artistName, limit) {
   cacheSet('spotify_search', ck, candidates)
   return candidates
 }
-
 // ── Per-service resolution ─────────────────────────────────────────────────────
-
 async function resolveService(artist, service) {
   let raw
-  if (service === 'lastfm')      raw = await searchLastfm(artist.name, CANDIDATES_PER_SERVICE)
+  if (service === 'lastfm')           raw = await searchLastfm(artist.name, CANDIDATES_PER_SERVICE)
   else if (service === 'musicbrainz') raw = await searchMusicBrainz(artist.name, CANDIDATES_PER_SERVICE)
-  else if (service === 'spotify') raw = await searchSpotify(artist.name, CANDIDATES_PER_SERVICE)
-
+  else if (service === 'spotify')     raw = await searchSpotify(artist.name, CANDIDATES_PER_SERVICE)
   const scored = raw.map(c => ({
     ...c,
     scores: scoreCandidate({
-      ourName:            artist.name,
-      ourLocation:        artist.location,
-      ourBio:             artist.bio,
-      candidateName:      c.external_name,
-      candidateLocation:  c.location,
-      candidateBio:       c.bio,
+      ourName:             artist.name,
+      ourLocation:         artist.location,
+      ourBio:              artist.bio,
+      candidateName:       c.external_name,
+      candidateLocation:   c.location,
+      candidateBio:        c.bio,
       candidatePopularity: c.popularity ?? null,
-      candidateListeners: c.listeners ?? null,
+      candidateListeners:  c.listeners ?? null,
     }),
   }))
-
   return assignStatuses(artist.name, scored)
 }
-
 // ── Database helpers ───────────────────────────────────────────────────────────
-
 async function fetchArtists() {
   const { data: artists, error } = await supabase
     .from('artists').select('id, name').order('name')
   if (error) throw error
-
   const { data: locs } = await supabase
     .from('artist_locations').select('artist_id, city, country')
   const locMap = {}
@@ -482,11 +423,9 @@ async function fetchArtists() {
     const parts = [l.city, l.country].filter(Boolean).join(', ')
     if (parts) (locMap[l.artist_id] ??= []).push(parts)
   }
-
   const { data: bios } = await supabase
     .from('artist_enrichment').select('artist_id, bio')
   const bioMap = Object.fromEntries((bios ?? []).filter(e => e.bio).map(e => [e.artist_id, e.bio]))
-
   return artists.map(a => ({
     id:       a.id,
     name:     a.name,
@@ -494,20 +433,17 @@ async function fetchArtists() {
     bio:      bioMap[a.id] ?? null,
   }))
 }
-
 async function artistsWithSpotifyLink() {
   const { data } = await supabase
     .from('artist_links').select('artist_id').eq('platform', 'spotify')
   return new Set((data ?? []).map(r => r.artist_id))
 }
-
 async function alreadyResolved(artistId, service) {
   const { data } = await supabase
     .from('pending_artist_links')
     .select('id').eq('artist_id', artistId).eq('service', service).limit(1)
   return (data?.length ?? 0) > 0
 }
-
 async function upsertCandidates(artistId, service, candidates) {
   // Fetch existing statuses so we can preserve explicit rejections / skips
   const { data: existing } = await supabase
@@ -515,7 +451,6 @@ async function upsertCandidates(artistId, service, candidates) {
     .select('external_id, status')
     .eq('artist_id', artistId).eq('service', service)
   const existingStatus = new Map((existing ?? []).map(r => [r.external_id, r.status]))
-
   const rows = candidates.map((c, i) => {
     const prev   = existingStatus.get(c.external_id)
     const status = ['rejected', 'skipped'].includes(prev) ? prev : c.status
@@ -536,13 +471,11 @@ async function upsertCandidates(artistId, service, candidates) {
       status,
     }
   })
-
   const { error } = await supabase
     .from('pending_artist_links')
     .upsert(rows, { onConflict: 'artist_id,service,external_id' })
   if (error) throw error
 }
-
 async function loadBestMatches(services) {
   const { data: rows, error } = await supabase
     .from('pending_artist_links')
@@ -551,7 +484,6 @@ async function loadBestMatches(services) {
     .in('service', services)
   if (error) throw error
   if (!rows?.length) return { loaded: 0, skipped: 0 }
-
   // Fetch existing artist_links for these artist+platform pairs so we never
   // overwrite a link that came from a different source (e.g. manually added).
   const artistIds = [...new Set(rows.map(r => r.artist_id))]
@@ -563,18 +495,15 @@ async function loadBestMatches(services) {
   const alreadyLinked = new Set(
     (existingLinks ?? []).map(l => `${l.artist_id}:${l.platform}`)
   )
-
   let loaded = 0, skipped = 0
   for (const row of rows) {
     if (!row.url) { skipped++; continue }
-
     // Skip if a link for this artist+platform already exists from another source
     if (alreadyLinked.has(`${row.artist_id}:${row.service}`)) {
       warn(`Skipping ${row.service} load for artist ${row.artist_id} — link already exists in artist_links.`)
       skipped++
       continue
     }
-
     const { error: linkErr } = await supabase
       .from('artist_links')
       .insert({ artist_id: row.artist_id, platform: row.service, url: row.url })
@@ -582,38 +511,29 @@ async function loadBestMatches(services) {
       warn(`Could not write artist_links row for pending id ${row.id}: ${linkErr.message}`)
       continue
     }
-
     await supabase
       .from('pending_artist_links')
       .update({ status: 'loaded', reviewed_at: new Date().toISOString() })
       .eq('id', row.id)
-
     loaded++
   }
   return { loaded, skipped }
 }
-
 // ── CSV export ─────────────────────────────────────────────────────────────────
-
 async function exportCsv() {
-  // Fetch everything from pending_artist_links, joined to artist name
   const { data: rows, error } = await supabase
     .from('pending_artist_links')
     .select('artist_id, service, candidate_rank, external_name, external_id, url, confidence, score_name, score_location, score_bio, score_popularity, status, api_data')
     .order('service').order('candidate_rank')
   if (error) throw error
-
-  // Get artist names for the join
   const { data: artists } = await supabase.from('artists').select('id, name')
   const nameMap = new Map((artists ?? []).map(a => [a.id, a.name]))
-
   const FIELDS = [
     'artist_name','service','rank','external_name','external_id','url',
     'confidence','score_name','score_location','score_bio','score_popularity',
     'status','api_genres','api_location','api_bio',
   ]
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-
   const lines = [FIELDS.join(',')]
   for (const r of rows ?? []) {
     const api = typeof r.api_data === 'string' ? JSON.parse(r.api_data) : (r.api_data ?? {})
@@ -626,8 +546,8 @@ async function exportCsv() {
       esc(r.url),
       (r.confidence ?? 0).toFixed(3),
       (r.score_name ?? 0).toFixed(2),
-      r.score_location != null ? r.score_location.toFixed(2) : '',
-      r.score_bio      != null ? r.score_bio.toFixed(2)      : '',
+      r.score_location  != null ? r.score_location.toFixed(2)  : '',
+      r.score_bio       != null ? r.score_bio.toFixed(2)       : '',
       r.score_popularity != null ? r.score_popularity.toFixed(2) : '',
       esc(r.status),
       esc([...(api.genres ?? []), ...(api.tags ?? [])].join('; ')),
@@ -635,111 +555,73 @@ async function exportCsv() {
       esc(api.disambiguation ?? ''),
     ].join(','))
   }
-
   const date    = new Date().toISOString().slice(0, 10)
   const outPath = path.resolve(__dirname, '..', `resolve-candidates-${date}.csv`)
   fs.writeFileSync(outPath, lines.join('\n'), 'utf8')
   log(`Exported ${lines.length - 1} rows → ${path.basename(outPath)}`)
   return outPath
 }
-
 // ── Main ──────────────────────────────────────────────────────────────────────
-
 async function main() {
   log('Starting resolve-and-load-links-lf-mb-sp' + (OPT_DRY_RUN ? ' (DRY RUN)' : '') + '…')
-
   log('Fetching artists from database…')
   let artists = await fetchArtists()
-
   if (OPT_ARTIST) {
     artists = artists.filter(a => a.name.toLowerCase() === OPT_ARTIST.toLowerCase())
     if (!artists.length) { err(`Artist "${OPT_ARTIST}" not found.`); process.exit(1) }
   }
   if (OPT_LIMIT) artists = artists.slice(0, OPT_LIMIT)
-
-  const withSpotify = await artistsWithSpotifyLink()
+  const withSpotify  = await artistsWithSpotifyLink()
   const spotifySkips = SERVICES.includes('spotify')
     ? artists.filter(a => withSpotify.has(a.id)).length : 0
-  if (spotifySkips > 0) {
+  if (spotifySkips > 0)
     log(`Skipping Spotify search for ${spotifySkips} artist(s) that already have a Spotify URL.`)
-  }
-
   log(`Processing ${artists.length} artist(s) across: ${SERVICES.join(', ')}`)
-
   let processed = 0, errors = 0
   const skipCounts = Object.fromEntries(ALL_SERVICES.map(s => [s, 0]))
-
   for (let i = 0; i < artists.length; i++) {
     const artist = artists[i]
-
     for (const service of SERVICES) {
       if (service === 'spotify' && withSpotify.has(artist.id)) continue
-
       if (!OPT_FORCE && !OPT_DRY_RUN && await alreadyResolved(artist.id, service)) {
         skipCounts[service]++
         continue
       }
-
       try {
         const candidates = await resolveService(artist, service)
         if (!candidates.length) continue
-
         const ties = candidates.filter(c => c.status === 'tie')
-        if (ties.length) {
+        if (ties.length)
           warn(`Unresolvable tie for "${artist.name}" / ${service} (conf ${ties[0].scores.confidence.toFixed(3)})`)
-        }
-
         if (!OPT_DRY_RUN) {
           await upsertCandidates(artist.id, service, candidates)
         } else {
           const best = candidates.find(c => c.status === 'best match')
           if (best) log(`[dry-run] ${artist.name} / ${service} → "${best.external_name}" (${best.scores.confidence.toFixed(3)})`)
         }
-
         processed++
       } catch (e) {
         warn(`Failed "${artist.name}" / ${service}: ${e.message}`)
         errors++
       }
     }
-
-    if ((i + 1) % 50 === 0 || i + 1 === artists.length) {
+    if ((i + 1) % 50 === 0 || i + 1 === artists.length)
       log(`Progress: ${i + 1}/${artists.length} artists`)
-    }
   }
-
-  // Log skip counts
-  for (const [svc, count] of Object.entries(skipCounts)) {
+  for (const [svc, count] of Object.entries(skipCounts))
     if (count > 0) log(`Skipped ${count} already-resolved ${svc} pair(s) (use --force to re-process).`)
-  }
-
   log(`Resolution complete — ${processed} pair(s) processed, ${errors} error(s).`)
-
-  if (OPT_DRY_RUN) {
-    log('Dry run complete — no changes written.')
-    return
-  }
-
-  // Export CSV record
+  if (OPT_DRY_RUN) { log('Dry run complete — no changes written.'); return }
   log('Exporting CSV record of all staged candidates…')
-  try {
-    await exportCsv()
-  } catch (e) {
-    warn(`CSV export failed: ${e.message}`)
-  }
-
-  // Load best matches → artist_links
+  try { await exportCsv() } catch (e) { warn(`CSV export failed: ${e.message}`) }
   if (!OPT_NO_LOAD) {
     log('Loading best match rows into artist_links…')
     try {
       const { loaded, skipped } = await loadBestMatches(SERVICES)
-      log(`Done — ${loaded} link(s) written to artist_links${skipped ? `, ${skipped} skipped (no URL)` : ''}.`)
-    } catch (e) {
-      err(`Load step failed: ${e.message}`)
-    }
+      log(`Done — ${loaded} link(s) written to artist_links${skipped ? `, ${skipped} skipped` : ''}.`)
+    } catch (e) { err(`Load step failed: ${e.message}`) }
   } else {
     log('Skipping load step (--no-load).')
   }
 }
-
 main().catch(e => { err(e.message); process.exit(1) })
