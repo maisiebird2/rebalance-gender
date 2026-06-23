@@ -50,7 +50,8 @@ export interface ArtistLink {
   artist_id: string;
   platform: LinkPlatform;
   handle: string | null;
-  url: string;
+  url: string | null;
+  not_found: boolean;
 }
 
 export interface RecentTrack {

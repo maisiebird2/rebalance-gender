@@ -37,7 +37,7 @@ export default async function ArtistPage({ params }: PageProps) {
   const soundcloudTrack = artist.enrichment
     ?.flatMap((e) => e.recent_tracks ?? [])
     ?.find((t) => t.url?.includes("soundcloud.com"));
-  const soundcloudLink = artist.links?.find((l) => l.platform === "soundcloud");
+  const soundcloudLink = artist.links?.find((l) => l.platform === "soundcloud" && !l.not_found);
   const soundcloudUrl = soundcloudTrack?.url ?? soundcloudLink?.url;
 
   const soundcloudBio = artist.enrichment?.find(
@@ -105,12 +105,12 @@ export default async function ArtistPage({ params }: PageProps) {
           )}
 
           {/* Profile links */}
-          {(artist.links?.length > 0 || artist.linktree_url) && (
+          {(artist.links?.some((l) => !l.not_found) || artist.linktree_url) && (
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
-              {artist.links?.map((link) => (
+              {artist.links?.filter((l) => !l.not_found && l.url).map((link) => (
                 <a
                   key={link.id}
-                  href={link.url}
+                  href={link.url!}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-violet-600 hover:underline dark:text-violet-400"

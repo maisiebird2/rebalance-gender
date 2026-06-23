@@ -9,7 +9,8 @@ import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
   platform: LinkPlatform;
-  url: string;
+  url: string | null;
+  not_found?: boolean;
 }
 
 // ── Handle derivation ─────────────────────────────────────────────
@@ -245,16 +246,26 @@ export async function saveArtist(
   await admin.from("artist_links").delete().eq("artist_id", artistId);
 
   if (links.length > 0) {
-    const validLinks = links.filter((l) => l.url?.trim());
+    const validLinks = links.filter((l) => l.not_found || l.url?.trim());
     if (validLinks.length > 0) {
       const { error: lErr } = await admin.from("artist_links").insert(
         validLinks.map((l) => {
-          const url = cleanLinkUrl(l.platform, l.url.trim());
+          if (l.not_found) {
+            return {
+              artist_id: artistId,
+              platform: l.platform,
+              handle: null,
+              url: null,
+              not_found: true,
+            };
+          }
+          const url = cleanLinkUrl(l.platform, l.url!.trim());
           return {
             artist_id: artistId,
             platform: l.platform,
             handle: deriveHandle(l.platform, url),
             url,
+            not_found: false,
           };
         })
       );

@@ -58,13 +58,26 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
     for (const { platform } of LINK_FIELDS) {
-      map[platform] = artist.links?.find((l) => l.platform === platform)?.url ?? "";
+      map[platform] = artist.links?.find((l) => l.platform === platform && !l.not_found)?.url ?? "";
+    }
+    return map;
+  });
+
+  const [linkNotFound, setLinkNotFound] = useState<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    for (const { platform } of LINK_FIELDS) {
+      map[platform] = artist.links?.some((l) => l.platform === platform && l.not_found) ?? false;
     }
     return map;
   });
 
   function updateLinkUrl(platform: string, url: string) {
     setLinkUrls((prev) => ({ ...prev, [platform]: url }));
+  }
+
+  function toggleLinkNotFound(platform: string, checked: boolean) {
+    setLinkNotFound((prev) => ({ ...prev, [platform]: checked }));
+    if (checked) setLinkUrls((prev) => ({ ...prev, [platform]: "" }));
   }
 
   // ── Submit ────────────────────────────────────────────────────
@@ -78,8 +91,12 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     const formData = new FormData(form);
     // Overwrite hidden inputs with current React state
     const links = LINK_FIELDS
-      .filter(({ platform }) => linkUrls[platform]?.trim())
-      .map(({ platform }) => ({ platform, url: linkUrls[platform].trim() }));
+      .filter(({ platform }) => linkUrls[platform]?.trim() || linkNotFound[platform])
+      .map(({ platform }) => ({
+        platform,
+        url: linkNotFound[platform] ? null : linkUrls[platform].trim(),
+        not_found: linkNotFound[platform] ?? false,
+      }));
     formData.set("links", JSON.stringify(links));
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
@@ -169,7 +186,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-8 pb-20">
       <input type="hidden" name="artist_id" value={artist.id} />
       {/* hidden inputs — values are overwritten in handleSubmit */}
-      <input type="hidden" name="links" value={JSON.stringify(LINK_FIELDS.filter(({ platform }) => linkUrls[platform]?.trim()).map(({ platform }) => ({ platform, url: linkUrls[platform].trim() })))} />
+      <input type="hidden" name="links" value={JSON.stringify(LINK_FIELDS.filter(({ platform }) => linkUrls[platform]?.trim() || linkNotFound[platform]).map(({ platform }) => ({ platform, url: linkNotFound[platform] ? null : linkUrls[platform].trim(), not_found: linkNotFound[platform] ?? false })))} />
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
       <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
@@ -354,8 +371,18 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
                 value={linkUrls[platform] ?? ""}
                 onChange={(e) => updateLinkUrl(platform, e.target.value)}
                 placeholder={placeholder}
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
+                disabled={linkNotFound[platform]}
+                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900"
               />
+              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={linkNotFound[platform] ?? false}
+                  onChange={(e) => toggleLinkNotFound(platform, e.target.checked)}
+                  className="rounded"
+                />
+                Not found
+              </label>
             </div>
           ))}
         </div>
