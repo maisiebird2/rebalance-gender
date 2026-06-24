@@ -211,11 +211,23 @@ the database go into `mb_collaborations`.
 npm run enrich-musicbrainz
 ```
 
-### 7c. `fetch-lastfm-similar.mjs` *(not yet written)*
+### 7c. `fetch-lastfm-similar.mjs`
 For each directory artist with a Last.fm link (written by Phase 6),
-calls `artist.getSimilar` and stores the results. Used offline as
-the validation set for tuning recommendation weights — not a live
-production signal.
+calls `artist.getSimilar` and stores the results in
+`lastfm_similar_artists`. Where a similar artist can be matched to
+an existing row in the `artists` table (via Last.fm URL, MusicBrainz
+ID, or name), `similar_artist_id` is populated — this is what makes
+the data useful for weight tuning. Used as the validation / ground
+truth dataset for the scoring step; not a live production signal.
+
+After adding new Last.fm links (e.g. manually resolving ties in
+`pending_artist_links`), run with `--resolve-only` to backfill
+`similar_artist_id` for existing rows without making any API calls.
+
+```bash
+npm run fetch-lastfm-similar
+npm run fetch-lastfm-similar -- --resolve-only
+```
 
 ---
 
@@ -267,5 +279,5 @@ npm run add-beatport-links
 npm run resolve-and-load-links
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
-# npm run fetch-lastfm-similar   (not yet written)
+npm run fetch-lastfm-similar
 ```

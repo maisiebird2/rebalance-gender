@@ -22,6 +22,7 @@
     "clean-artist-names": "node scripts/clean-artist-names.mjs",
     "enrich-musicbrainz": "node scripts/enrich-musicbrainz.mjs",
     "fetch-lastfm-similar": "node scripts/fetch-lastfm-similar.mjs",
+    "compute-scores": "node scripts/compute-scores.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
