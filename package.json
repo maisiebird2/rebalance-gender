@@ -21,6 +21,7 @@
     "resolve-and-load-links": "node scripts/resolve-and-load-links-lf-mb-sp.mjs",
     "clean-artist-names": "node scripts/clean-artist-names.mjs",
     "enrich-musicbrainz": "node scripts/enrich-musicbrainz.mjs",
+    "fetch-lastfm-similar": "node scripts/fetch-lastfm-similar.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
@@ -31,7 +32,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.108.1",
-    "isomorphic-dompurify": "^2.25.0",
+    "sanitize-html": "^2.15.0",
     "next": "^16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"
@@ -44,6 +45,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sanitize-html": "^2.13.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",

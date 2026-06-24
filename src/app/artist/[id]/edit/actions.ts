@@ -276,7 +276,13 @@ export async function saveArtist(
 
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────
   if (bio !== null) {
-    const bio_sanitized = sanitizeAndLinkifyBio(bio);
+    let bio_sanitized: string;
+    try {
+      bio_sanitized = sanitizeAndLinkifyBio(bio);
+    } catch (err) {
+      console.error("sanitizeAndLinkifyBio error:", err);
+      bio_sanitized = bio; // fall back to raw text if sanitization fails
+    }
     const { error: enrichErr } = await admin
       .from("artist_enrichment")
       .upsert(
@@ -290,7 +296,13 @@ export async function saveArtist(
   // ── 9. Revalidate caches and redirect ─────────────────────────
   revalidatePath(`/artist/${artistId}`);
   revalidatePath("/");
-  redirect(`/artist/${artistId}`);
+  // The public artist page only renders approved artists. Redirect to the
+  // admin panel for any other status so we don't land on a 404.
+  if (directoryStatus === "approved") {
+    redirect(`/artist/${artistId}`);
+  } else {
+    redirect(`/admin`);
+  }
 }
 
 export async function deleteArtist(

@@ -5,33 +5,17 @@
  * by the standalone scripts/sanitize-bios.mjs + scripts/linkify-bios.mjs
  * (for bulk processing of enrichment data).
  *
- * NOTE: isomorphic-dompurify uses jsdom under the hood in Node.js
- * environments, so this module must only be imported in server-side
- * code (Server Actions, API routes, scripts). Never import it in a
- * Client Component.
+ * Uses sanitize-html (pure Node.js, no DOM required) instead of DOMPurify.
  */
 
-import DOMPurify from "isomorphic-dompurify";
+import sanitizeHtml from "sanitize-html";
 
 // ------------------------------------------------------------
-// DOMPurify config
+// Sanitization
 // ------------------------------------------------------------
-
-const ALLOWED_TAGS = ["a", "br", "p", "strong", "em", "b", "i", "ul", "ol", "li"];
-const ALLOWED_ATTR = ["href", "target", "rel"];
-
-// Add rel="noopener noreferrer" and target="_blank" to every <a> after
-// sanitization, so outbound links don't expose the referrer or allow
-// tab-napping.
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
 
 /**
- * Sanitize a raw bio string with DOMPurify.
+ * Sanitize a raw bio string.
  *
  * If the bio contains no HTML markup, bare newlines are converted to
  * <br> first so line breaks are preserved when rendered as HTML.
@@ -41,7 +25,24 @@ export function sanitizeBio(raw: string): string {
   const trimmed = raw.trim();
   const hasHtml = /<[a-z][\s\S]*?>/i.test(trimmed);
   const html = hasHtml ? trimmed : trimmed.replace(/\n/g, "<br>");
-  return DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR });
+
+  return sanitizeHtml(html, {
+    allowedTags: ["a", "br", "p", "strong", "em", "b", "i", "ul", "ol", "li"],
+    allowedAttributes: {
+      a: ["href", "target", "rel"],
+    },
+    // Add target/_blank and rel on every <a> after sanitization.
+    transformTags: {
+      a: (tagName, attribs) => ({
+        tagName,
+        attribs: {
+          ...attribs,
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+      }),
+    },
+  });
 }
 
 // ------------------------------------------------------------
