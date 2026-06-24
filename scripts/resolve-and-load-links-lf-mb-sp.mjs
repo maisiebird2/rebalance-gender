@@ -75,7 +75,8 @@ if (OPT_SERVICE && !ALL_SERVICES.includes(OPT_SERVICE)) {
 }
 const SERVICES = OPT_SERVICE ? [OPT_SERVICE] : ALL_SERVICES
 const CANDIDATES_PER_SERVICE = 5
-const CLOSE_MATCH_THRESHOLD  = 0.95
+const BEST_MATCH_THRESHOLD   = 0.95  // minimum confidence to auto-load as 'best match'
+const CLOSE_MATCH_THRESHOLD  = 0.95  // kept for 'close match' label on non-winners
 // ── Logging ───────────────────────────────────────────────────────────────────
 const fmt = (level, msg) =>
   `${new Date().toTimeString().slice(0, 8)} ${level.padEnd(8)} ${msg}`
@@ -246,7 +247,8 @@ function assignStatuses(ourName, candidates) {
   }
   return candidates.map(c => ({
     ...c,
-    status: winnerId && c.external_id === winnerId ? 'best match'
+    status: winnerId && c.external_id === winnerId
+              ? (c.scores.confidence >= BEST_MATCH_THRESHOLD ? 'best match' : 'pending')
           : tieIds.has(c.external_id)              ? 'tie'
           : c.scores.confidence >= CLOSE_MATCH_THRESHOLD ? 'close match'
           : 'pending',

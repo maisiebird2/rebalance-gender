@@ -106,7 +106,7 @@ async function main() {
   console.log(`\nFound ${dirty.length} artist(s) with names to clean:\n`)
   for (const r of dirty) {
     const cleanedDisplay = r.cleaned.length === 0 ? '(empty after cleaning)' : r.cleaned
-    console.log(`  "${r.original}"  →  "${cleanedDisplay}"`)
+    console.log(`  [${r.id}]  "${r.original}"  →  "${cleanedDisplay}"`)
     if (DEBUG) {
       console.log(`    before: ${toHex(r.original)}`)
       console.log(`    after:  ${toHex(r.cleaned)}`)

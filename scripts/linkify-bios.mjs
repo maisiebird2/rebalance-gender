@@ -30,6 +30,7 @@
 //   npm run linkify-bios                      # process all rows with bio_sanitized
 //   npm run linkify-bios -- --limit=20        # only process the first 20
 //   npm run linkify-bios -- --platform=soundcloud
+//   npm run linkify-bios -- --name="nina kraviz"
 //   DRY_RUN=1 npm run linkify-bios           # log without writing to DB
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
@@ -51,6 +52,8 @@ const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const platformArg = args.find((a) => a.startsWith("--platform="));
 const PLATFORM_FILTER = platformArg ? platformArg.slice("--platform=".length) : null;
+const nameArg = args.find((a) => a.startsWith("--name="));
+const NAME_FILTER = nameArg ? nameArg.slice("--name=".length).toLowerCase() : null;
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -167,30 +170,57 @@ async function main() {
   console.log(
     `linkify-bios: starting${DRY_RUN ? " (DRY RUN — no DB writes)" : ""}` +
       `${PLATFORM_FILTER ? `, --platform=${PLATFORM_FILTER}` : ""}` +
+      `${NAME_FILTER ? `, --name=${NAME_FILTER}` : ""}` +
       `${LIMIT ? `, --limit=${LIMIT}` : ""}`
   );
 
-  let query = supabase
-    .from("artist_enrichment")
-    .select("id, platform, bio_sanitized")
-    .not("bio_sanitized", "is", null);
-
-  if (PLATFORM_FILTER) {
-    query = query.eq("platform", PLATFORM_FILTER);
+  // Resolve --name filter to artist IDs up front
+  let nameFilterIds = null;
+  if (NAME_FILTER) {
+    const { data: matched, error: nameErr } = await supabase
+      .from("artists")
+      .select("id")
+      .ilike("name", `%${NAME_FILTER}%`);
+    if (nameErr) {
+      console.error("Failed to look up artists by name:", nameErr.message);
+      process.exit(1);
+    }
+    nameFilterIds = (matched ?? []).map((a) => a.id);
+    console.log(`  Name filter "${NAME_FILTER}": ${nameFilterIds.length} artist(s) matched.`);
+    if (!nameFilterIds.length) {
+      console.log("  No matches — nothing to do.");
+      return;
+    }
   }
 
-  if (LIMIT) {
-    query = query.limit(LIMIT);
+  // Fetch all matching enrichment rows, paginating past Supabase's 1000-row limit.
+  const PAGE_SIZE = 1000;
+  const rows = [];
+  let from = 0;
+  while (true) {
+    let q = supabase
+      .from("artist_enrichment")
+      .select("id, platform, bio_sanitized")
+      .not("bio_sanitized", "is", null)
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (PLATFORM_FILTER) q = q.eq("platform", PLATFORM_FILTER);
+    if (nameFilterIds) q = q.in("artist_id", nameFilterIds);
+
+    const { data, error } = await q;
+    if (error) {
+      console.error("Failed to fetch rows:", error.message);
+      process.exit(1);
+    }
+    rows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
 
-  const { data: rows, error } = await query;
+  if (LIMIT) rows.splice(LIMIT);
 
-  if (error) {
-    console.error("Failed to fetch rows:", error.message);
-    process.exit(1);
-  }
-
-  if (!rows || rows.length === 0) {
+  if (!rows.length) {
     console.log("No rows to process.");
     return;
   }

@@ -154,33 +154,34 @@ async function main() {
       `${LIMIT ? `, --limit=${LIMIT}` : ""}`
   );
 
-  // Fetch enrichment rows that have a bio.
-  let query = supabase
-    .from("artist_enrichment")
-    .select("id, artist_id, platform, bio, bio_sanitized")
-    .not("bio", "is", null);
+  // Fetch all matching enrichment rows, paginating past Supabase's 1000-row limit.
+  const PAGE_SIZE = 1000;
+  const rows = [];
+  let from = 0;
+  while (true) {
+    let q = supabase
+      .from("artist_enrichment")
+      .select("id, artist_id, platform, bio, bio_sanitized")
+      .not("bio", "is", null)
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (!FORCE) {
-    // Only rows where bio_sanitized hasn't been set yet.
-    query = query.is("bio_sanitized", null);
+    if (!FORCE) q = q.is("bio_sanitized", null);
+    if (PLATFORM_FILTER) q = q.eq("platform", PLATFORM_FILTER);
+
+    const { data, error } = await q;
+    if (error) {
+      console.error("Failed to fetch rows:", error.message);
+      process.exit(1);
+    }
+    rows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
 
-  if (PLATFORM_FILTER) {
-    query = query.eq("platform", PLATFORM_FILTER);
-  }
+  if (LIMIT) rows.splice(LIMIT);
 
-  if (LIMIT) {
-    query = query.limit(LIMIT);
-  }
-
-  const { data: rows, error } = await query;
-
-  if (error) {
-    console.error("Failed to fetch rows:", error.message);
-    process.exit(1);
-  }
-
-  if (!rows || rows.length === 0) {
+  if (!rows.length) {
     console.log("No rows to process.");
     return;
   }

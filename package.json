@@ -20,6 +20,7 @@
     "find-duplicates": "node scripts/find-duplicates.mjs",
     "resolve-and-load-links": "node scripts/resolve-and-load-links-lf-mb-sp.mjs",
     "clean-artist-names": "node scripts/clean-artist-names.mjs",
+    "enrich-musicbrainz": "node scripts/enrich-musicbrainz.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
