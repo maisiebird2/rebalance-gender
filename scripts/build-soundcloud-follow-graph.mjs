@@ -168,6 +168,37 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Wraps a Supabase call with retry logic for transient network errors
+// ("fetch failed", ECONNRESET, ETIMEDOUT). The PostgREST connection pool
+// can get overwhelmed during bulk inserts; backing off and retrying is
+// sufficient to recover in almost all cases.
+async function supabaseWithRetry(fn, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const result = await fn();
+      if (
+        result.error &&
+        attempt < maxRetries - 1 &&
+        (result.error.message?.includes("fetch failed") ||
+          result.error.message?.includes("ECONNRESET") ||
+          result.error.message?.includes("ETIMEDOUT"))
+      ) {
+        if (DEBUG) console.log(`  [debug] supabase network error, retrying in ${(attempt + 1) * 1000}ms`);
+        await sleep((attempt + 1) * 1000);
+        continue;
+      }
+      return result;
+    } catch (err) {
+      if (attempt < maxRetries - 1) {
+        if (DEBUG) console.log(`  [debug] supabase threw, retrying in ${(attempt + 1) * 1000}ms: ${err?.message}`);
+        await sleep((attempt + 1) * 1000);
+        continue;
+      }
+      return { data: null, error: err };
+    }
+  }
+}
+
 // ------------------------------------------------------------
 // SoundCloud OAuth (Client Credentials flow — app-only, public
 // resources). One token is fetched and reused for the whole run;
@@ -399,7 +430,7 @@ function upgradeAvatarUrl(url) {
 async function upsertEnrichment(artistId, user) {
   if (DRY_RUN) return { error: null };
 
-  return supabase.from("artist_enrichment").upsert(
+  return supabaseWithRetry(() => supabase.from("artist_enrichment").upsert(
     {
       artist_id: artistId,
       platform: "soundcloud",
@@ -416,7 +447,7 @@ async function upsertEnrichment(artistId, user) {
       sync_error: null,
     },
     { onConflict: "artist_id,platform" }
-  );
+  ));
 }
 
 // ------------------------------------------------------------
@@ -554,11 +585,13 @@ async function main() {
         if (DEBUG) console.log(`  [debug] new artist: ${name} (${permalinkUrl})`);
 
         if (!DRY_RUN) {
-          const { data: inserted, error: insertArtistError } = await supabase
-            .from("artists")
-            .insert({ name, directory_status: "sc_followee" })
-            .select("id")
-            .single();
+          const { data: inserted, error: insertArtistError } = await supabaseWithRetry(() =>
+            supabase
+              .from("artists")
+              .insert({ name, directory_status: "sc_followee" })
+              .select("id")
+              .single()
+          );
 
           if (insertArtistError) {
             console.error(`  failed to create artist for ${name}: ${insertArtistError.message}`);
@@ -566,16 +599,20 @@ async function main() {
           }
 
           followedArtistId = inserted.id;
+          await sleep(50);
 
-          const { error: insertLinkError } = await supabase.from("artist_links").insert({
-            artist_id: followedArtistId,
-            platform: "soundcloud",
-            handle: followed.username ?? null,
-            url: cleanScUrl(permalinkUrl),
-          });
+          const { error: insertLinkError } = await supabaseWithRetry(() =>
+            supabase.from("artist_links").insert({
+              artist_id: followedArtistId,
+              platform: "soundcloud",
+              handle: followed.username ?? null,
+              url: cleanScUrl(permalinkUrl),
+            })
+          );
           if (insertLinkError) {
             console.error(`  failed to save soundcloud link for ${name}: ${insertLinkError.message}`);
           }
+          await sleep(50);
 
           // The followings response already contains the full user object
           // — upsert enrichment for this new artist at no extra API cost.
@@ -609,12 +646,14 @@ async function main() {
       const realPairs = edgePairs.filter(
         (e) => typeof e.followed_artist_id === "string" && !e.followed_artist_id.startsWith("dry-run:")
       );
-      const { error: edgeError } = await supabase
-        .from("sc_follow_edges")
-        .upsert(realPairs, {
-          onConflict: "follower_artist_id,followed_artist_id",
-          ignoreDuplicates: true,
-        });
+      const { error: edgeError } = await supabaseWithRetry(() =>
+        supabase
+          .from("sc_follow_edges")
+          .upsert(realPairs, {
+            onConflict: "follower_artist_id,followed_artist_id",
+            ignoreDuplicates: true,
+          })
+      );
       if (edgeError) {
         console.error(`  failed to write follow edges for ${sourceName}: ${edgeError.message}`);
       } else {

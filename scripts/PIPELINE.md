@@ -229,6 +229,67 @@ npm run fetch-lastfm-similar
 npm run fetch-lastfm-similar -- --resolve-only
 ```
 
+### 7d. `harvest-genres-mb.mjs`
+Copies rows from `mb_tags` (populated by `enrich-musicbrainz.mjs` in
+Phase 7b) into the `artist_harvested_genres` staging table with
+`source_platform = 'musicbrainz'`. No API calls — purely a
+database-to-database copy. Must run after 7b.
+
+```bash
+node scripts/harvest-genres-mb.mjs
+```
+
+### 7e. `harvest-genres-lastfm.mjs`
+For each artist with a Last.fm link, calls `artist.getTopTags` and
+writes the results into `artist_harvested_genres` with
+`source_platform = 'lastfm'`. Stores the Last.fm weighting (0–100)
+as `tag_count`. Results are cached to `.cache/lastfm_genres/`.
+Must run after Phase 6 so Last.fm links are in `artist_links`.
+
+```bash
+node scripts/harvest-genres-lastfm.mjs
+```
+
+Requires `LASTFM_API_KEY` in `.env.local`.
+
+### 7f. `harvest-genres-spotify.mjs`
+For each artist with a Spotify link, calls `GET /artists/{id}` and
+writes the returned genre array into `artist_harvested_genres` with
+`source_platform = 'spotify'`. Spotify does not provide a per-genre
+weight, so `tag_count` is null for these rows. Results are cached to
+`.cache/spotify_genres/`. Must run after Phase 6.
+
+```bash
+node scripts/harvest-genres-spotify.mjs
+```
+
+Requires `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`.
+
+### 7g. `integrate-harvested-genres.mjs`
+Promotes rows from `artist_harvested_genres` into the live `genres`
+and `artist_genres` tables. For each unprocessed row:
+
+- Looks up the raw tag in `GENRE_ALIASES` to resolve variant
+  spellings (e.g. "drum and bass", "d&b", "dnb" → "drum & bass").
+- Checks against `BROAD_TAGS` and marks overly vague tags as skipped
+  (e.g. "electronic", "edm", "seen live") without creating genre entries.
+- Finds or creates the canonical genre in the `genres` table, then
+  inserts the `artist_genres` link.
+- Sets `genre_id` on the harvested row to mark it as processed.
+
+Both `GENRE_ALIASES` and `BROAD_TAGS` are constants near the top of
+the script — edit them freely to tune which tags survive and what
+canonical names they map to. Run `--force-skipped` after updating
+`BROAD_TAGS` to re-process rows that were previously discarded.
+
+Must run after 7d, 7e, and 7f.
+
+```bash
+DRY_RUN=1 node scripts/integrate-harvested-genres.mjs --debug --limit=50   # verify first
+node scripts/integrate-harvested-genres.mjs
+node scripts/integrate-harvested-genres.mjs --force-skipped   # after editing BROAD_TAGS
+```
+
 ---
 
 ## Phase 8 — Review / data quality
@@ -280,4 +341,8 @@ npm run resolve-and-load-links
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
 npm run fetch-lastfm-similar
+node scripts/harvest-genres-mb.mjs
+node scripts/harvest-genres-lastfm.mjs
+node scripts/harvest-genres-spotify.mjs
+node scripts/integrate-harvested-genres.mjs
 ```

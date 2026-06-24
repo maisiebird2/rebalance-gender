@@ -12,13 +12,30 @@ The two processes run on different cadences:
 
 ---
 
+## Environment setup
+
+Activate your conda environment, then install the required packages:
+
+```bash
+conda install numpy pandas requests
+```
+
+---
+
 ## Overview
 
+The scoring pipeline has three steps, each a separate Python script:
+
 ```
-Step 1 │ Compute raw signal scores → artist_similarity_scores
-Step 2 │ Tune weights (Python, offline analysis)
-Step 3 │ Update weights in compute-scores.mjs, re-run with --force
+Step 1 │ compute-scores.py  →  .cache/pair-scores.csv
+Step 2 │ tune-weights.py    →  best weights (printed to terminal)
+Step 3 │ push-scores.py     →  artist_similarity_scores table in DB
 ```
+
+Steps 1 and 2 run locally with no DB writes. The CSV file is the shared
+state between them — you can re-run step 2 with different parameters
+without re-fetching from the database. Step 3 is the only step that
+writes to the database.
 
 ---
 
@@ -42,115 +59,132 @@ The total score is:
 total_score = w1·genre + w2·mb_tag + w3·mb_collab + w4·direct_follow + w5·co_follow
 ```
 
-Weights are defined at the top of `compute-scores.mjs` and must sum to 1.0.
-The initial values are equal weights (0.20 each) — update them after running
-`tune-weights.py`.
+Weights are passed as flags to `push-scores.py` and must sum to 1.0.
+Before tuning, use equal weights (0.20 each). After tuning, use the
+values reported by `tune-weights.py`.
 
 ---
 
-## Step 1 — `compute-scores.mjs`
+## Step 1 — `compute-scores.py`
 
-Reads all signal tables, scores every pair with at least one signal, and
-writes the top-10 recommendations per artist into `artist_similarity_scores`.
+Fetches all signal data from the database, computes the five raw signal
+scores for every pair with at least one signal, and writes the results to
+a local CSV file. Does not compute weighted totals or write to the DB.
+
+On every DB fetch, signal data is also saved to `.cache/signals.json`.
+Subsequent runs with `--cached` load from that file instead of hitting the
+database — useful when iterating on scoring logic without changing the
+underlying signal data.
 
 ```bash
-npm run compute-scores                # score artists that don't have scores yet
-npm run compute-scores -- --force    # recompute scores for all artists
-npm run compute-scores -- --debug    # verbose output
-DRY_RUN=1 npm run compute-scores     # compute but don't write to DB
+# First run — fetches from DB, caches signals, writes CSV:
+python scripts/compute-scores.py
+
+# Re-run using cached signals (no DB calls):
+python scripts/compute-scores.py --cached
+
+# Cached + sample 50 artists for a quick debug loop:
+python scripts/compute-scores.py --cached --limit=50
+
+# Force re-fetch from DB (e.g. after running the enrichment pipeline):
+python scripts/compute-scores.py --refresh
+
+# Verbose output (show sample pairs):
+python scripts/compute-scores.py --debug
 ```
 
-**Without `--force`:** skips artists that already have rows in
-`artist_similarity_scores`. Use this when new artists have been added and
-you want to score only the newcomers.
+The CSV is written to `.cache/pair-scores.csv` by default. Both cache
+files are git-ignored.
 
-**With `--force`:** recomputes scores for all artists and overwrites existing
-rows. Use this after updating the weights in `compute-scores.mjs`.
-
-**To reset the table entirely** before a full recompute, run this in the
-Supabase SQL editor:
-
-```sql
-truncate table artist_similarity_scores;
-```
-
-Then run `npm run compute-scores` (without `--force` — the table is empty so
-all artists will be scored regardless).
+When `--limit` is used, the sample is drawn from the full cached set, so
+you get a fresh random sample each run. Results from a limited run are
+useful for verifying the pipeline end-to-end, but not representative
+enough for reliable weight tuning.
 
 ---
 
 ## Step 2 — `tune-weights.py`
 
-Reads raw signal data directly from the signal tables (not from
-`artist_similarity_scores` — that only stores the current top-10, which
-would bias the search). Recomputes scores for all candidate pairs from
-scratch, then grid-searches over weight combinations to find the weights
-that best predict the Last.fm validation set.
+Reads pair scores from the local CSV and the Last.fm similar artists
+validation set from the database. Grid-searches over weight combinations
+to find the weights that best predict which artists Last.fm considers
+similar. Reports Precision@K and NDCG@K, and prints a ready-to-use
+`push-scores.py` command with the best weights.
 
-Reports Precision@K and NDCG@K for the best combinations, and prints a
-ready-to-paste `WEIGHTS` block for `compute-scores.mjs`.
-
-No DB writes — purely analytical output.
+No DB writes.
 
 ```bash
-# Install dependencies first (once, inside your conda environment):
-conda install numpy
-pip install requests
-
 python scripts/tune-weights.py
 python scripts/tune-weights.py --step=0.1       # coarser grid, faster
+python scripts/tune-weights.py --step=0.05      # default (~10,600 combos)
 python scripts/tune-weights.py --top-k=10       # default
 python scripts/tune-weights.py --lfm-top=50     # use top-50 LFM similar as positives (default)
 python scripts/tune-weights.py --debug          # show progress during grid search
 ```
 
-**`--step`** controls grid granularity. At `0.05` (default) there are ~10,600
-weight combinations; at `0.1` there are ~126. Start coarse to sanity-check,
-then refine.
+**`--step`** controls grid granularity. Start coarse (`0.1`) to sanity-check,
+then refine (`0.05` or smaller).
 
 **`--lfm-top`** controls how many of Last.fm's similar artists count as
-"ground truth positives" for each source artist. Lower values (e.g. 20) use
-only the most confident LFM matches; higher values (e.g. 100) include weaker
-ones.
+positives per source artist. Lower values use only the most confident
+LFM matches.
 
 **`--min-validation`** skips source artists with fewer than N LFM positives
 in our directory (default 3). Too few positives makes Precision@K noisy.
 
 ---
 
-## Step 3 — Update weights and recompute
+## Step 3 — `push-scores.py`
 
-After `tune-weights.py` identifies the best weights, open `compute-scores.mjs`
-and update the `WEIGHTS` constant near the top of the file:
+Reads the local CSV, applies weights, extracts the top-10 recommendations
+per artist, and writes them to `artist_similarity_scores` in the database.
 
-```js
-const WEIGHTS = {
-  genre:        0.20,   // ← update these
-  mbTag:        0.20,
-  mbCollab:     0.20,
-  directFollow: 0.20,
-  coFollow:     0.20,
-}
+```bash
+# Equal weights (default):
+python scripts/push-scores.py
+
+# With weights from tune-weights.py:
+python scripts/push-scores.py \
+  --genre=0.30 --mb-tag=0.25 --mb-collab=0.15 \
+  --direct-follow=0.10 --co-follow=0.20
+
+# Dry run (compute but don't write):
+DRY_RUN=1 python scripts/push-scores.py
 ```
 
-Then truncate the table and recompute:
+`tune-weights.py` prints the exact `push-scores.py` command to run at the
+end of its output — copy-paste it directly.
+
+---
+
+## Resetting the database table
+
+When you want to do a full recompute and clear existing scores:
 
 ```sql
 truncate table artist_similarity_scores;
 ```
 
-```bash
-npm run compute-scores
-```
+Run this in the Supabase SQL editor, then re-run `push-scores.py`.
+
+---
+
+## Shared library
+
+Signal loading, the Supabase client, pair enumeration, and Jaccard scoring
+are in `scripts/lib/scoring.py`. All three scripts import from it.
 
 ---
 
 ## Notes
 
-- Tuning and scoring can be re-run at any time without touching the enrichment
-  data. The signal tables (`artist_genres`, `mb_tags`, etc.) are read-only
-  from the scoring process's perspective.
+- Tuning and scoring can be re-run at any time without touching the
+  enrichment data. The signal tables are read-only from the scoring
+  pipeline's perspective.
 - If you re-run the enrichment pipeline (adding new MB tags, follow edges,
-  etc.), run `compute-scores` afterwards to refresh the scores.
+  etc.), re-run `compute-scores.py` to regenerate the local CSV, then
+  push the updated scores.
 - The `lastfm_similar_artists` validation set is deliberately kept separate
-  from the scoring inputs — it is used only for tuning, never as a live signal.
+  from the scoring signals — it is used only for tuning.
+- `compute-scores.mjs` (Node.js) is superseded by the Python pipeline
+  and no longer maintained.
