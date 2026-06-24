@@ -33,26 +33,32 @@ export function platformPlaceholder(label: string): string {
 }
 
 /**
- * Cleans tracking/query-string cruft from profile link URLs before they're
- * saved.
+ * Cleans a profile link URL before it is saved to the database.
  *
+ * Always applied regardless of platform:
+ * - Trims leading and trailing whitespace (including newlines and tabs).
+ *
+ * Platform-specific cleaning:
  * - Spotify: strips everything from `?` onward (e.g. `?si=...&nd=...`).
  * - SoundCloud: same, except search URLs (`/search?q=...`) are left intact
  *   because the query string is the content, not a tracking param.
  */
 export function cleanLinkUrl(platform: string, url: string): string {
+  // Trim first so all downstream checks operate on a clean string.
+  const trimmed = url.trim();
+
   if (platform === "spotify") {
-    return url.split("?")[0];
+    return trimmed.split("?")[0];
   }
   if (platform === "soundcloud") {
     try {
-      const parsed = new URL(url);
-      if (parsed.pathname.startsWith("/search")) return url;
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith("/search")) return trimmed;
     } catch {
       // malformed URL — fall through and return as-is
-      return url;
+      return trimmed;
     }
-    return url.split("?")[0];
+    return trimmed.split("?")[0];
   }
-  return url;
+  return trimmed;
 }
