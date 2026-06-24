@@ -567,72 +567,120 @@ async function main() {
     followingsFetched += users.length;
 
     let artistsCreatedForThisSource = 0;
-    const edgePairs = [];
+
+    // ---- Pass 1: classify each followed account as known or new ----------
+    // toCreate  — new accounts not yet in the DB, in followings order
+    // followedMeta — all valid followed accounts, in followings order
+    //               (used for edge-pair construction in pass 3)
+    const toCreate = [];   // { followed, normalized, name }
+    const followedMeta = []; // { followed, normalized }
 
     for (const followed of users) {
       const permalinkUrl = followed.permalink_url;
       if (!permalinkUrl) continue;
 
       const normalized = normalizeScUrl(permalinkUrl);
-      let followedArtistId = scUrlToArtistId.get(normalized);
+      followedMeta.push({ followed, normalized });
 
-      if (!followedArtistId) {
+      if (!scUrlToArtistId.has(normalized)) {
         const name =
           cleanArtistName(typeof followed.full_name === "string" ? followed.full_name : "") ||
           cleanArtistName(typeof followed.username === "string" ? followed.username : "") ||
           "Unknown SoundCloud artist";
 
         if (DEBUG) console.log(`  [debug] new artist: ${name} (${permalinkUrl})`);
+        toCreate.push({ followed, normalized, name });
+      }
+    }
 
-        if (!DRY_RUN) {
-          const { data: inserted, error: insertArtistError } = await supabaseWithRetry(() =>
-            supabase
-              .from("artists")
-              .insert({ name, directory_status: "sc_followee" })
-              .select("id")
-              .single()
-          );
+    // ---- Pass 2: batch-insert new artists (3 DB calls instead of 3×N) ---
+    if (toCreate.length > 0) {
+      if (!DRY_RUN) {
+        // One INSERT for all new artist rows; PostgreSQL returns them in
+        // insertion order, so index i of insertedArtists maps to toCreate[i].
+        const { data: insertedArtists, error: insertArtistsError } = await supabaseWithRetry(() =>
+          supabase
+            .from("artists")
+            .insert(toCreate.map((a) => ({ name: a.name, directory_status: "sc_followee" })))
+            .select("id")
+        );
 
-          if (insertArtistError) {
-            console.error(`  failed to create artist for ${name}: ${insertArtistError.message}`);
-            continue;
-          }
+        if (insertArtistsError) {
+          console.error(`  failed to batch-create artists: ${insertArtistsError.message}`);
+          // Edges for these artists won't be written, but the source artist
+          // is not marked as failed — it will still be cached so followings
+          // that were already-known still get their edges written below.
+        } else {
+          const newLinks = [];
+          const newEnrichments = [];
 
-          followedArtistId = inserted.id;
-          await sleep(50);
+          for (let i = 0; i < toCreate.length; i++) {
+            const { followed, normalized } = toCreate[i];
+            const artistId = insertedArtists[i].id;
+            scUrlToArtistId.set(normalized, artistId);
+            artistsCreatedForThisSource++;
 
-          const { error: insertLinkError } = await supabaseWithRetry(() =>
-            supabase.from("artist_links").insert({
-              artist_id: followedArtistId,
+            newLinks.push({
+              artist_id: artistId,
               platform: "soundcloud",
               handle: followed.username ?? null,
-              url: cleanScUrl(permalinkUrl),
-            })
+              url: cleanScUrl(followed.permalink_url),
+            });
+
+            newEnrichments.push({
+              artist_id: artistId,
+              platform: "soundcloud",
+              external_id: followed.id != null ? String(followed.id) : null,
+              profile_image_url: upgradeAvatarUrl(followed.avatar_url),
+              bio:
+                typeof followed.description === "string" && followed.description.trim()
+                  ? followed.description.trim()
+                  : null,
+              follower_count: followed.followers_count ?? null,
+              track_count: followed.track_count ?? null,
+              recent_tracks: null,
+              raw_data: followed,
+              last_synced_at: new Date().toISOString(),
+              sync_error: null,
+            });
+          }
+
+          // One INSERT for all new artist_links rows.
+          const { error: linksError } = await supabaseWithRetry(() =>
+            supabase.from("artist_links").insert(newLinks)
           );
-          if (insertLinkError) {
-            console.error(`  failed to save soundcloud link for ${name}: ${insertLinkError.message}`);
+          if (linksError) {
+            console.error(`  failed to batch-insert artist links: ${linksError.message}`);
           }
-          await sleep(50);
 
-          // The followings response already contains the full user object
-          // — upsert enrichment for this new artist at no extra API cost.
-          const { error: enrichError } = await upsertEnrichment(followedArtistId, followed);
+          // One UPSERT for all new enrichment rows.
+          const { error: enrichError } = await supabaseWithRetry(() =>
+            supabase
+              .from("artist_enrichment")
+              .upsert(newEnrichments, { onConflict: "artist_id,platform" })
+          );
           if (enrichError) {
-            console.error(`  failed to save enrichment for ${name}: ${enrichError.message}`);
+            console.error(`  failed to batch-upsert enrichments: ${enrichError.message}`);
           } else {
-            enrichmentUpserted++;
+            enrichmentUpserted += newEnrichments.length;
           }
-        } else {
-          // DRY_RUN: synthesize a placeholder id so edge-counting logic
-          // below still runs, but nothing is ever written.
-          followedArtistId = `dry-run:${normalized}`;
         }
-
-        scUrlToArtistId.set(normalized, followedArtistId);
-        newArtistsCreated++;
-        artistsCreatedForThisSource++;
+      } else {
+        // DRY_RUN: synthesize placeholder ids so edge-counting still works.
+        for (const { normalized } of toCreate) {
+          scUrlToArtistId.set(normalized, `dry-run:${normalized}`);
+          artistsCreatedForThisSource++;
+        }
       }
 
+      newArtistsCreated += artistsCreatedForThisSource;
+    }
+
+    // ---- Pass 3: build edge pairs from the now-complete id map -----------
+    const edgePairs = [];
+    for (const { normalized } of followedMeta) {
+      const followedArtistId = scUrlToArtistId.get(normalized);
+      if (!followedArtistId) continue; // batch insert failed for this artist
       if (followedArtistId === sourceArtistId) continue; // chk_sc_follow_no_self
       edgePairs.push({
         follower_artist_id: sourceArtistId,
@@ -641,8 +689,6 @@ async function main() {
     }
 
     if (edgePairs.length > 0 && !DRY_RUN) {
-      // Filter out any placeholder ids (shouldn't happen outside
-      // DRY_RUN, but guards against a partial insert failure above).
       const realPairs = edgePairs.filter(
         (e) => typeof e.followed_artist_id === "string" && !e.followed_artist_id.startsWith("dry-run:")
       );
