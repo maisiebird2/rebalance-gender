@@ -65,6 +65,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanArtistName } from "./lib/name-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -546,8 +547,8 @@ async function main() {
 
       if (!followedArtistId) {
         const name =
-          (typeof followed.full_name === "string" && followed.full_name.trim()) ||
-          (typeof followed.username === "string" && followed.username.trim()) ||
+          cleanArtistName(typeof followed.full_name === "string" ? followed.full_name : "") ||
+          cleanArtistName(typeof followed.username === "string" ? followed.username : "") ||
           "Unknown SoundCloud artist";
 
         if (DEBUG) console.log(`  [debug] new artist: ${name} (${permalinkUrl})`);

@@ -28,6 +28,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { createHash } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
+import { isBlankArtistName } from './lib/name-utils.mjs'
 // ── Environment ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 ;(function loadEnv() {
@@ -570,7 +571,14 @@ async function main() {
     artists = artists.filter(a => a.name.toLowerCase() === OPT_ARTIST.toLowerCase())
     if (!artists.length) { err(`Artist "${OPT_ARTIST}" not found.`); process.exit(1) }
   }
-  if (OPT_LIMIT) artists = artists.slice(0, OPT_LIMIT)
+  if (OPT_LIMIT) {
+    // Shuffle and take N, so --limit gives a random sample rather than the first N alphabetically.
+    for (let i = artists.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [artists[i], artists[j]] = [artists[j], artists[i]]
+    }
+    artists = artists.slice(0, OPT_LIMIT)
+  }
   const withSpotify  = await artistsWithSpotifyLink()
   const spotifySkips = SERVICES.includes('spotify')
     ? artists.filter(a => withSpotify.has(a.id)).length : 0
@@ -581,6 +589,10 @@ async function main() {
   const skipCounts = Object.fromEntries(ALL_SERVICES.map(s => [s, 0]))
   for (let i = 0; i < artists.length; i++) {
     const artist = artists[i]
+    if (isBlankArtistName(artist.name)) {
+      warn(`Skipping artist ${artist.id} — name is blank or invisible characters only.`)
+      continue
+    }
     for (const service of SERVICES) {
       if (service === 'spotify' && withSpotify.has(artist.id)) continue
       if (!OPT_FORCE && !OPT_DRY_RUN && await alreadyResolved(artist.id, service)) {
@@ -596,8 +608,23 @@ async function main() {
         if (!OPT_DRY_RUN) {
           await upsertCandidates(artist.id, service, candidates)
         } else {
-          const best = candidates.find(c => c.status === 'best match')
-          if (best) log(`[dry-run] ${artist.name} / ${service} → "${best.external_name}" (${best.scores.confidence.toFixed(3)})`)
+          const STATUS_ICON = { 'best match': '✓', 'close match': '~', tie: '=', pending: '·' }
+          const svcLabel = service.padEnd(12)
+          console.log(`\n  ${artist.name}  /  ${svcLabel}`)
+          for (const c of candidates) {
+            const icon   = STATUS_ICON[c.status] ?? '?'
+            const conf   = c.scores.confidence.toFixed(3)
+            const name   = c.scores.score_name   != null ? `name=${c.scores.score_name.toFixed(2)}`   : ''
+            const loc    = c.scores.score_location != null ? `loc=${c.scores.score_location.toFixed(2)}`  : ''
+            const bio    = c.scores.score_bio      != null ? `bio=${c.scores.score_bio.toFixed(2)}`      : ''
+            const pop    = c.scores.score_popularity != null ? `pop=${c.scores.score_popularity.toFixed(2)}` : ''
+            const subs   = [name, loc, bio, pop].filter(Boolean).join('  ')
+            const extra  = c.api_data?.disambiguation ? `  (${c.api_data.disambiguation})` : ''
+            const area   = c.api_data?.begin_area ?? c.api_data?.area ?? ''
+            const loc2   = area ? `  [${area}]` : ''
+            console.log(`    ${icon} [${conf}]  ${c.external_name}${extra}${loc2}`)
+            if (subs) console.log(`             ${subs}`)
+          }
         }
         processed++
       } catch (e) {
