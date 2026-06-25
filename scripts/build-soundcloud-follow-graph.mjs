@@ -41,9 +41,9 @@
 //
 // Usage (from the wem-directory/ folder):
 //
-//   node scripts/build-soundcloud-follow-graph.mjs                  # all approved artists with a SoundCloud link
+//   node scripts/build-soundcloud-follow-graph.mjs                  # all approved artists not yet processed
 //   node scripts/build-soundcloud-follow-graph.mjs --limit=5        # only the next 5 unprocessed source artists (for testing)
-//   node scripts/build-soundcloud-follow-graph.mjs --force          # re-pull even source artists already processed (bypasses cache)
+//   node scripts/build-soundcloud-follow-graph.mjs --force          # re-pull all artists, including already-processed ones
 //   node scripts/build-soundcloud-follow-graph.mjs --debug          # log every followed account considered
 //   node scripts/build-soundcloud-follow-graph.mjs --max-followings=200
 //                                                                    # cap how many followings are pulled per source artist (default 500; 0 = unlimited)
@@ -55,10 +55,11 @@
 // into the hundreds of API calls once you add pagination, and every
 // previously-unseen followed account becomes a new row in `artists`.
 //
-// Results are cached in build-soundcloud-follow-graph-cache.json
-// alongside this script (which source artists' followings have
-// already been pulled) so re-running without --force only processes
-// new/unprocessed source artists.
+// Progress is tracked in the database (artist_enrichment.follow_graph_built_at)
+// rather than a local cache file. Artists with a dead SoundCloud link are
+// recorded with sync_error = 'resolve_failed' and skipped on future runs.
+// Fixing the URL in artist_links automatically clears both fields via a DB
+// trigger, queuing the artist for re-processing on the next run.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -66,6 +67,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanArtistName } from "./lib/name-utils.mjs";
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -84,33 +86,6 @@ const maxFollowingsArg = args.find((a) => a.startsWith("--max-followings="));
 const MAX_FOLLOWINGS = maxFollowingsArg ? parseInt(maxFollowingsArg.split("=")[1], 10) : 500;
 // 0 means unlimited
 const FOLLOWINGS_CAP = MAX_FOLLOWINGS === 0 ? Infinity : MAX_FOLLOWINGS;
-
-// ------------------------------------------------------------
-// Source-artist-level cache — persisted to disk between runs.
-// Structure: { [soundcloudUrl]: { checkedAt: ISO string, followingsFetched: number, newArtistsCreated: number, edgesWritten: number } }
-// A source artist's SoundCloud URL present in the cache is not
-// re-processed unless --force is passed.
-// ------------------------------------------------------------
-const CACHE_PATH = path.join(__dirname, "build-soundcloud-follow-graph-cache.json");
-
-function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_PATH)) {
-      return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
-    }
-  } catch (err) {
-    console.warn(`Warning: could not read cache file (${err.message}); starting fresh.`);
-  }
-  return {};
-}
-
-function saveCache(cache) {
-  try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
-  } catch (err) {
-    console.warn(`Warning: could not write cache file (${err.message}).`);
-  }
-}
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -169,29 +144,36 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Wraps a Supabase call with retry logic for transient network errors
-// ("fetch failed", ECONNRESET, ETIMEDOUT). The PostgREST connection pool
-// can get overwhelmed during bulk inserts; backing off and retrying is
-// sufficient to recover in almost all cases.
-async function supabaseWithRetry(fn, maxRetries = 3) {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+// ("fetch failed", ECONNRESET, ETIMEDOUT). A large enrichment payload can
+// drop the connection for 30+ seconds, so we use exponential-ish backoff
+// with enough headroom to ride out a real outage.
+const SUPABASE_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000, 30000]; // ~67s total
+
+function isNetworkError(msg) {
+  return (
+    msg?.includes("fetch failed") ||
+    msg?.includes("ECONNRESET") ||
+    msg?.includes("ETIMEDOUT") ||
+    msg?.includes("ECONNREFUSED")
+  );
+}
+
+async function supabaseWithRetry(fn) {
+  for (let attempt = 0; attempt <= SUPABASE_RETRY_DELAYS_MS.length; attempt++) {
     try {
       const result = await fn();
-      if (
-        result.error &&
-        attempt < maxRetries - 1 &&
-        (result.error.message?.includes("fetch failed") ||
-          result.error.message?.includes("ECONNRESET") ||
-          result.error.message?.includes("ETIMEDOUT"))
-      ) {
-        if (DEBUG) console.log(`  [debug] supabase network error, retrying in ${(attempt + 1) * 1000}ms`);
-        await sleep((attempt + 1) * 1000);
+      if (result.error && attempt < SUPABASE_RETRY_DELAYS_MS.length && isNetworkError(result.error.message)) {
+        const delay = SUPABASE_RETRY_DELAYS_MS[attempt];
+        if (DEBUG) console.log(`  [debug] supabase network error, retrying in ${delay}ms`);
+        await sleep(delay);
         continue;
       }
       return result;
     } catch (err) {
-      if (attempt < maxRetries - 1) {
-        if (DEBUG) console.log(`  [debug] supabase threw, retrying in ${(attempt + 1) * 1000}ms: ${err?.message}`);
-        await sleep((attempt + 1) * 1000);
+      if (attempt < SUPABASE_RETRY_DELAYS_MS.length) {
+        const delay = SUPABASE_RETRY_DELAYS_MS[attempt];
+        if (DEBUG) console.log(`  [debug] supabase threw, retrying in ${delay}ms: ${err?.message}`);
+        await sleep(delay);
         continue;
       }
       return { data: null, error: err };
@@ -382,6 +364,19 @@ async function fetchAllSoundCloudUrlMap() {
   return map;
 }
 
+// Returns the set of artist_ids that have already been processed by this
+// script (follow_graph_built_at IS NOT NULL) or have a recorded error
+// (sync_error IS NOT NULL, e.g. 'resolve_failed' for a dead link).
+// Both states are skipped on a normal run; --force bypasses this entirely.
+async function fetchProcessedArtistIds() {
+  const rows = await fetchAllRows("artist_enrichment", "artist_id", (q) =>
+    q
+      .eq("platform", "soundcloud")
+      .or("follow_graph_built_at.not.is.null,sync_error.not.is.null")
+  );
+  return new Set(rows.map((r) => r.artist_id));
+}
+
 function normalizeScUrl(url) {
   try {
     const u = new URL(url);
@@ -468,38 +463,23 @@ async function main() {
   await getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
-  const cache = FORCE ? {} : loadCache();
   if (FORCE) {
-    console.log("--force: bypassing source-artist cache\n");
-  } else {
-    const cachedCount = Object.keys(cache).length;
-    if (cachedCount > 0) {
-      console.log(
-        `Cache loaded: ${cachedCount} source artist(s) already processed (pass --force to bypass)\n`
-      );
-    }
+    console.log("--force: re-processing all artists, including already-processed ones\n");
   }
 
   const sourceLinks = await fetchApprovedSoundCloudLinks();
 
-  let rows = sourceLinks;
-  let skippedCached = 0;
-  if (!FORCE) {
-    const remaining = [];
-    for (const row of sourceLinks) {
-      if (cache[row.url] !== undefined) {
-        skippedCached++;
-      } else {
-        remaining.push(row);
-      }
-    }
-    rows = remaining;
-  }
+  const processedArtistIds = FORCE ? new Set() : await fetchProcessedArtistIds();
+  const skippedProcessed = FORCE ? 0 : sourceLinks.filter((r) => processedArtistIds.has(r.artist_id)).length;
+
+  let rows = FORCE
+    ? sourceLinks
+    : sourceLinks.filter((r) => !processedArtistIds.has(r.artist_id));
   if (LIMIT) rows = rows.slice(0, LIMIT);
 
   console.log(
     `Found ${sourceLinks.length} approved-artist SoundCloud link(s)` +
-      (skippedCached > 0 ? `, ${skippedCached} already cached (skipped)` : "") +
+      (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
 
@@ -527,14 +507,22 @@ async function main() {
     if (!userRes.ok || !userRes.data) {
       resolveFailed++;
       console.log(`✗ ${sourceName}: failed to resolve ${scUrl}`);
-      cache[scUrl] = {
-        checkedAt: new Date().toISOString(),
-        followingsFetched: 0,
-        newArtistsCreated: 0,
-        edgesWritten: 0,
-        error: "resolve_failed",
-      };
-      if (!DRY_RUN) saveCache(cache);
+      // Record the dead link in the DB so this artist is skipped on future
+      // runs. The trigger on artist_links will clear sync_error automatically
+      // if the URL is fixed.
+      if (!DRY_RUN) {
+        await supabaseWithRetry(() =>
+          supabase.from("artist_enrichment").upsert(
+            {
+              artist_id: sourceArtistId,
+              platform: "soundcloud",
+              sync_error: "resolve_failed",
+              last_synced_at: new Date().toISOString(),
+            },
+            { onConflict: "artist_id,platform" }
+          )
+        );
+      }
       await sleep(300);
       continue;
     }
@@ -593,29 +581,38 @@ async function main() {
       }
     }
 
-    // ---- Pass 2: batch-insert new artists (3 DB calls instead of 3×N) ---
+    // ---- Pass 2: batch-insert new artists in chunks of 50 ---------------
+    // Chunking keeps individual request payloads small (enrichment rows
+    // carry a full raw_data JSONB blob each — 50+ rows in one request can
+    // push hundreds of KB and drop the Supabase connection).
+    // PostgreSQL returns INSERT rows in insertion order within each chunk,
+    // so index i of insertedArtists maps to chunk[i].
+    const DB_CHUNK_SIZE = 50;
+
     if (toCreate.length > 0) {
       if (!DRY_RUN) {
-        // One INSERT for all new artist rows; PostgreSQL returns them in
-        // insertion order, so index i of insertedArtists maps to toCreate[i].
-        const { data: insertedArtists, error: insertArtistsError } = await supabaseWithRetry(() =>
-          supabase
-            .from("artists")
-            .insert(toCreate.map((a) => ({ name: a.name, directory_status: "sc_followee" })))
-            .select("id")
-        );
+        for (let chunkStart = 0; chunkStart < toCreate.length; chunkStart += DB_CHUNK_SIZE) {
+          const chunk = toCreate.slice(chunkStart, chunkStart + DB_CHUNK_SIZE);
 
-        if (insertArtistsError) {
-          console.error(`  failed to batch-create artists: ${insertArtistsError.message}`);
-          // Edges for these artists won't be written, but the source artist
-          // is not marked as failed — it will still be cached so followings
-          // that were already-known still get their edges written below.
-        } else {
+          const { data: insertedArtists, error: insertArtistsError } = await supabaseWithRetry(() =>
+            supabase
+              .from("artists")
+              .insert(chunk.map((a) => ({ name: a.name, directory_status: "sc_followee" })))
+              .select("id")
+          );
+
+          if (insertArtistsError) {
+            console.error(`  failed to batch-create artists (chunk ${chunkStart}–${chunkStart + chunk.length - 1}): ${insertArtistsError.message}`);
+            // Skip links + enrichments for this chunk; edges for these artists
+            // won't be written but the source artist still gets cached.
+            continue;
+          }
+
           const newLinks = [];
           const newEnrichments = [];
 
-          for (let i = 0; i < toCreate.length; i++) {
-            const { followed, normalized } = toCreate[i];
+          for (let i = 0; i < chunk.length; i++) {
+            const { followed, normalized } = chunk[i];
             const artistId = insertedArtists[i].id;
             scUrlToArtistId.set(normalized, artistId);
             artistsCreatedForThisSource++;
@@ -645,22 +642,20 @@ async function main() {
             });
           }
 
-          // One INSERT for all new artist_links rows.
           const { error: linksError } = await supabaseWithRetry(() =>
             supabase.from("artist_links").insert(newLinks)
           );
           if (linksError) {
-            console.error(`  failed to batch-insert artist links: ${linksError.message}`);
+            console.error(`  failed to batch-insert artist links (chunk ${chunkStart}): ${linksError.message}`);
           }
 
-          // One UPSERT for all new enrichment rows.
           const { error: enrichError } = await supabaseWithRetry(() =>
             supabase
               .from("artist_enrichment")
               .upsert(newEnrichments, { onConflict: "artist_id,platform" })
           );
           if (enrichError) {
-            console.error(`  failed to batch-upsert enrichments: ${enrichError.message}`);
+            console.error(`  failed to batch-upsert enrichments (chunk ${chunkStart}): ${enrichError.message}`);
           } else {
             enrichmentUpserted += newEnrichments.length;
           }
@@ -715,21 +710,29 @@ async function main() {
         `, ${artistsCreatedForThisSource} new artist(s), ${edgePairs.length} edge(s)`
     );
 
-    cache[scUrl] = {
-      checkedAt: new Date().toISOString(),
-      followingsFetched: users.length,
-      newArtistsCreated: artistsCreatedForThisSource,
-      edgesWritten: edgePairs.length,
-      truncated,
-    };
-    if (!DRY_RUN) saveCache(cache);
+    // Mark this source artist as done so they are skipped on future runs.
+    if (!DRY_RUN) {
+      const { error: markDoneError } = await supabaseWithRetry(() =>
+        supabase.from("artist_enrichment").upsert(
+          {
+            artist_id: sourceArtistId,
+            platform: "soundcloud",
+            follow_graph_built_at: new Date().toISOString(),
+          },
+          { onConflict: "artist_id,platform" }
+        )
+      );
+      if (markDoneError) {
+        console.error(`  failed to mark follow graph as built for ${sourceName}: ${markDoneError.message}`);
+      }
+    }
 
     await sleep(300);
   }
 
   console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
   console.log(`  source artists processed: ${sourcesProcessed}`);
-  console.log(`  skipped (cached):         ${skippedCached}`);
+  console.log(`  skipped (done/error):     ${skippedProcessed}`);
   console.log(`  resolve/fetch failed:     ${resolveFailed}`);
   console.log(`  followings fetched:       ${followingsFetched}`);
   console.log(`  capped (more remain):     ${truncatedCount}`);
