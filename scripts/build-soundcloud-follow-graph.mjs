@@ -344,24 +344,49 @@ async function fetchApprovedSoundCloudLinks() {
     "artist_links",
     "id, artist_id, url, artists!inner(name, directory_status)",
     (q) => {
-      let query = q.eq("platform", "soundcloud").eq("artists.directory_status", "approved");
+      let query = q.eq("platform", "soundcloud").eq("artists.directory_status", "approved").eq("artists.deleted", false);
       if (NAME_FILTER) query = query.ilike("artists.name", `%${NAME_FILTER}%`);
       return query;
     }
   );
 }
 
-// Map of every known SoundCloud profile URL -> artist_id, so newly
-// followed accounts can be matched against artists that already
-// exist (directory members or previously-discovered graph nodes)
-// instead of being duplicated.
-async function fetchAllSoundCloudUrlMap() {
-  const rows = await fetchAllRows("artist_links", "artist_id, url", (q) =>
-    q.eq("platform", "soundcloud")
-  );
-  const map = new Map();
-  for (const row of rows) map.set(normalizeScUrl(row.url), row.artist_id);
-  return map;
+// Looks up a batch of SoundCloud permalink URLs against artist_links and
+// returns a map of normalizedUrl -> artist_id for those that already exist.
+// Called per-artist rather than loading all 300K+ rows upfront, which
+// avoids hitting Supabase's statement timeout as the table grows.
+//
+// URLs are sent in chunks of 100 to stay well under PostgREST's URL length
+// limit. URLs already present in the caller's in-memory map are skipped.
+const URL_LOOKUP_CHUNK = 100;
+
+async function lookupSoundCloudUrls(permalinkUrls, existingMap) {
+  // Only look up URLs we don't already have in memory.
+  const unknown = [...new Set(
+    permalinkUrls
+      .filter(Boolean)
+      .map(cleanScUrl)
+      .filter((url) => !existingMap.has(normalizeScUrl(url)))
+  )];
+  if (unknown.length === 0) return;
+
+  for (let i = 0; i < unknown.length; i += URL_LOOKUP_CHUNK) {
+    const chunk = unknown.slice(i, i + URL_LOOKUP_CHUNK);
+    const { data, error } = await supabaseWithRetry(() =>
+      supabase
+        .from("artist_links")
+        .select("artist_id, url")
+        .eq("platform", "soundcloud")
+        .in("url", chunk)
+    );
+    if (error) {
+      if (DEBUG) console.log(`  [debug] URL lookup failed: ${error.message}`);
+      continue;
+    }
+    for (const row of data ?? []) {
+      existingMap.set(normalizeScUrl(row.url), row.artist_id);
+    }
+  }
 }
 
 // Returns the set of artist_ids that have already been processed by this
@@ -483,10 +508,10 @@ async function main() {
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
 
-  // Loaded once up front; updated in-memory as new artists are
-  // created during this run so accounts followed by more than one
-  // source artist in the same run are still only created once.
-  const scUrlToArtistId = await fetchAllSoundCloudUrlMap();
+  // In-memory URL -> artist_id map, populated lazily per source artist
+  // (see lookupSoundCloudUrls). Accumulates across the run so accounts
+  // followed by more than one source artist are still only created once.
+  const scUrlToArtistId = new Map();
 
   let sourcesProcessed = 0;
   let resolveFailed = 0;
@@ -553,6 +578,13 @@ async function main() {
     if (truncated) truncatedCount++;
 
     followingsFetched += users.length;
+
+    // Populate the in-memory map for any of this artist's followings that
+    // are already in the DB but not yet seen this run.
+    await lookupSoundCloudUrls(
+      users.map((u) => u.permalink_url),
+      scUrlToArtistId
+    );
 
     let artistsCreatedForThisSource = 0;
 
