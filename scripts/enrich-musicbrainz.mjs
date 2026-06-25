@@ -168,6 +168,7 @@ const COLLAB_RELATION_TYPES = new Set([
 // (e.g. "https://musicbrainz.org/artist/abc-123" → "abc-123")
 // ------------------------------------------------------------
 function mbidFromUrl(url) {
+  if (!url) return null
   return url.replace(/\/$/, '').split('/').pop()
 }
 
