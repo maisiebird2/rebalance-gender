@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
+    unoptimized: true,
     remotePatterns: [
       // SoundCloud avatar/artwork CDN — used for cached profile pictures
       { protocol: "https", hostname: "i1.sndcdn.com" },
