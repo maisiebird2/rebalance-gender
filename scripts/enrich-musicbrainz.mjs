@@ -335,7 +335,7 @@ async function processArtist(artist, mbid, mbidToArtistId) {
     mbData = await mbFetch(mbid)
   } catch (err) {
     console.error(`  ${label} MB fetch failed: ${err.message}`)
-    return { tags: 0, collabs: 0, errors: 1 }
+    return { tags: 0, collabs: 0, links: 0, gender: false, errors: 1 }
   }
 
   // ---- Tags ----
