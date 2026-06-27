@@ -123,11 +123,13 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 });
 
 // ------------------------------------------------------------
-// Platform priority: try these link types first, in this order.
+// Platform priority: try these link types in this order.
 // SoundCloud/Bandcamp/RA tend to have a real profile photo or
-// artwork in og:image. Instagram is deliberately excluded — it
-// blocks unauthenticated page fetches, so its og:image is just a
-// generic logo, not the profile photo.
+// artwork in og:image. Platforms deliberately excluded:
+//   - Instagram: blocks unauthenticated fetches, og:image is a generic logo
+//   - Facebook/TikTok: same issue
+//   - Linktree: JS-rendered, og:image is the Linktree logo
+//   - MusicBrainz: no profile photos, only release artwork
 // ------------------------------------------------------------
 const PLATFORM_PRIORITY = [
   "soundcloud",
@@ -136,6 +138,11 @@ const PLATFORM_PRIORITY = [
   "discogs",
   "beatport",
   "qobuz",
+  "lastfm",
+  "spotify",
+  "wikipedia",
+  "apple_music",
+  "youtube",
   "other",
 ];
 
