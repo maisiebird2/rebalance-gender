@@ -10,11 +10,13 @@
 //
 // Usage (from the wem-directory/ folder):
 //
-//   node scripts/enrich-images.mjs                  # run on all artists missing an image
+//   node scripts/enrich-images.mjs                  # run on all approved directory artists missing an image
 //   node scripts/enrich-images.mjs --limit=20       # only process the first 20 (for testing)
 //   node scripts/enrich-images.mjs --force          # re-fetch even artists that already have an image, bypass URL cache
 //   node scripts/enrich-images.mjs --platforms=soundcloud,bandcamp
 //                                                    # only try these platforms
+//
+// Only artists with directory_status = 'approved' are processed.
 //   DRY_RUN=1 node scripts/enrich-images.mjs        # fetch + log, but don't write to the DB
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
@@ -210,6 +212,7 @@ async function main() {
   let query = supabase
     .from("artists")
     .select("id, name, profile_image_url, links:artist_links(platform, url)")
+    .eq("directory_status", "approved")
     .order("name");
 
   if (!FORCE) {
