@@ -87,8 +87,11 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 
 // ------------------------------------------------------------
 // Disk cache
+// v2: cache dir bumped so existing v1 files (fetched without url-rels)
+// are not reused — they're missing the URL-relation data we now need.
+// Old .cache/mb_enrich files can be deleted once a fresh run completes.
 // ------------------------------------------------------------
-const CACHE_DIR = path.join(__dirname, '..', '.cache', 'mb_enrich')
+const CACHE_DIR = path.join(__dirname, '..', '.cache', 'mb_enrich_v2')
 fs.mkdirSync(CACHE_DIR, { recursive: true })
 
 function cacheKey(mbid) {
@@ -127,7 +130,7 @@ async function mbFetch(mbid) {
   if (wait > 0) await new Promise(r => setTimeout(r, wait))
   lastMbRequest = Date.now()
 
-  const url = `${MB_BASE}/artist/${mbid}?inc=tags+artist-rels&fmt=json`
+  const url = `${MB_BASE}/artist/${mbid}?inc=tags+artist-rels+url-rels&fmt=json`
   if (DEBUG) console.log(`  → GET ${url}`)
 
   const res = await fetch(url, {
@@ -162,6 +165,67 @@ const COLLAB_RELATION_TYPES = new Set([
   'guest performer',
   'tour member',
 ])
+
+// ------------------------------------------------------------
+// URL-rel domain → platform key mapping
+//
+// Keys must match rows in the `platforms` table.
+// Domains are matched after stripping a leading "www.".
+// Wikipedia subdomains (e.g. fr.wikipedia.org) are caught by a
+// suffix check rather than exhaustively listing every language.
+//
+// "free streaming" type rels are excluded entirely before this map
+// is consulted. Twitter/X is skipped (not in platforms; not wanted).
+// MusicBrainz itself is skipped (self-reference).
+// ------------------------------------------------------------
+const URL_DOMAIN_MAP = {
+  'soundcloud.com':       'soundcloud',
+  'instagram.com':        'instagram',
+  'ra.co':                'resident_advisor',
+  'residentadvisor.net':  'resident_advisor',
+  'bandcamp.com':         'bandcamp',
+  'beatport.com':         'beatport',
+  'qobuz.com':            'qobuz',
+  'discogs.com':          'discogs',
+  'open.spotify.com':     'spotify',
+  'spotify.com':          'spotify',
+  'tidal.com':            'tidal',
+  'listen.tidal.com':     'tidal',
+  'songkick.com':         'songkick',
+  'music.apple.com':      'apple_music',
+  'itunes.apple.com':     'apple_music',
+  'last.fm':              'lastfm',
+  'lastfm.com':           'lastfm',
+  'linktr.ee':            'linktree',
+  'mixcloud.com':         'other',
+  'youtube.com':          'other',
+  'facebook.com':         'other',
+  'fb.com':               'other',
+  'tiktok.com':           'other',
+}
+
+// Domains to skip entirely (not wanted in any form).
+const SKIP_DOMAINS = new Set([
+  'twitter.com', 'x.com', 't.co',   // Elon Musk products — excluded by policy
+  'musicbrainz.org',                 // self-reference
+  'wikidata.org',                    // not a platform we track
+])
+
+/**
+ * Returns the platform key for a URL, 'other' for unmapped-but-valid
+ * domains, or null for domains we want to skip entirely.
+ */
+function platformFromUrl(urlStr) {
+  let hostname
+  try {
+    hostname = new URL(urlStr).hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return null
+  }
+  if (SKIP_DOMAINS.has(hostname)) return null
+  if (hostname.endsWith('.wikipedia.org')) return 'wikipedia'
+  return URL_DOMAIN_MAP[hostname] ?? 'other'
+}
 
 // ------------------------------------------------------------
 // Extract MBID from a musicbrainz link URL
@@ -235,6 +299,30 @@ async function upsertCollab(idA, idB, count) {
   throw insertErr
 }
 
+// Update artists.gender_mb from MusicBrainz data.
+// Only writes when MB returns a non-null value; never clears an
+// existing value with null.
+async function updateGender(artistId, gender) {
+  if (!gender) return false
+  const { error } = await supabase
+    .from('artists')
+    .update({ gender_mb: gender })
+    .eq('id', artistId)
+  if (error) throw error
+  return true
+}
+
+// Upsert artist_links rows harvested from MB url-rels.
+// Conflicts on (artist_id, platform, url) are silently ignored so
+// we never overwrite or duplicate an existing link.
+async function upsertArtistLinks(rows) {
+  if (!rows.length) return
+  const { error } = await supabase
+    .from('artist_links')
+    .upsert(rows, { onConflict: 'artist_id,platform', ignoreDuplicates: true })
+  if (error) throw error
+}
+
 // ------------------------------------------------------------
 // Process a single artist
 // ------------------------------------------------------------
@@ -306,7 +394,65 @@ async function processArtist(artist, mbid, mbidToArtistId) {
     collabCount++
   }
 
-  return { tags: tagCount, collabs: collabCount, errors: 0 }
+  // ---- Gender ----
+  // MB returns e.g. "Female", "Male", "Non-binary", or null.
+  const mbGender = mbData.gender ?? null
+  let genderUpdated = false
+  if (mbGender) {
+    if (DEBUG) console.log(`  ${label} gender: ${mbGender}`)
+    if (!DRY_RUN) {
+      try {
+        genderUpdated = await updateGender(artist.id, mbGender)
+      } catch (err) {
+        console.error(`  ${label} gender update failed: ${err.message}`)
+      }
+    } else {
+      genderUpdated = true
+    }
+  }
+
+  // ---- External links (url-rels) ----
+  const urlRels = rawRelations.filter(r => r['target-type'] === 'url')
+  const linkRows = []
+  let otherAdded = false
+
+  for (const rel of urlRels) {
+    if ((rel.type ?? '').toLowerCase() === 'free streaming') continue
+    const resource = rel.url?.resource
+    if (!resource) continue
+
+    const platform = platformFromUrl(resource)
+    if (!platform) continue        // null = skip entirely
+
+    if (platform === 'other') {
+      if (otherAdded) continue     // only keep the first unmatched URL
+      otherAdded = true
+    }
+
+    linkRows.push({
+      artist_id: artist.id,
+      platform,
+      url: resource,
+      handle: null,
+      not_found: false,
+    })
+  }
+
+  if (DEBUG) console.log(`  ${label} url-rels: ${linkRows.length} link(s) to upsert`)
+
+  let linkCount = 0
+  if (!DRY_RUN && linkRows.length) {
+    try {
+      await upsertArtistLinks(linkRows)
+      linkCount = linkRows.length
+    } catch (err) {
+      console.error(`  ${label} link upsert failed: ${err.message}`)
+    }
+  } else {
+    linkCount = linkRows.length
+  }
+
+  return { tags: tagCount, collabs: collabCount, links: linkCount, gender: genderUpdated, errors: 0 }
 }
 
 // ------------------------------------------------------------
@@ -380,7 +526,7 @@ async function main() {
   console.log(`\nProcessing ${workList.length} artist(s)…`)
   console.log(`  Rate: ~1 req/s  |  Est. time: ~${Math.ceil(workList.length * MB_RATE_MS / 60000)} min\n`)
 
-  let totalTags = 0, totalCollabs = 0, totalErrors = 0, done = 0
+  let totalTags = 0, totalCollabs = 0, totalLinks = 0, totalGender = 0, totalErrors = 0, done = 0
 
   for (const { artist, mbid } of workList) {
     done++
@@ -388,15 +534,19 @@ async function main() {
     const cached = !FORCE && cacheRead(mbid) ? ' (cache)' : ''
     process.stdout.write(`  [${done}/${workList.length} ${pct}%] ${artist.name}${cached}… `)
 
-    const { tags, collabs, errors } = await processArtist(artist, mbid, mbidToArtistId)
+    const { tags, collabs, links, gender, errors } = await processArtist(artist, mbid, mbidToArtistId)
 
-    totalTags   += tags
+    totalTags    += tags
     totalCollabs += collabs
+    totalLinks   += links
+    totalGender  += gender ? 1 : 0
     totalErrors  += errors
 
     const parts = []
     if (tags)   parts.push(`${tags} tag(s)`)
     if (collabs) parts.push(`${collabs} collab(s)`)
+    if (links)   parts.push(`${links} link(s)`)
+    if (gender)  parts.push('gender')
     if (errors)  parts.push('ERROR')
     console.log(parts.length ? parts.join(', ') : 'no new data')
   }
@@ -406,6 +556,8 @@ async function main() {
   console.log(`Artists processed : ${workList.length}`)
   console.log(`Tags upserted     : ${totalTags}`)
   console.log(`Collabs upserted  : ${totalCollabs}`)
+  console.log(`Links upserted    : ${totalLinks}`)
+  console.log(`Gender updated    : ${totalGender}`)
   console.log(`Errors            : ${totalErrors}`)
   if (DRY_RUN) console.log('\nDry run — no data was written.')
 }
