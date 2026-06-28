@@ -38,11 +38,26 @@
 // The script is safe to re-run: it only touches rows where
 // genre_id IS NULL AND skipped = FALSE.
 //
+// ── Normalisation ─────────────────────────────────────────
+//
+// Raw tags are normalised before lookup and storage:
+//   • Accents/diacritics are stripped  ("alté" → "alte")
+//   • Hyphens are treated as spaces for matching purposes
+//     ("alt-pop" and "alt pop" resolve to the same genre)
+//   • Everything is stored lowercase unless GENRE_ALIASES
+//     specifies a different canonical form (e.g. "EBM", "IDM",
+//     "UK garage").
+//
+// After each run a deduplication pass merges any genres that
+// normalise to the same string (accent/hyphen-insensitive).
+//
 // ── Customising the genre vocabulary ──────────────────────
 //
 // GENRE_ALIASES  — Maps raw/alternate spellings to a canonical
 //   genre name. Edit freely; keys should be lowercase. Values
 //   set the display name that goes into the genres table.
+//   Unknown tags not listed here are stored lowercase with
+//   accents stripped.
 //
 // BROAD_TAGS  — Set of lowercase raw tags to discard entirely.
 //   Add anything that is too vague, a metadata tag (e.g.
@@ -68,6 +83,25 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// ------------------------------------------------------------
+// Normalisation helpers
+// ------------------------------------------------------------
+
+// Strip Unicode combining characters (accents, diacritics).
+// "alté" → "alte", "Ü" → "U", etc.
+function removeAccents(str) {
+  return str.normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
+// Produce a normalised key for deduplication comparison:
+// strip accents, replace hyphens with spaces, lowercase, trim.
+// Used for BROAD_TAGS/GENRE_ALIASES lookup and genre cache keys —
+// NOT for the stored canonical name, which preserves intentional
+// hyphens (e.g. "2-step garage", "nu-breaks").
+function normalizeForLookup(str) {
+  return removeAccents(str).replace(/-/g, ' ').toLowerCase().trim()
+}
 
 // ============================================================
 // GENRE ALIASES
@@ -279,13 +313,26 @@ const BROAD_TAGS = new Set([
   'indie dance',
   // Nationality meta-tags
   'german',
+  'germany',
+  'german electronic',
   'british',
   'american',
+  'america',
+  'american pianist',
   'uk',
-  'us',
-  'french',
-  'german electronic',
   'british electronic',
+  'us',
+  'usa',
+  'united states',
+  'canadian',
+  'french',
+  'france',
+  'italy',
+  'italian',
+  'swedish',
+  'korean',
+  'nigeria',
+  'albania', 'albanian',
   // Misc noise
   'spotify',
   'soundcloud',
@@ -293,30 +340,48 @@ const BROAD_TAGS = new Set([
   'unknown',
   '???',
   'various artists',
+  '2020s',
+  'male vocalist',
+  'male vocalists',
+  'actress',
+  'adam j owens',
+  'added for google code-in 2016',
+  'always alive recordings',
+  'amelie lens',
 ])
+
+// Pre-computed normalised versions of GENRE_ALIASES keys and BROAD_TAGS
+// for accent/hyphen-insensitive lookup. Built once at startup.
+const GENRE_ALIASES_NORM = new Map(
+  [...GENRE_ALIASES].map(([k, v]) => [normalizeForLookup(k), v])
+)
+const BROAD_TAGS_NORM = new Set([...BROAD_TAGS].map(normalizeForLookup))
 
 // ============================================================
 // Normalise a raw tag to its canonical form.
 // Returns { canonical: string, skip: boolean }.
+//
+// Lookup order:
+//   1. Block list (exact lowercase, then accent/hyphen-normalised)
+//   2. GENRE_ALIASES (exact lowercase, then accent/hyphen-normalised)
+//   3. Unknown — store accent-stripped lowercase as-is
 // ============================================================
 function normaliseTag(rawTag) {
   const lower = rawTag.toLowerCase().trim()
+  const norm  = normalizeForLookup(lower)   // accent-stripped, hyphens → spaces
 
-  // Blocklist check first.
-  if (BROAD_TAGS.has(lower)) return { canonical: null, skip: true }
+  // Block list check (exact first, then normalised).
+  if (BROAD_TAGS.has(lower) || BROAD_TAGS_NORM.has(norm)) {
+    return { canonical: null, skip: true }
+  }
 
-  // Alias lookup.
-  if (GENRE_ALIASES.has(lower)) return { canonical: GENRE_ALIASES.get(lower), skip: false }
+  // Alias lookup (exact first, then normalised).
+  if (GENRE_ALIASES.has(lower))     return { canonical: GENRE_ALIASES.get(lower),     skip: false }
+  if (GENRE_ALIASES_NORM.has(norm)) return { canonical: GENRE_ALIASES_NORM.get(norm), skip: false }
 
-  // Unknown tag — use as-is but with basic title-casing for readability.
-  // Don't title-case known acronyms (EBM, IDM, UK, DnB…) — those come
-  // from GENRE_ALIASES above so we never reach here for them.
-  const titleCased = lower
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
-
-  return { canonical: titleCased, skip: false }
+  // Unknown tag — strip accents and store lowercase.
+  // Special-cased acronyms/capitalisations all come from GENRE_ALIASES above.
+  return { canonical: removeAccents(lower), skip: false }
 }
 
 // ------------------------------------------------------------
@@ -401,10 +466,10 @@ function chunk(array, size) {
 // Uses a simple in-memory cache to avoid repeated DB round-trips
 // for the same genre across many artists.
 // ------------------------------------------------------------
-const genreCache = new Map()   // lowercase canonical name → genre id
+const genreCache = new Map()   // normalizeForLookup(canonical name) → genre id
 
 async function findOrCreateGenre(canonicalName) {
-  const key = canonicalName.toLowerCase()
+  const key = normalizeForLookup(canonicalName)
   if (genreCache.has(key)) return genreCache.get(key)
 
   // Try fetching first (ilike for case-insensitive match).
@@ -433,6 +498,111 @@ async function findOrCreateGenre(canonicalName) {
   if (DEBUG) console.log(`    ✦ Created new genre: "${canonicalName}" (id ${created.id})`)
   genreCache.set(key, created.id)
   return created.id
+}
+
+// ------------------------------------------------------------
+// Deduplicate genres
+//
+// Merges genres whose names are equivalent under accent/hyphen
+// normalisation (e.g. "alte" and "alté", "alt pop" and "alt-pop").
+// The genre with the most artist links wins; ties go to lowest id.
+// Remaps artist_genres and artist_harvested_genres before deleting
+// the duplicate genre rows.
+// ------------------------------------------------------------
+async function deduplicateGenres() {
+  console.log('\nDeduplicating genres…')
+
+  // 1. Fetch all genres and artist_genres.
+  const { data: allGenres, error: gErr } = await supabase.from('genres').select('id, name')
+  if (gErr) throw gErr
+
+  const { data: allLinks, error: lErr } = await supabase
+    .from('artist_genres').select('artist_id, genre_id')
+  if (lErr) throw lErr
+
+  const countByGenre = new Map()
+  for (const row of allLinks) {
+    countByGenre.set(row.genre_id, (countByGenre.get(row.genre_id) ?? 0) + 1)
+  }
+
+  // 2. Group genres by normalised name; sort each group so canonical is first.
+  const groups = new Map()
+  for (const g of allGenres) {
+    const norm = normalizeForLookup(g.name)
+    if (!groups.has(norm)) groups.set(norm, [])
+    groups.get(norm).push(g)
+  }
+
+  const remapGenre = new Map()   // duplicate id → canonical id
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue
+    group.sort((a, b) => {
+      const diff = (countByGenre.get(b.id) ?? 0) - (countByGenre.get(a.id) ?? 0)
+      return diff !== 0 ? diff : a.id - b.id
+    })
+    for (const dup of group.slice(1)) remapGenre.set(dup.id, group[0].id)
+  }
+
+  if (remapGenre.size === 0) {
+    console.log('  No duplicates found.')
+    return
+  }
+
+  console.log(`  ${remapGenre.size} duplicate genre(s) to merge.`)
+
+  if (DRY_RUN) {
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue
+      console.log(`    "${group[0].name}" ← ${group.slice(1).map(g => `"${g.name}"`).join(', ')}`)
+    }
+    return
+  }
+
+  const dupIds = [...remapGenre.keys()]
+
+  // 3. Remap artist_genres — for each duplicate genre id, either update
+  //    the row to point to the canonical or delete it if the canonical is
+  //    already linked to the same artist.
+  for (const [oldId, canonicalId] of remapGenre) {
+    const { data: alreadyLinked, error: e1 } = await supabase
+      .from('artist_genres').select('artist_id').eq('genre_id', canonicalId)
+    if (e1) throw e1
+    const alreadySet = new Set(alreadyLinked.map(r => r.artist_id))
+
+    const { data: oldRows, error: e2 } = await supabase
+      .from('artist_genres').select('artist_id').eq('genre_id', oldId)
+    if (e2) throw e2
+
+    for (const row of oldRows) {
+      if (alreadySet.has(row.artist_id)) {
+        const { error } = await supabase.from('artist_genres')
+          .delete().eq('artist_id', row.artist_id).eq('genre_id', oldId)
+        if (error) console.error(`  Failed to delete artist_genre: ${error.message}`)
+      } else {
+        const { error } = await supabase.from('artist_genres')
+          .update({ genre_id: canonicalId })
+          .eq('artist_id', row.artist_id).eq('genre_id', oldId)
+        if (error) console.error(`  Failed to remap artist_genre: ${error.message}`)
+      }
+    }
+  }
+
+  // 4. Remap artist_harvested_genres.
+  const { data: ahgRows, error: ahgErr } = await supabase
+    .from('artist_harvested_genres').select('id, genre_id').in('genre_id', dupIds)
+  if (ahgErr) throw ahgErr
+
+  for (const row of ahgRows) {
+    const { error } = await supabase.from('artist_harvested_genres')
+      .update({ genre_id: remapGenre.get(row.genre_id) }).eq('id', row.id)
+    if (error) console.error(`  Failed to remap ahg row ${row.id}: ${error.message}`)
+  }
+
+  // 5. Delete the duplicate genre rows.
+  const { error: delErr } = await supabase.from('genres').delete().in('id', dupIds)
+  if (delErr) throw delErr
+
+  console.log(`  Merged and removed ${dupIds.length} duplicate genre(s).`)
 }
 
 // ------------------------------------------------------------
@@ -484,7 +654,7 @@ async function main() {
     .select('id, name')
   if (genreErr) throw genreErr
   for (const g of existingGenres) {
-    genreCache.set(g.name.toLowerCase(), g.id)
+    genreCache.set(normalizeForLookup(g.name), g.id)
   }
   console.log(`  ${existingGenres.length} existing genre(s) loaded.`)
 
@@ -524,7 +694,7 @@ async function main() {
 
     let genreId
     try {
-      const existedBefore = genreCache.has(canonical.toLowerCase())
+      const existedBefore = genreCache.has(normalizeForLookup(canonical))
       genreId = await findOrCreateGenre(canonical)
       if (!existedBefore) newGenres++
     } catch (err) {
@@ -596,6 +766,9 @@ async function main() {
       if (error) console.error(`  Failed to mark skipped batch: ${error.message}`)
     }
   }
+
+  // 9. Deduplicate genres created or touched during this run.
+  await deduplicateGenres()
 
   console.log('\nDone.')
 }
