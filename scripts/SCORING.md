@@ -14,11 +14,20 @@ The two processes run on different cadences:
 
 ## Environment setup
 
-Activate your conda environment, then install the required packages:
+Activate your conda environment, then install all required packages:
 
 ```bash
-conda install numpy pandas requests
+conda install numpy pandas requests charset-normalizer
 ```
+
+| Package | Used by |
+|---|---|
+| `numpy` | `tune-weights.py` — vectorised score computation |
+| `pandas` | `tune-weights.py`, `push-scores.py` — data manipulation |
+| `requests` | all scripts — Supabase REST API calls |
+| `charset-normalizer` | `requests` dependency; suppresses a warning if missing |
+
+If you hit a `ModuleNotFoundError` for any of these, install the missing package with `conda install <package-name>`.
 
 ---
 
