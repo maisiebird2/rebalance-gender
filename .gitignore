@@ -31,6 +31,9 @@ resolve-candidates-*.csv
 __pycache__/
 *.pyc
 
+# temporary scripts
+_tmp_*
+
 # debug
 npm-debug.log*
 yarn-debug.log*
