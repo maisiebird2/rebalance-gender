@@ -284,7 +284,7 @@ async function main() {
   )
   const mbidToArtistId = new Map()
   for (const link of mbLinks) {
-    const mbid = link.handle || link.url.replace(/\/$/, '').split('/').pop()
+    const mbid = link.handle || (link.url ? link.url.replace(/\/$/, '').split('/').pop() : null)
     if (mbid) mbidToArtistId.set(mbid.toLowerCase(), link.artist_id)
   }
 
