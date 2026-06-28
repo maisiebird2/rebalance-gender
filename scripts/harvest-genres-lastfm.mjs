@@ -229,10 +229,17 @@ async function main() {
   }
 
   // 2. Fetch artist names for display.
+  // .in() with hundreds of IDs overflows the REST API URL limit — chunk it.
   const artistIds = [...new Set(links.map(l => l.artist_id))]
-  const artistRows = await fetchAllPages((from, to) =>
-    supabase.from('artists').select('id, name').in('id', artistIds).range(from, to)
-  )
+  const artistRows = []
+  for (const idChunk of chunk(artistIds, 200)) {
+    const { data, error } = await supabase
+      .from('artists')
+      .select('id, name')
+      .in('id', idChunk)
+    if (error) throw error
+    artistRows.push(...data)
+  }
   const artistById = new Map(artistRows.map(a => [a.id, a.name]))
 
   // 3. Build work list, skipping cached entries unless --force.
