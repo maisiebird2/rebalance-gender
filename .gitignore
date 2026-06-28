@@ -28,6 +28,8 @@
 .cache/
 scripts/*-cache.json
 resolve-candidates-*.csv
+__pycache__/
+*.pyc
 
 # debug
 npm-debug.log*
