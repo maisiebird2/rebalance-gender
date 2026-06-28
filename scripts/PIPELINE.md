@@ -236,7 +236,7 @@ Phase 7b) into the `artist_harvested_genres` staging table with
 database-to-database copy. Must run after 7b.
 
 ```bash
-node scripts/harvest-genres-mb.mjs
+npm run harvest-genres-mb
 ```
 
 ### 7e. `harvest-genres-lastfm.mjs`
@@ -247,7 +247,7 @@ as `tag_count`. Results are cached to `.cache/lastfm_genres/`.
 Must run after Phase 6 so Last.fm links are in `artist_links`.
 
 ```bash
-node scripts/harvest-genres-lastfm.mjs
+npm run harvest-genres-lastfm
 ```
 
 Requires `LASTFM_API_KEY` in `.env.local`.
@@ -260,7 +260,7 @@ weight, so `tag_count` is null for these rows. Results are cached to
 `.cache/spotify_genres/`. Must run after Phase 6.
 
 ```bash
-node scripts/harvest-genres-spotify.mjs
+npm run harvest-genres-spotify
 ```
 
 Requires `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`.
@@ -285,9 +285,9 @@ canonical names they map to. Run `--force-skipped` after updating
 Must run after 7d, 7e, and 7f.
 
 ```bash
-DRY_RUN=1 node scripts/integrate-harvested-genres.mjs --debug --limit=50   # verify first
-node scripts/integrate-harvested-genres.mjs
-node scripts/integrate-harvested-genres.mjs --force-skipped   # after editing BROAD_TAGS
+DRY_RUN=1 npm run integrate-harvested-genres -- --debug --limit=50   # verify first
+npm run integrate-harvested-genres
+npm run integrate-harvested-genres -- --force-skipped   # after editing BROAD_TAGS
 ```
 
 ---
@@ -341,8 +341,8 @@ npm run resolve-and-load-links
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
 npm run fetch-lastfm-similar
-node scripts/harvest-genres-mb.mjs
-node scripts/harvest-genres-lastfm.mjs
-node scripts/harvest-genres-spotify.mjs
-node scripts/integrate-harvested-genres.mjs
+npm run harvest-genres-mb
+npm run harvest-genres-lastfm
+npm run harvest-genres-spotify
+npm run integrate-harvested-genres
 ```
