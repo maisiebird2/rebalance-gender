@@ -2,6 +2,7 @@ import Link from "next/link";
 import ArtistCard from "@/components/ArtistCard";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
+import SearchMissResults from "@/components/SearchMissResults";
 import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions, PAGE_SIZE } from "@/lib/queries";
 
 interface PageProps {
@@ -48,7 +49,11 @@ export default async function Home({ searchParams }: PageProps) {
       <FilterBar genres={genres} countries={countries} />
 
       {artists.length === 0 ? (
-        <p className="text-gray-500">No artists match these filters yet.</p>
+        search ? (
+          <SearchMissResults searchTerm={search} />
+        ) : (
+          <p className="text-gray-500">No artists match these filters yet.</p>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {artists.map((artist) => (
