@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { quickApprove, quickReject } from "./actions";
-import AddGenreForm from "./AddGenreForm";
+import GenreModerationPanel from "./GenreModerationPanel";
 import AddPlatformForm from "./AddPlatformForm";
 import type { ArtistWithRelations } from "@/lib/types";
 
@@ -52,7 +52,7 @@ export default async function AdminPage() {
       .eq("directory_status", "pending")
       .eq("deleted", false)
       .order("created_at", { ascending: true }),
-    admin.from("genres").select("name").order("name"),
+    admin.from("genres").select("id, name, status").order("name"),
     admin.from("platforms").select("key, label").order("sort_order").order("label"),
   ]);
 
@@ -65,7 +65,7 @@ export default async function AdminPage() {
   }
 
   const submissions: ArtistWithRelations[] = (submissionRows ?? []).map(normalizeArtist);
-  const genreNames = (genreRows ?? []).map((g: { name: string }) => g.name);
+  const genres = (genreRows ?? []) as { id: number; name: string; status: "pending" | "approved" | "deleted" }[];
   const platforms = platformRows ?? [];
 
   return (
@@ -82,47 +82,7 @@ export default async function AdminPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* ── LEFT COLUMN — system settings ─────────────────────── */}
-        <div className="flex flex-col gap-6">
-          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="mb-3 text-lg font-semibold">Genres</h2>
-            <AddGenreForm />
-            {genreNames.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {genreNames.map((name) => (
-                  <span
-                    key={name}
-                    className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
-                  >
-                    {name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="mb-3 text-lg font-semibold">Profile link categories</h2>
-            <AddPlatformForm />
-            {platforms.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {platforms.map((p) => (
-                  <span
-                    key={p.key}
-                    className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                  >
-                    {p.label}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* More admin settings can be added as additional <section>
-              blocks here. */}
-        </div>
-
-        {/* ── RIGHT COLUMN — pending submissions ────────────────── */}
+        {/* ── LEFT COLUMN — pending submissions ─────────────────── */}
         <div>
           <div className="mb-3">
             <h2 className="text-lg font-semibold">Pending submissions</h2>
@@ -256,6 +216,34 @@ export default async function AdminPage() {
               })}
             </div>
           )}
+        </div>
+
+        {/* ── RIGHT COLUMN — system settings ────────────────────── */}
+        <div className="flex flex-col gap-6">
+          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+            <h2 className="mb-3 text-lg font-semibold">Genres</h2>
+            <GenreModerationPanel genres={genres} />
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+            <h2 className="mb-3 text-lg font-semibold">Profile link categories</h2>
+            <AddPlatformForm />
+            {platforms.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {platforms.map((p) => (
+                  <span
+                    key={p.key}
+                    className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                  >
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* More admin settings can be added as additional <section>
+              blocks here. */}
         </div>
       </div>
     </div>

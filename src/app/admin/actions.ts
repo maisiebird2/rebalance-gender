@@ -52,18 +52,76 @@ export async function addGenre(
 
   const { data: existing } = await admin
     .from("genres")
-    .select("id")
+    .select("id, status")
     .eq("name", name)
     .maybeSingle();
-  if (existing) return { error: `"${name}" already exists` };
 
-  const { error } = await admin.from("genres").insert({ name });
+  if (existing) {
+    // If it was previously deleted, un-delete and approve it.
+    if (existing.status === "deleted") {
+      const { error } = await admin
+        .from("genres")
+        .update({ status: "approved" })
+        .eq("id", existing.id);
+      if (error) return { error: error.message };
+      revalidatePath("/admin");
+      revalidatePath("/submit");
+      revalidatePath("/");
+      return { success: true };
+    }
+    return { error: `"${name}" already exists` };
+  }
+
+  // Admin is explicitly adding this genre — approve it immediately.
+  const { error } = await admin.from("genres").insert({ name, status: "approved" });
   if (error) return { error: error.message };
 
   revalidatePath("/admin");
   revalidatePath("/submit");
   revalidatePath("/");
   return { success: true };
+}
+
+export async function approveGenre(
+  id: number
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("genres")
+    .update({ status: "approved" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/");
+}
+
+export async function deleteGenre(
+  id: number
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("genres")
+    .update({ status: "deleted" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/");
+}
+
+export async function restoreGenre(
+  id: number
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("genres")
+    .update({ status: "approved" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/");
 }
 
 // ── Profile link categories (platforms) ──────────────────────────────

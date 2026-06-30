@@ -190,15 +190,16 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   };
 }
 
-/** All genres that have at least one approved artist, for the filter UI. */
+/** All approved genres that have at least one approved artist, for the filter UI. */
 export async function getGenreOptions(): Promise<string[]> {
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase
     .from("artist_genres")
-    .select("genres!inner(name), artists!inner(directory_status, deleted)")
+    .select("genres!inner(name, status), artists!inner(directory_status, deleted)")
     .eq("artists.directory_status", "approved")
-    .eq("artists.deleted", false);
+    .eq("artists.deleted", false)
+    .eq("genres.status", "approved");
 
   if (error) {
     console.error("getGenreOptions error:", error);

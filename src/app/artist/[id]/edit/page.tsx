@@ -54,7 +54,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
       .select(ARTIST_ADMIN_SELECT)
       .eq("id", id)
       .maybeSingle(),
-    admin.from("genres").select("name").order("name"),
+    admin.from("genres").select("name").neq("status", "deleted").order("name"),
     getPlatforms(admin),
   ]);
 
