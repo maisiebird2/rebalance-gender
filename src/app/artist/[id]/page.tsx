@@ -15,6 +15,15 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+export async function generateMetadata({ params }: PageProps) {
+  const { id } = await params;
+  const artist = await getArtistById(id);
+  if (!artist) return {};
+  return {
+    title: `${artist.name} | Rebalance Gender`,
+  };
+}
+
 export default async function ArtistPage({ params }: PageProps) {
   const { id } = await params;
   const [artist, platforms] = await Promise.all([
