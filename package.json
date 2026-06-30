@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
-    "enrich-images": "node scripts/enrich-images.mjs",
+    "enrich-images": "tsx scripts/enrich-images.ts",
     "enrich-bios": "node scripts/enrich-bios.mjs",
     "clean-linktree-bios": "node scripts/clean-linktree-bios.mjs",
     "add-beatport-links": "node scripts/add-beatport-links.mjs",
@@ -37,10 +37,10 @@
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.108.1",
-    "sanitize-html": "^2.15.0",
     "next": "^16.2.9",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sanitize-html": "^2.15.0"
   },
   "overrides": {
     "postcss": ">=8.5.10"
@@ -54,6 +54,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "tsx": "^4.22.4",
     "typescript": "^5",
     "vitest": "^4.1.9"
   },

@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { enrichArtistImage } from "@/lib/enrich-images";
 
 async function requireAuth() {
   const supabase = await createClient();
@@ -25,6 +27,8 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
   if (error) return { error: error.message };
   revalidatePath("/admin");
   revalidatePath("/");
+  // Run image enrichment in the background after the response is sent.
+  after(() => enrichArtistImage(id, admin));
 }
 
 export async function quickReject(id: string): Promise<{ error: string } | void> {
