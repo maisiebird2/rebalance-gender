@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArtistById } from "@/lib/queries";
@@ -6,6 +5,7 @@ import { getPlatforms, platformLabel } from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
 import EditButton from "@/components/EditButton";
 import BandcampWidget from "@/components/BandcampWidget";
+import RecommendedArtists from "@/components/RecommendedArtists";
 import { linkify } from "@/lib/linkify";
 
 
@@ -68,12 +68,11 @@ export default async function ArtistPage({ params }: PageProps) {
           <div className="flex items-center gap-4">
             <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
               {profileImage ? (
-                <Image
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={profileImage}
                   alt={artist.name}
-                  fill
-                  className="object-cover"
-                  sizes="96px"
+                  className="h-full w-full object-cover"
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-3xl font-semibold text-gray-400">
@@ -236,6 +235,8 @@ export default async function ArtistPage({ params }: PageProps) {
           </aside>
         )}
       </div>
+
+      <RecommendedArtists artistId={id} />
     </div>
   );
 }

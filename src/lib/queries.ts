@@ -190,6 +190,61 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   };
 }
 
+/** Minimal artist shape returned by getRecommendedArtists. */
+export interface RecommendedArtist {
+  id: string;
+  name: string;
+  profile_image_url: string | null;
+  enrichment_image: string | null;
+}
+
+/**
+ * Fetch up to 10 recommended artists for a given artist page, ordered by rank.
+ * Returns only the fields needed to render a compact avatar + name card.
+ */
+export async function getRecommendedArtists(
+  artistId: string
+): Promise<RecommendedArtist[]> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("artist_similarity_scores")
+    .select(`
+      rank,
+      recommended:artists!recommended_artist_id(
+        id,
+        name,
+        profile_image_url,
+        enrichment:artist_enrichment(profile_image_url)
+      )
+    `)
+    .eq("source_artist_id", artistId)
+    .order("rank")
+    .limit(10);
+
+  if (error) {
+    console.error("getRecommendedArtists error:", error);
+    return [];
+  }
+
+  return (data ?? [])
+    .map((row: any) => {
+      const a = row.recommended;
+      if (!a) return null;
+      const enrichmentImage =
+        (a.enrichment as Array<{ profile_image_url: string | null }> | null)
+          ?.find((e) => e.profile_image_url)
+          ?.profile_image_url ?? null;
+      return {
+        id:               a.id,
+        name:             a.name,
+        profile_image_url: a.profile_image_url ?? null,
+        enrichment_image: enrichmentImage,
+      };
+    })
+    .filter((a): a is RecommendedArtist => a !== null);
+}
+
 /** All approved genres that have at least one approved artist, for the filter UI. */
 export async function getGenreOptions(): Promise<string[]> {
   const supabase = getSupabaseClient();
