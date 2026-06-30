@@ -123,6 +123,9 @@ const GENRE_ALIASES = new Map([
   ['drum n bass',                 'drum & bass'],
   ["drum 'n' bass",               'drum & bass'],
   ['drum n\' bass',               'drum & bass'],
+  ["drum'n'bass",                 'drum & bass'],
+  ['drumandbass',                 'drum & bass'],
+  ['drum u bass',                 'drum & bass'],
   ['liquid drum and bass',        'liquid drum & bass'],
   ['liquid d&b',                  'liquid drum & bass'],
   ['liquid dnb',                  'liquid drum & bass'],
@@ -193,7 +196,14 @@ const GENRE_ALIASES = new Map([
   ['intelligent dance music',     'IDM'],
   ['idm',                         'IDM'],
 
+  // Avant-garde
+  ['avant garde',                 'avant-garde'],
+
+  // Electro
+  ['e-l-e-c-t-r-o',              'electro'],
+
   // Acid
+  ['acidtechno',                  'acid techno'],
   ['acid techno',                 'acid techno'],
   ['acid trance',                 'acid trance'],
   ['acid house',                  'acid house'],
@@ -350,6 +360,20 @@ const BROAD_TAGS = new Set([
   'amelie lens',
 ])
 
+// ============================================================
+// WORD FIXES
+//
+// Simple word-boundary substitutions applied to the raw tag
+// BEFORE alias lookup. Use these to fix common concatenated or
+// unhyphenated forms that can appear as a prefix in compound
+// genre names (e.g. "avantgarde rock" → "avant-garde rock").
+//
+// Each entry is [regex, replacement]. Applied in order.
+// ============================================================
+const WORD_FIXES = [
+  [/\bavantgarde\b/g, 'avant-garde'],
+]
+
 // Pre-computed normalised versions of GENRE_ALIASES keys and BROAD_TAGS
 // for accent/hyphen-insensitive lookup. Built once at startup.
 const GENRE_ALIASES_NORM = new Map(
@@ -367,7 +391,15 @@ const BROAD_TAGS_NORM = new Set([...BROAD_TAGS].map(normalizeForLookup))
 //   3. Unknown — store accent-stripped lowercase as-is
 // ============================================================
 function normaliseTag(rawTag) {
-  const lower = rawTag.toLowerCase().trim()
+  let lower = rawTag.toLowerCase().trim()
+
+  // Apply word-level substitutions before alias lookup, so compound
+  // forms like "avantgarde rock" are fixed to "avant-garde rock" and
+  // then fall through to alias lookup or default storage correctly.
+  for (const [pattern, replacement] of WORD_FIXES) {
+    lower = lower.replace(pattern, replacement)
+  }
+
   const norm  = normalizeForLookup(lower)   // accent-stripped, hyphens → spaces
 
   // Block list check (exact first, then normalised).
