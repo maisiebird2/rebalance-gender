@@ -52,7 +52,7 @@ export default async function AdminPage() {
       .eq("directory_status", "pending")
       .eq("deleted", false)
       .order("created_at", { ascending: true }),
-    admin.from("genres").select("id, name, status").order("name"),
+    admin.from("genres").select("id, name, status").order("name").limit(10000),
     admin.from("platforms").select("key, label").order("sort_order").order("label"),
   ]);
 
