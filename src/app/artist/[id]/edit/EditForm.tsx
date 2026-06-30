@@ -49,6 +49,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     }));
 
   const [isPending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<"save" | "approve" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -81,12 +82,9 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   }
 
   // ── Submit ────────────────────────────────────────────────────
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setServerError(null);
-
+  function buildFormData(forceApprove = false): FormData | null {
     const form = formRef.current;
-    if (!form) return;
+    if (!form) return null;
 
     const formData = new FormData(form);
     // Overwrite hidden inputs with current React state
@@ -101,9 +99,37 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
     formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
+    if (forceApprove) {
+      formData.set("directory_status", "approved");
+    }
+    return formData;
+  }
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setServerError(null);
+    const formData = buildFormData();
+    if (!formData) return;
+
+    setPendingAction("save");
     startTransition(async () => {
       const result = await saveArtist(formData);
+      setPendingAction(null);
+      if (result && "error" in result) {
+        setServerError(result.error);
+      }
+    });
+  }
+
+  function handleSaveAndApprove() {
+    setServerError(null);
+    const formData = buildFormData(true);
+    if (!formData) return;
+
+    setPendingAction("approve");
+    startTransition(async () => {
+      const result = await saveArtist(formData);
+      setPendingAction(null);
       if (result && "error" in result) {
         setServerError(result.error);
       }
@@ -430,7 +456,15 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
               disabled={isPending}
               className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
             >
-              {isPending ? "Saving…" : "Save changes"}
+              {pendingAction === "save" ? "Saving…" : "Save changes"}
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveAndApprove}
+              disabled={isPending}
+              className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {pendingAction === "approve" ? "Approving…" : "Save and approve"}
             </button>
             <a
               href={`/artist/${artist.id}`}
