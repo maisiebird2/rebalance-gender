@@ -68,7 +68,7 @@ export default async function ArtistPage({ params }: PageProps) {
           <div className="flex items-center gap-4">
             <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
               {profileImage ? (
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={profileImage}
                   alt={artist.name}

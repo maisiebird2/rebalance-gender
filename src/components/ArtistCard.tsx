@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ArtistWithRelations } from "@/lib/types";
 
@@ -22,12 +21,11 @@ export default function ArtistCard({ artist }: { artist: ArtistWithRelations }) 
       <div className="flex items-center gap-3">
         <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
           {profileImage ? (
-            <Image
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               src={profileImage}
               alt={artist.name}
-              fill
-              className="object-cover"
-              sizes="56px"
+              className="h-full w-full object-cover"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-gray-400">
