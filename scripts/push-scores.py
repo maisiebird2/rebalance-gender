@@ -96,7 +96,8 @@ def upsert_batch(client, rows):
         },
         data=json.dumps(rows),
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise RuntimeError(f'Supabase {r.status_code} upserting scores: {r.text}')
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +139,15 @@ def main():
         .sort_values('total_score', ascending=False)
         .groupby('source_artist_id')
         .head(TOP_N)
+        .copy()
     )
+    # Add rank (1 = best) within each source artist's list
+    top['rank'] = (
+        top.groupby('source_artist_id')['total_score']
+        .rank(method='first', ascending=False)
+        .astype(int)
+    )
+    top['computed_at'] = pd.Timestamp.now('UTC').isoformat()
     print(f'  {len(top):,} (source, recommended) rows to write.')
 
     if args.debug:
@@ -154,7 +163,7 @@ def main():
     # Write to DB in batches
     print('Upserting to database…')
     client = make_client()
-    records = top[['source_artist_id', 'recommended_artist_id', 'total_score'] + SIGNAL_COLS].to_dict('records')
+    records = top[['source_artist_id', 'recommended_artist_id', 'total_score', 'rank', 'computed_at'] + SIGNAL_COLS].to_dict('records')
 
     total, written = len(records), 0
     for start in range(0, total, BATCH_SIZE):
