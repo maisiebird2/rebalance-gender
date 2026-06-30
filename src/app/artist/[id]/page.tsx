@@ -4,6 +4,7 @@ import { getArtistById } from "@/lib/queries";
 import { getPlatforms, platformLabel } from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
 import EditButton from "@/components/EditButton";
+import AdminActions from "@/components/AdminActions";
 import BandcampWidget from "@/components/BandcampWidget";
 import RecommendedArtists from "@/components/RecommendedArtists";
 import { linkify } from "@/lib/linkify";
@@ -69,7 +70,18 @@ export default async function ArtistPage({ params }: PageProps) {
         >
           ← Back to directory
         </Link>
-        <EditButton artistId={id} />
+        <div className="flex items-center gap-2">
+          {artist.directory_status === "approved" && (
+            <Link
+              href={`/artist/${id}/revise`}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+            >
+              Suggest a correction
+            </Link>
+          )}
+          <AdminActions artistId={id} currentStatus={artist.directory_status ?? "approved"} />
+          <EditButton artistId={id} />
+        </div>
       </div>
 
       {/* Two-column grid: main (2/3) | sidebar (1/3) */}
