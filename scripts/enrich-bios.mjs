@@ -417,7 +417,7 @@ async function main() {
               {
                 artist_id: artist.id,
                 platform: "soundcloud",
-                bio,
+                bio: bio ? `SoundCloud bio: ${bio}` : bio,
                 last_synced_at: new Date().toISOString(),
               },
               { onConflict: "artist_id,platform" }

@@ -389,17 +389,35 @@ async function lookupSoundCloudUrls(permalinkUrls, existingMap) {
   }
 }
 
-// Returns the set of artist_ids that have already been processed by this
-// script (follow_graph_built_at IS NOT NULL) or have a recorded error
-// (sync_error IS NOT NULL, e.g. 'resolve_failed' for a dead link).
-// Both states are skipped on a normal run; --force bypasses this entirely.
-async function fetchProcessedArtistIds() {
-  const rows = await fetchAllRows("artist_enrichment", "artist_id", (q) =>
-    q
-      .eq("platform", "soundcloud")
-      .or("follow_graph_built_at.not.is.null,sync_error.not.is.null")
-  );
-  return new Set(rows.map((r) => r.artist_id));
+// Returns the set of artist_ids (from the given source artist list) that have
+// already been processed (follow_graph_built_at IS NOT NULL) or have a
+// recorded error (sync_error IS NOT NULL, e.g. 'resolve_failed').
+// Scoped to only the provided IDs so the query stays fast regardless of how
+// large artist_enrichment grows (sc_followee enrichment rows are not relevant
+// here and can number in the hundreds of thousands).
+async function fetchProcessedArtistIds(sourceArtistIds) {
+  if (sourceArtistIds.length === 0) return new Set();
+
+  // Send IDs in chunks of 100 to stay under PostgREST's URL length limit
+  // (1,353 UUIDs × 36 chars each would be ~50KB in one query string).
+  const processed = new Set();
+  const CHUNK = 100;
+
+  for (let i = 0; i < sourceArtistIds.length; i += CHUNK) {
+    const chunk = sourceArtistIds.slice(i, i + CHUNK);
+    const { data, error } = await supabaseWithRetry(() =>
+      supabase
+        .from("artist_enrichment")
+        .select("artist_id")
+        .eq("platform", "soundcloud")
+        .in("artist_id", chunk)
+        .or("follow_graph_built_at.not.is.null,sync_error.not.is.null")
+    );
+    if (error) throw error;
+    for (const row of data ?? []) processed.add(row.artist_id);
+  }
+
+  return processed;
 }
 
 function normalizeScUrl(url) {
@@ -457,7 +475,7 @@ async function upsertEnrichment(artistId, user) {
       external_id: user.id != null ? String(user.id) : null,
       profile_image_url: upgradeAvatarUrl(user.avatar_url),
       bio: typeof user.description === "string" && user.description.trim()
-        ? user.description.trim()
+        ? `SoundCloud bio: ${user.description.trim()}`
         : null,
       follower_count: user.followers_count ?? null,
       track_count: user.track_count ?? null,
@@ -493,8 +511,9 @@ async function main() {
   }
 
   const sourceLinks = await fetchApprovedSoundCloudLinks();
+  const sourceArtistIds = sourceLinks.map((r) => r.artist_id);
 
-  const processedArtistIds = FORCE ? new Set() : await fetchProcessedArtistIds();
+  const processedArtistIds = FORCE ? new Set() : await fetchProcessedArtistIds(sourceArtistIds);
   const skippedProcessed = FORCE ? 0 : sourceLinks.filter((r) => processedArtistIds.has(r.artist_id)).length;
 
   let rows = FORCE

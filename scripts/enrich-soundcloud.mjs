@@ -373,7 +373,7 @@ async function main() {
           platform: "soundcloud",
           external_id: user.id != null ? String(user.id) : null,
           profile_image_url: upgradeAvatarUrl(user.avatar_url),
-          bio,
+          bio: bio ? `SoundCloud bio: ${bio}` : bio,
           follower_count: user.followers_count ?? null,
           track_count: user.track_count ?? null,
           recent_tracks: null,
