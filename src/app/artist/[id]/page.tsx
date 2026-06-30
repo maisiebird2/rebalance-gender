@@ -48,7 +48,11 @@ export default async function ArtistPage({ params }: PageProps) {
     ?.flatMap((e) => e.recent_tracks ?? [])
     ?.find((t) => t.url?.includes("soundcloud.com"));
   const soundcloudLink = artist.links?.find((l) => l.platform === "soundcloud" && !l.not_found);
-  const soundcloudUrl = soundcloudTrack?.url ?? soundcloudLink?.url;
+  const isSoundCloudSearchUrl = (url?: string | null) =>
+    !!url && new URL(url).pathname.startsWith("/search");
+  const soundcloudUrl =
+    soundcloudTrack?.url ??
+    (!isSoundCloudSearchUrl(soundcloudLink?.url) ? soundcloudLink?.url : undefined);
 
   const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
