@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
+import HeaderSearch from "@/components/HeaderSearch";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,10 +24,11 @@ export default async function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black">
         <header className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-            <a href="/" className="text-lg font-semibold">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+            <a href="/" className="shrink-0 text-lg font-semibold">
               Rebalance Gender
             </a>
+            <HeaderSearch />
             <nav className="flex gap-4 text-sm">
               <a href="/" className="hover:underline">
                 Directory
