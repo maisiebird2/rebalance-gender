@@ -32,6 +32,7 @@ const ARTIST_SELECT = `
   artist_genres(genres(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
+  aliases:artist_aliases(*),
   links:artist_links(*),
   enrichment:artist_enrichment(*),
   bandcamp_albums:artist_bandcamp_albums(*)

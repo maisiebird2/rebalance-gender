@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist } from "./actions";
-import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistLabel, Platform } from "@/lib/types";
+import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistAlias, ArtistLabel, Platform } from "@/lib/types";
 import { platformPlaceholder } from "@/lib/platforms";
 
 interface LocationRow {
@@ -99,6 +99,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
     formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
+    formData.set("aliases", JSON.stringify(aliasNames.filter(Boolean)));
     if (forceApprove) {
       formData.set("directory_status", "approved");
     }
@@ -134,6 +135,28 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         setServerError(result.error);
       }
     });
+  }
+
+  // ── Alias state ───────────────────────────────────────────────
+  const [aliasNames, setAliasNames] = useState<string[]>(
+    artist.aliases?.length > 0
+      ? artist.aliases.map((a: ArtistAlias) => a.name)
+      : [""]
+  );
+
+  function addAlias() {
+    setAliasNames((prev) => [...prev, ""]);
+  }
+
+  function removeAlias(i: number) {
+    setAliasNames((prev) => {
+      const next = prev.filter((_, idx) => idx !== i);
+      return next.length > 0 ? next : [""];
+    });
+  }
+
+  function updateAlias(i: number, value: string) {
+    setAliasNames((prev) => prev.map((a, idx) => (idx === i ? value : a)));
   }
 
   // ── Label state ───────────────────────────────────────────────
@@ -216,6 +239,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
       <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
+      <input type="hidden" name="aliases" value={JSON.stringify(aliasNames.filter(Boolean))} />
 
       {serverError && (
         <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
@@ -235,6 +259,38 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
           defaultValue={artist.pronoun?.value ?? ""}
           placeholder="she/her"
         />
+
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Aliases</span>
+          {aliasNames.map((alias, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={alias}
+                onChange={(e) => updateAlias(i, e.target.value)}
+                placeholder="e.g. DJ Name, Former name"
+                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
+              />
+              {aliasNames.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeAlias(i)}
+                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
+                  aria-label="Remove alias"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addAlias}
+            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
+          >
+            + Add alias
+          </button>
+        </div>
 
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">Labels / crews</span>
@@ -458,14 +514,16 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
             >
               {pendingAction === "save" ? "Saving…" : "Save changes"}
             </button>
-            <button
-              type="button"
-              onClick={handleSaveAndApprove}
-              disabled={isPending}
-              className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {pendingAction === "approve" ? "Approving…" : "Save and approve"}
-            </button>
+            {artist.directory_status !== "approved" && (
+              <button
+                type="button"
+                onClick={handleSaveAndApprove}
+                disabled={isPending}
+                className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {pendingAction === "approve" ? "Approving…" : "Save and approve"}
+              </button>
+            )}
             <a
               href={`/artist/${artist.id}`}
               className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"

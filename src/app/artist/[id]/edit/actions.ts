@@ -109,6 +109,7 @@ export async function saveArtist(
   const directoryStatus = formData.get("directory_status") as ArtistStatus;
   const locationsRaw = (formData.get("locations") ?? "[]") as string;
   const labelListRaw = (formData.get("label_list") ?? "[]") as string;
+  const aliasesRaw = (formData.get("aliases") ?? "[]") as string;
   const genresRaw = (formData.get("genres") ?? "[]") as string;
   const linksRaw = (formData.get("links") ?? "[]") as string;
 
@@ -138,6 +139,13 @@ export async function saveArtist(
     labelNames = (JSON.parse(labelListRaw || "[]") as string[]).filter(Boolean);
   } catch {
     return { error: "Invalid labels data" };
+  }
+
+  let aliasNameList: string[] = [];
+  try {
+    aliasNameList = (JSON.parse(aliasesRaw || "[]") as string[]).filter(Boolean);
+  } catch {
+    return { error: "Invalid aliases data" };
   }
 
   interface LocationInput { city?: string; country?: string; }
@@ -197,7 +205,17 @@ export async function saveArtist(
     if (labErr) return { error: `Labels save error: ${labErr.message}` };
   }
 
-  // ── 6. Replace locations ──────────────────────────────────────
+  // ── 6. Replace aliases ────────────────────────────────────────
+  await admin.from("artist_aliases").delete().eq("artist_id", artistId);
+
+  if (aliasNameList.length > 0) {
+    const { error: aliasErr } = await admin.from("artist_aliases").insert(
+      aliasNameList.map((name) => ({ artist_id: artistId, name }))
+    );
+    if (aliasErr) return { error: `Aliases save error: ${aliasErr.message}` };
+  }
+
+  // ── 7. Replace locations ──────────────────────────────────────
   await admin.from("artist_locations").delete().eq("artist_id", artistId);
 
   const validLocations = locationInputs.filter((l) => l.city || l.country);

@@ -45,6 +45,12 @@ export interface ArtistLabel {
   name: string;
 }
 
+export interface ArtistAlias {
+  id: number;
+  artist_id: string;
+  name: string;
+}
+
 export interface ArtistLink {
   id: number;
   artist_id: string;
@@ -98,6 +104,9 @@ export interface Artist {
   profile_image_url: string | null;
   profile_image_source: LinkPlatform | null;
   profile_image_fetched_at: string | null;
+  /** Original SoundCloud image URL (og:image from the SC page). Used as the
+   *  source when downloading and uploading to Supabase Storage. */
+  sc_image_url: string | null;
   booking_info: string | null;
   management_info: string | null;
   contact_info: string | null;
@@ -113,6 +122,7 @@ export interface ArtistWithRelations extends Artist {
   genres: Genre[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
+  aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
   bandcamp_albums?: BandcampAlbum[];
