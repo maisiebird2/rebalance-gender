@@ -42,7 +42,7 @@ const ARTIST_SELECT = `
 function normalizeArtist(row: any): ArtistWithRelations {
   const genres = (row.artist_genres ?? [])
     .map((ag: any) => ag.genres)
-    .filter(Boolean);
+    .filter((g: any) => g?.status === "approved");
 
   return {
     ...row,
