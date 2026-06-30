@@ -1,5 +1,7 @@
-// Single-artist image enrichment — shared logic used by the CLI script
-// (scripts/enrich-images.mjs) and the admin approval flow.
+// Single-artist image enrichment — shared logic used by:
+//   - scripts/enrich-images.ts  (bulk CLI)
+//   - src/app/admin/actions.ts  (quickApprove)
+//   - src/app/artist/[id]/edit/actions.ts  (saveArtist, when new image-capable links are added)
 //
 // Given an artist ID, looks at their linked profiles in priority order,
 // fetches each page, and pulls the og:image meta tag as a profile photo.

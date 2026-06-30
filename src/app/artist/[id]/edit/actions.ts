@@ -2,10 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
+import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -244,6 +246,18 @@ export async function saveArtist(
   }
 
   // ── 7. Replace links ──────────────────────────────────────────
+
+  // Snapshot current image-capable URLs before we replace links, so we can
+  // detect whether any new ones are being added (to decide if enrichment is needed).
+  const imagePlatforms = new Set<string>(PLATFORM_PRIORITY);
+  const { data: existingImageLinks } = await admin
+    .from("artist_links")
+    .select("url")
+    .eq("artist_id", artistId)
+    .in("platform", [...imagePlatforms])
+    .not("url", "is", null);
+  const existingImageUrls = new Set((existingImageLinks ?? []).map((l) => l.url as string));
+
   await admin.from("artist_links").delete().eq("artist_id", artistId);
 
   if (links.length > 0) {
@@ -260,12 +274,14 @@ export async function saveArtist(
               not_found: true,
             };
           }
-          const url = cleanLinkUrl(l.platform, l.url!.trim());
+          const original_url = l.url!.trim();
+          const url = cleanLinkUrl(l.platform, original_url);
           return {
             artist_id: artistId,
             platform: l.platform,
             handle: deriveHandle(l.platform, url),
             url,
+            original_url,
             not_found: false,
           };
         })
@@ -273,6 +289,15 @@ export async function saveArtist(
       if (lErr) return { error: `Links save error: ${lErr.message}` };
     }
   }
+
+  // Check whether any new image-capable URLs were introduced.
+  const hasNewImageUrls = links.some(
+    (l) =>
+      !l.not_found &&
+      l.url?.trim() &&
+      imagePlatforms.has(l.platform) &&
+      !existingImageUrls.has(cleanLinkUrl(l.platform, l.url!.trim()))
+  );
 
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────
   if (bio !== null) {
@@ -293,7 +318,15 @@ export async function saveArtist(
       return { error: `Bio save error: ${enrichErr.message}` };
   }
 
-  // ── 9. Revalidate caches and redirect ─────────────────────────
+  // ── 9. Trigger image enrichment if warranted ──────────────────
+  // Run after the response is sent so it doesn't block the redirect.
+  // enrichArtistImage skips artists that already have a profile_image_url,
+  // so this is a no-op if the artist already has an image.
+  if (directoryStatus === "approved" && hasNewImageUrls) {
+    after(() => enrichArtistImage(artistId, admin));
+  }
+
+  // ── 10. Revalidate caches and redirect ─────────────────────────
   revalidatePath(`/artist/${artistId}`);
   revalidatePath("/");
   // The public artist page only renders approved artists. Redirect to the
