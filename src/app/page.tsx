@@ -1,3 +1,4 @@
+import Link from "next/link";
 import ArtistCard from "@/components/ArtistCard";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
@@ -31,7 +32,15 @@ export default async function Home({ searchParams }: PageProps) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="mb-2 text-2xl font-bold">Artist Directory</h1>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h1 className="text-2xl font-bold">Artist Directory</h1>
+        <Link
+          href="/discover"
+          className="text-sm text-violet-600 hover:underline dark:text-violet-400"
+        >
+          Find artists similar to one you love →
+        </Link>
+      </div>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
         {count} artist{count === 1 ? "" : "s"}
       </p>
