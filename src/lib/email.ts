@@ -24,7 +24,7 @@ function getResend(): Resend {
   return cachedResend;
 }
 
-const FROM_ADDRESS = "noreply@womeninelectronicmusic.com";
+const FROM_ADDRESS = process.env.RESEND_FROM_ADDRESS ?? "onboarding@resend.dev";
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
 export type SubmissionKind = "artist" | "revision";
