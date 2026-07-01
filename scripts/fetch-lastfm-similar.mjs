@@ -305,7 +305,21 @@ async function main() {
   // --resolve-only: backfill similar_artist_id for existing rows where it's null
   if (RESOLVE_ONLY) {
     console.log('\n--resolve-only: backfilling similar_artist_id for unmatched rows…')
-    const unmatched = await fetchAllPages(from =>
+
+    // Persist IDs that were tried but couldn't be resolved, so we skip them next run.
+    // Cleared by --force.
+    const TRIED_CACHE_FILE = path.join(CACHE_DIR, 'resolve_only_tried.json')
+    let triedIds = new Set()
+    if (!FORCE) {
+      try {
+        if (fs.existsSync(TRIED_CACHE_FILE)) {
+          triedIds = new Set(JSON.parse(fs.readFileSync(TRIED_CACHE_FILE, 'utf-8')))
+          console.log(`  Skipping ${triedIds.size} already-tried row(s) (use --force to retry all).`)
+        }
+      } catch { /* ignore corrupt cache */ }
+    }
+
+    const allUnmatched = await fetchAllPages(from =>
       supabase
         .from('lastfm_similar_artists')
         .select('id, similar_artist_name, similar_artist_lfm_url, similar_artist_mbid')
@@ -313,33 +327,83 @@ async function main() {
         .order('id')
         .range(from, from + PAGE_SIZE - 1)
     )
-    console.log(`  Found ${unmatched.length} row(s) without similar_artist_id.`)
+    const unmatched = allUnmatched.filter(r => !triedIds.has(r.id))
+    console.log(`  Found ${allUnmatched.length} row(s) without similar_artist_id; ${unmatched.length} not yet tried.`)
 
-    let resolved = 0, failed = 0
+    const BATCH_SIZE    = 500  // max row IDs per .in() filter
+    const PROGRESS_STEP = Math.max(1, Math.floor(unmatched.length / 20)) // every ~5%
+
+    let resolved = 0, failed = 0, processed = 0
+    let nextProgressAt = PROGRESS_STEP
+    // Map: similar_artist_id → [row.id, ...] — grouped so we can do one update per target
+    let pendingByTarget = new Map()
+    const newlyFailed = []   // IDs that couldn't be resolved this run
+    const startTime = Date.now()
+
+    async function flushBatch() {
+      if (!pendingByTarget.size) return
+      for (const [similarId, rowIds] of pendingByTarget) {
+        // chunk in case many rows share the same target
+        for (let i = 0; i < rowIds.length; i += BATCH_SIZE) {
+          const chunk = rowIds.slice(i, i + BATCH_SIZE)
+          const { error } = await supabase
+            .from('lastfm_similar_artists')
+            .update({ similar_artist_id: similarId })
+            .in('id', chunk)
+          if (error) {
+            console.error(`  ✗ batch update error: ${error.message}`)
+            failed += chunk.length
+          } else {
+            resolved += chunk.length
+          }
+        }
+      }
+      pendingByTarget = new Map()
+    }
+
     for (const row of unmatched) {
+      processed++
+
       const id = resolveSimilarArtistId(
         row.similar_artist_lfm_url, row.similar_artist_mbid, row.similar_artist_name,
         lfmUrlToArtistId, mbidToArtistId, nameToArtistId
       )
-      if (!id) continue
 
-      if (DEBUG) console.log(`  ✓ ${row.similar_artist_name} → ${id}`)
-
-      if (!DRY_RUN) {
-        const { error } = await supabase
-          .from('lastfm_similar_artists')
-          .update({ similar_artist_id: id })
-          .eq('id', row.id)
-        if (error) {
-          console.error(`  ✗ ${row.similar_artist_name}: ${error.message}`)
-          failed++
-          continue
+      if (id) {
+        if (DEBUG) console.log(`  ✓ ${row.similar_artist_name} → ${id}`)
+        if (!DRY_RUN) {
+          if (!pendingByTarget.has(id)) pendingByTarget.set(id, [])
+          pendingByTarget.get(id).push(row.id)
+        } else {
+          resolved++
         }
+      } else {
+        newlyFailed.push(row.id)
       }
-      resolved++
+
+      if (processed >= nextProgressAt) {
+        if (!DRY_RUN) await flushBatch() // flush first so resolved count is accurate
+        const pct     = ((processed / unmatched.length) * 100).toFixed(0)
+        const elapsed = (Date.now() - startTime) / 1000
+        const rate    = elapsed > 0 ? processed / elapsed : processed
+        const remaining = Math.round((unmatched.length - processed) / rate)
+        const eta     = remaining < 60
+          ? `${remaining}s`
+          : `${Math.floor(remaining / 60)}m ${remaining % 60}s`
+        console.log(`  ${pct}%  ${processed}/${unmatched.length} processed — ${resolved} resolved — ETA ${eta}`)
+        nextProgressAt += PROGRESS_STEP
+      }
     }
 
-    console.log(`\nResolved: ${resolved}  Failed: ${failed}  Still unmatched: ${unmatched.length - resolved - failed}`)
+    if (!DRY_RUN) {
+      await flushBatch()
+      // Persist newly-failed IDs so they're skipped next time
+      for (const id of newlyFailed) triedIds.add(id)
+      fs.writeFileSync(TRIED_CACHE_FILE, JSON.stringify([...triedIds]))
+    }
+
+    console.log(`\nResolved: ${resolved}  Failed: ${failed}  Still unmatched: ${allUnmatched.length - resolved - failed}`)
+    console.log(`Cached ${newlyFailed.length} newly-unresolvable row(s) — will skip next run.`)
     if (DRY_RUN) console.log('Dry run — no data was written.')
     return
   }
