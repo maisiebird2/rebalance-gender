@@ -35,11 +35,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@marsidev/react-turnstile": "^1.5.3",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.108.1",
     "next": "^16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "resend": "^6.16.0",
     "sanitize-html": "^2.15.0"
   },
   "overrides": {
