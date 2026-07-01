@@ -42,6 +42,19 @@ export async function quickReject(id: string): Promise<{ error: string } | void>
   revalidatePath("/admin");
 }
 
+export async function quickMarkNotEligible(id: string): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("artists")
+    .update({ directory_status: "not_eligible" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/artist/${id}`);
+}
+
 // ── Genres ──────────────────────────────────────────────────────────
 
 export async function addGenre(
@@ -126,6 +139,184 @@ export async function restoreGenre(
   if (error) return { error: error.message };
   revalidatePath("/admin");
   revalidatePath("/");
+}
+
+// ── Revision moderation ────────────────────────────────────────────────
+
+export async function approveRevision(
+  revisionId: string
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+
+  // Fetch the revision and its proposed changes.
+  const { data: revision, error: revError } = await admin
+    .from("artist_revisions")
+    .select("*")
+    .eq("id", revisionId)
+    .single();
+
+  if (revError || !revision) return { error: "Revision not found" };
+
+  const rd = revision.revision_data as {
+    name?: string;
+    pronouns?: string;
+    genres?: string[];
+    locations?: { city?: string; country?: string }[];
+    labels?: string[];
+    links?: Record<string, string>;
+  };
+
+  const artistId = revision.artist_id as string;
+  const now = new Date().toISOString();
+
+  // Apply artist-level fields (name, pronouns).
+  const artistUpdate: Record<string, unknown> = { updated_at: now };
+  if (rd.name) artistUpdate.name = rd.name;
+
+  if (rd.pronouns) {
+    const pronounValue = rd.pronouns.trim().toLowerCase();
+    const { data: existing } = await admin
+      .from("pronouns")
+      .select("id")
+      .eq("value", pronounValue)
+      .maybeSingle();
+    let pronounId: number;
+    if (existing) {
+      pronounId = existing.id;
+    } else {
+      const { data: created } = await admin
+        .from("pronouns")
+        .insert({ value: pronounValue })
+        .select("id")
+        .single();
+      pronounId = created?.id;
+    }
+    if (pronounId) artistUpdate.pronoun_id = pronounId;
+  }
+
+  if (Object.keys(artistUpdate).length > 1) {
+    const { error } = await admin.from("artists").update(artistUpdate).eq("id", artistId);
+    if (error) return { error: error.message };
+  }
+
+  // Replace genres.
+  if (rd.genres?.length) {
+    await admin.from("artist_genres").delete().eq("artist_id", artistId);
+    for (const genreName of rd.genres.map((g) => g.trim().toLowerCase()).filter(Boolean)) {
+      const { data: existing } = await admin.from("genres").select("id").eq("name", genreName).maybeSingle();
+      let genreId: number;
+      if (existing) {
+        genreId = existing.id;
+      } else {
+        const { data: created } = await admin.from("genres").insert({ name: genreName }).select("id").single();
+        if (!created) continue;
+        genreId = created.id;
+      }
+      await admin.from("artist_genres").insert({ artist_id: artistId, genre_id: genreId });
+    }
+  }
+
+  // Replace locations.
+  if (rd.locations?.length) {
+    await admin.from("artist_locations").delete().eq("artist_id", artistId);
+    const validLocs = rd.locations.filter((l) => l.city?.trim() || l.country?.trim());
+    if (validLocs.length) {
+      await admin.from("artist_locations").insert(
+        validLocs.map((l) => ({
+          artist_id: artistId,
+          city: l.city?.trim() || null,
+          country: l.country?.trim() || null,
+          raw_text: [l.city, l.country].filter(Boolean).join(", "),
+        }))
+      );
+    }
+  }
+
+  // Replace labels.
+  if (rd.labels?.length) {
+    await admin.from("artist_labels").delete().eq("artist_id", artistId);
+    const validLabels = rd.labels.map((l) => l.trim()).filter(Boolean);
+    if (validLabels.length) {
+      await admin.from("artist_labels").insert(
+        validLabels.map((name) => ({ artist_id: artistId, name }))
+      );
+    }
+  }
+
+  // Merge links (upsert — don't delete links not mentioned in revision).
+  if (rd.links && Object.keys(rd.links).length) {
+    const { cleanLinkUrl } = await import("@/lib/platforms");
+    const rows = Object.entries(rd.links)
+      .filter(([, url]) => url?.trim())
+      .map(([platform, url]) => ({
+        artist_id: artistId,
+        platform,
+        original_url: url.trim(),
+        url: cleanLinkUrl(platform, url.trim()),
+      }));
+    if (rows.length) {
+      await admin.from("artist_links").upsert(rows, { onConflict: "artist_id,platform" });
+    }
+  }
+
+  // Mark revision approved.
+  const { error: revUpdateError } = await admin
+    .from("artist_revisions")
+    .update({ status: "approved", reviewed_at: now })
+    .eq("id", revisionId);
+
+  if (revUpdateError) return { error: revUpdateError.message };
+
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/artist/${artistId}`);
+}
+
+export async function rejectRevision(
+  revisionId: string
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("artist_revisions")
+    .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+    .eq("id", revisionId);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+}
+
+// ── Submitter email management ─────────────────────────────────────────
+
+export async function blockEmail(
+  email: string,
+  reason?: string
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("submitter_emails")
+    .upsert({
+      email,
+      status: "blocked",
+      blocked_at: new Date().toISOString(),
+      block_reason: reason ?? null,
+    }, { onConflict: "email" });
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+}
+
+export async function unblockEmail(
+  email: string
+): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("submitter_emails")
+    .update({ status: "verified", blocked_at: null, block_reason: null })
+    .eq("email", email);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
 }
 
 // ── Profile link categories (platforms) ──────────────────────────────

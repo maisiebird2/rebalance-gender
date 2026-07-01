@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
+import {
+  checkBotProtection,
+  getEmailStatus,
+  isDuplicateArtist,
+  createTokenAndSendEmail,
+} from "@/lib/submission-helpers";
 import type { LinkPlatform } from "@/lib/types";
 
 interface LocationInput {
@@ -17,6 +23,9 @@ interface SubmitBody {
   notes?: string;
   submittedByEmail?: string;
   links?: Partial<Record<LinkPlatform, string>>;
+  // Bot protection
+  turnstileToken?: string;
+  honeypot?: string;  // must be empty; bots fill it
 }
 
 export async function POST(request: NextRequest) {
@@ -27,6 +36,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // ── 1. Bot protection ───────────────────────────────────────────────────────
+  const botError = await checkBotProtection(body.turnstileToken, body.honeypot);
+  if (botError) {
+    // Return a plausible success-looking response to confuse bots.
+    return NextResponse.json({ success: true });
+  }
+
   const name = body.name?.trim();
   if (!name) {
     return NextResponse.json(
@@ -35,9 +51,34 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const email = body.submittedByEmail?.trim() || null;
   const supabase = getSupabaseAdminClient();
 
-  // 1. Resolve pronoun (find or create), preserving the value as typed.
+  // ── 2. Blocked email → silently discard ────────────────────────────────────
+  if (email) {
+    const emailStatus = await getEmailStatus(supabase, email);
+    if (emailStatus === "blocked") {
+      return NextResponse.json({ success: true, requiresVerification: false });
+    }
+  }
+
+  // ── 3. Duplicate check ──────────────────────────────────────────────────────
+  const duplicate = await isDuplicateArtist(supabase, name);
+  if (duplicate) {
+    return NextResponse.json(
+      { error: "This artist is already in our database or has been submitted recently." },
+      { status: 409 }
+    );
+  }
+
+  // ── 4. Resolve email status: verified emails skip email verification ────────
+  const skipVerification =
+    !email ||
+    (email ? await getEmailStatus(supabase, email) === "verified" : false);
+
+  const initialStatus = skipVerification ? "pending" : "unverified";
+
+  // ── 5. Resolve pronouns ─────────────────────────────────────────────────────
   let pronounId: number | null = null;
   const pronounValue = body.pronouns?.trim().toLowerCase();
   if (pronounValue) {
@@ -62,15 +103,15 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 2. Insert the artist as 'pending' — awaits moderation before going live.
+  // ── 6. Insert artist ────────────────────────────────────────────────────────
   const { data: artist, error: artistError } = await supabase
     .from("artists")
     .insert({
       name,
       pronoun_id: pronounId,
       notes: body.notes?.trim() || null,
-      directory_status: "pending",
-      submitted_by_email: body.submittedByEmail?.trim() || null,
+      directory_status: initialStatus,
+      submitted_by_email: email,
       submitted_at: new Date().toISOString(),
     })
     .select("id")
@@ -82,9 +123,8 @@ export async function POST(request: NextRequest) {
 
   const artistId = artist.id as string;
 
-  // 3. Resolve genres (find or create each, then link via artist_genres).
+  // ── 7. Genres ───────────────────────────────────────────────────────────────
   const genreNames = (body.genres ?? []).map((g) => g.trim().toLowerCase()).filter(Boolean);
-
   for (const genreName of genreNames) {
     const { data: existing } = await supabase
       .from("genres")
@@ -101,24 +141,22 @@ export async function POST(request: NextRequest) {
         .insert({ name: genreName })
         .select("id")
         .single();
-      if (error) continue; // skip this genre on error, don't fail whole submission
+      if (error) continue;
       genreId = created.id;
     }
 
-    await supabase
-      .from("artist_genres")
-      .insert({ artist_id: artistId, genre_id: genreId });
+    await supabase.from("artist_genres").insert({ artist_id: artistId, genre_id: genreId });
   }
 
-  // 4. Labels — one row per entry.
+  // ── 8. Labels ───────────────────────────────────────────────────────────────
   const labelNames = (body.labels ?? []).map((l) => l.trim()).filter(Boolean);
   if (labelNames.length > 0) {
     await supabase.from("artist_labels").insert(
-      labelNames.map((name) => ({ artist_id: artistId, name }))
+      labelNames.map((n) => ({ artist_id: artistId, name: n }))
     );
   }
 
-  // 5. Locations — one row per entry with separate city and country.
+  // ── 9. Locations ────────────────────────────────────────────────────────────
   const validLocations = (body.locations ?? []).filter(
     (l) => l.city?.trim() || l.country?.trim()
   );
@@ -133,25 +171,43 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 5. Links — one row per non-empty platform URL. Validate against the
-  // `platforms` lookup table rather than a hardcoded list, since the
-  // admin panel can add new categories at runtime.
+  // ── 10. Links ───────────────────────────────────────────────────────────────
   if (body.links) {
     const platforms = await getPlatforms(supabase);
     const validKeys = new Set(platforms.map((p) => p.key));
 
     const rows = (Object.keys(body.links) as LinkPlatform[])
       .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
-      .map((platform) => ({
-        artist_id: artistId,
-        platform,
-        url: cleanLinkUrl(platform, body.links![platform]!.trim()),
-      }));
+      .map((platform) => {
+        const original_url = body.links![platform]!.trim();
+        return {
+          artist_id: artistId,
+          platform,
+          original_url,
+          url: cleanLinkUrl(platform, original_url),
+        };
+      });
 
     if (rows.length > 0) {
       await supabase.from("artist_links").insert(rows);
     }
   }
 
-  return NextResponse.json({ success: true, id: artistId });
+  // ── 11. Send verification email (if required) ───────────────────────────────
+  if (!skipVerification && email) {
+    try {
+      await createTokenAndSendEmail(supabase, email, "artist", artistId, "artist");
+    } catch (err) {
+      // Don't fail the whole request if the email send fails — the record
+      // exists and can be cleaned up later. Log and surface to the client.
+      console.error("[submit] Failed to send verification email:", err);
+      return NextResponse.json(
+        { error: "Submission saved but we couldn't send the verification email. Please try again." },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ success: true, requiresVerification: true });
+  }
+
+  return NextResponse.json({ success: true, requiresVerification: false });
 }

@@ -39,18 +39,29 @@ export function platformPlaceholder(label: string): string {
  * - Trims leading and trailing whitespace (including newlines and tabs).
  * - Strips everything from `?` onward (tracking params, share tokens, etc.).
  *
- * Platform-specific exceptions:
- * - SoundCloud: search URLs (`/search?q=...`) are left intact because the
- *   query string is the content, not a tracking param.
+ * Platform-specific exceptions: certain URL paths use the query string as
+ * meaningful content (search queries, voucher codes, etc.) rather than
+ * tracking params. These are left intact.
  */
+
+/** Path prefixes that signal the query string is content, not tracking. */
+const SEARCH_PATH_PREFIXES: Partial<Record<string, string>> = {
+  soundcloud: "/search",
+  discogs:    "/search",
+  youtube:    "/results",
+  bandcamp:   "/search",
+  venmo:      "/code",
+};
+
 export function cleanLinkUrl(platform: string, url: string): string {
   // Trim first so all downstream checks operate on a clean string.
   const trimmed = url.trim();
 
-  if (platform === "soundcloud") {
+  const searchPrefix = SEARCH_PATH_PREFIXES[platform];
+  if (searchPrefix) {
     try {
       const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith("/search")) return trimmed;
+      if (parsed.pathname.startsWith(searchPrefix)) return trimmed;
     } catch {
       // malformed URL — fall through to default stripping
     }

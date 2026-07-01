@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, useRef, FormEvent } from "react";
+import { Turnstile } from "@marsidev/react-turnstile";
 import type { LinkPlatform, Platform } from "@/lib/types";
 import { platformPlaceholder } from "@/lib/platforms";
 
@@ -14,7 +15,7 @@ interface Props {
   platforms: Platform[];
 }
 
-type Status = "idle" | "submitting" | "success" | "error";
+type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
 
 export default function SubmissionForm({ allGenres, platforms }: Props) {
   const LINK_FIELDS = platforms.map((p) => ({
@@ -28,50 +29,29 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
   const [genres, setGenres] = useState<string[]>([""]);
   const [locations, setLocations] = useState<LocationRow[]>([{ city: "", country: "" }]);
   const [labelList, setLabelList] = useState<string[]>([""]);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  function addLabel() {
-    setLabelList((prev) => [...prev, ""]);
-  }
-
+  function addLabel() { setLabelList((prev) => [...prev, ""]); }
   function removeLabel(i: number) {
-    setLabelList((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [""];
-    });
+    setLabelList((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [""]; });
   }
-
   function updateLabel(i: number, value: string) {
     setLabelList((prev) => prev.map((l, idx) => (idx === i ? value : l)));
   }
 
-  function addLocation() {
-    setLocations((prev) => [...prev, { city: "", country: "" }]);
-  }
-
+  function addLocation() { setLocations((prev) => [...prev, { city: "", country: "" }]); }
   function removeLocation(i: number) {
-    setLocations((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [{ city: "", country: "" }];
-    });
+    setLocations((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [{ city: "", country: "" }]; });
   }
-
   function updateLocation(i: number, field: keyof LocationRow, value: string) {
-    setLocations((prev) =>
-      prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l))
-    );
+    setLocations((prev) => prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l)));
   }
 
-  function addGenre() {
-    setGenres((prev) => [...prev, ""]);
-  }
-
+  function addGenre() { setGenres((prev) => [...prev, ""]); }
   function removeGenre(i: number) {
-    setGenres((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [""];
-    });
+    setGenres((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [""]; });
   }
-
   function updateGenre(i: number, value: string) {
     setGenres((prev) => prev.map((g, idx) => (idx === i ? value : g)));
   }
@@ -100,6 +80,9 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
       labels: labelList.filter(Boolean),
       submittedByEmail: data.get("submittedByEmail"),
       links,
+      turnstileToken,
+      // honeypot — the value of this field; bots fill it, humans don't
+      honeypot: data.get("_hp"),
     };
 
     try {
@@ -109,12 +92,17 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
         body: JSON.stringify(payload),
       });
 
+      const body = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
         throw new Error(body.error || "Something went wrong");
       }
 
-      setStatus("success");
+      if (body.requiresVerification) {
+        setStatus("needsVerification");
+      } else {
+        setStatus("success");
+      }
       form.reset();
     } catch (err) {
       setStatus("error");
@@ -122,17 +110,37 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
     }
   }
 
-  if (status === "success") {
+  if (status === "needsVerification") {
     return (
-      <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
-        Thanks! Your submission has been received and will appear once it's
-        reviewed.
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+        <p className="font-medium">Check your email</p>
+        <p className="mt-1 text-sm">
+          We've sent you a confirmation link. Click it to send your submission to
+          our review queue. The link expires in 48 hours.
+        </p>
       </div>
     );
   }
 
+  if (status === "success") {
+    return (
+      <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+        Thanks! Your submission has been received and will appear once it's reviewed.
+      </div>
+    );
+  }
+
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4 pb-20">
+    <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-4 pb-20">
+
+      {/* ── Honeypot (hidden from humans, filled by bots) ───────── */}
+      <div style={{ position: "absolute", opacity: 0, height: 0, overflow: "hidden", pointerEvents: "none" }} aria-hidden="true">
+        <label htmlFor="_hp">Website</label>
+        <input id="_hp" name="_hp" type="text" tabIndex={-1} autoComplete="off" />
+      </div>
+
       <Field label="Name *" name="name" required />
       <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her" />
 
@@ -147,137 +155,94 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
             >
               <option value="">— select a genre —</option>
               {allGenres.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
+                <option key={g} value={g}>{g}</option>
               ))}
             </select>
             {genres.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeGenre(i)}
-                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                aria-label="Remove genre"
-              >
-                ✕
-              </button>
+              <button type="button" onClick={() => removeGenre(i)}
+                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove genre">✕</button>
             )}
           </div>
         ))}
-        <button
-          type="button"
-          onClick={addGenre}
-          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
+        <button type="button" onClick={addGenre}
+          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
           + Add genre
         </button>
       </div>
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-        <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">
-          Location
-        </legend>
+        <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Location</legend>
         <div className="flex flex-col gap-3">
           {locations.map((loc, i) => (
             <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
               <div className="flex flex-col gap-1">
-                {i === 0 && (
-                  <span className="text-xs font-medium text-gray-500">City</span>
-                )}
-                <input
-                  type="text"
-                  value={loc.city}
-                  onChange={(e) => updateLocation(i, "city", e.target.value)}
-                  placeholder="City"
-                  className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                />
+                {i === 0 && <span className="text-xs font-medium text-gray-500">City</span>}
+                <input type="text" value={loc.city} onChange={(e) => updateLocation(i, "city", e.target.value)}
+                  placeholder="City" className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div className="flex flex-col gap-1">
-                {i === 0 && (
-                  <span className="text-xs font-medium text-gray-500">Country</span>
-                )}
-                <input
-                  type="text"
-                  value={loc.country}
-                  onChange={(e) => updateLocation(i, "country", e.target.value)}
-                  placeholder="Country"
-                  className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                />
+                {i === 0 && <span className="text-xs font-medium text-gray-500">Country</span>}
+                <input type="text" value={loc.country} onChange={(e) => updateLocation(i, "country", e.target.value)}
+                  placeholder="Country" className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               {locations.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeLocation(i)}
-                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                  aria-label="Remove location"
-                >
-                  ✕
-                </button>
+                <button type="button" onClick={() => removeLocation(i)}
+                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove location">✕</button>
               )}
             </div>
           ))}
-          <button
-            type="button"
-            onClick={addLocation}
-            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
-          >
+          <button type="button" onClick={addLocation}
+            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
             + Add location
           </button>
         </div>
       </fieldset>
+
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Labels / crews</span>
         {labelList.map((label, i) => (
           <div key={i} className="flex items-center gap-2">
-            <input
-              type="text"
-              value={label}
-              onChange={(e) => updateLabel(i, e.target.value)}
+            <input type="text" value={label} onChange={(e) => updateLabel(i, e.target.value)}
               placeholder="e.g. Ostgut Ton"
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-            />
+              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
             {labelList.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeLabel(i)}
-                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                aria-label="Remove label"
-              >
-                ✕
-              </button>
+              <button type="button" onClick={() => removeLabel(i)}
+                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove label">✕</button>
             )}
           </div>
         ))}
-        <button
-          type="button"
-          onClick={addLabel}
-          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
+        <button type="button" onClick={addLabel}
+          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
           + Add label
         </button>
       </div>
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-        <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">
-          Profile links
-        </legend>
+        <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {LINK_FIELDS.map(({ platform, label, placeholder }) => (
-            <Field
-              key={platform}
-              label={label}
-              name={`link_${platform}`}
-              placeholder={placeholder}
-            />
+            <Field key={platform} label={label} name={`link_${platform}`} placeholder={placeholder} />
           ))}
         </div>
       </fieldset>
 
       <Field
-        label="Your email (optional, in case we have questions)"
+        label="Your email (required — we'll send a confirmation link)"
         name="submittedByEmail"
         type="email"
+        required
       />
+
+      {/* ── Turnstile widget ────────────────────────────────────── */}
+      {siteKey && (
+        <Turnstile
+          siteKey={siteKey}
+          onSuccess={(token) => setTurnstileToken(token)}
+          onError={() => setTurnstileToken(null)}
+          onExpire={() => setTurnstileToken(null)}
+          options={{ theme: "auto" }}
+        />
+      )}
 
       {status === "error" && (
         <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
@@ -288,15 +253,12 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
             type="submit"
-            disabled={status === "submitting"}
+            disabled={status === "submitting" || (!!siteKey && !turnstileToken)}
             className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {status === "submitting" ? "Submitting…" : "Submit"}
           </button>
-          <a
-            href="/"
-            className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"
-          >
+          <a href="/" className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300">
             Cancel
           </a>
         </div>
@@ -306,31 +268,15 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
 }
 
 function Field({
-  label,
-  name,
-  placeholder,
-  required,
-  type = "text",
+  label, name, placeholder, required, type = "text",
 }: {
-  label: string;
-  name: string;
-  placeholder?: string;
-  required?: boolean;
-  type?: string;
+  label: string; name: string; placeholder?: string; required?: boolean; type?: string;
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label htmlFor={name} className="text-sm font-medium">
-        {label}
-      </label>
-      <input
-        id={name}
-        name={name}
-        type={type}
-        placeholder={placeholder}
-        required={required}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-      />
+      <label htmlFor={name} className="text-sm font-medium">{label}</label>
+      <input id={name} name={name} type={type} placeholder={placeholder} required={required}
+        className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
     </div>
   );
 }

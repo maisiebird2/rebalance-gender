@@ -7,7 +7,46 @@ export type ArtistStatus =
   | "not_eligible"
   | "search_input"
   | "sc_followee"
-  | "duplicate";
+  | "duplicate"
+  | "unverified";
+
+// ── Submission / revision system ─────────────────────────────────────────────
+
+export type SubmitterEmailStatus = "unverified" | "verified" | "blocked";
+
+export interface SubmitterEmail {
+  email: string;
+  status: SubmitterEmailStatus;
+  first_seen_at: string;
+  verified_at: string | null;
+  submission_count: number;
+  blocked_at: string | null;
+  block_reason: string | null;
+}
+
+export type RevisionStatus = "unverified" | "pending" | "approved" | "rejected";
+
+/** Shape stored in artist_revisions.revision_data (same fields as /api/submit body) */
+export interface RevisionData {
+  name?: string;
+  pronouns?: string;
+  genres?: string[];
+  locations?: { city?: string; country?: string }[];
+  labels?: string[];
+  links?: Partial<Record<string, string>>;
+}
+
+export interface ArtistRevision {
+  id: string;
+  artist_id: string;
+  submitted_by_email: string | null;
+  status: RevisionStatus;
+  submitter_notes: string | null;
+  revision_data: RevisionData;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 // Profile-link platform key. Backed by the `platforms` lookup table
 // (not a fixed enum) so new categories can be added from the admin
@@ -57,6 +96,7 @@ export interface ArtistLink {
   platform: LinkPlatform;
   handle: string | null;
   url: string | null;
+  original_url: string | null;
   not_found: boolean;
 }
 

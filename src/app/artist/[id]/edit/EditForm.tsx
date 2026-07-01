@@ -49,7 +49,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     }));
 
   const [isPending, startTransition] = useTransition();
-  const [pendingAction, setPendingAction] = useState<"save" | "approve" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -82,7 +82,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   }
 
   // ── Submit ────────────────────────────────────────────────────
-  function buildFormData(forceApprove = false): FormData | null {
+  function buildFormData(forceApprove = false, forceNotEligible = false): FormData | null {
     const form = formRef.current;
     if (!form) return null;
 
@@ -102,6 +102,8 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     formData.set("aliases", JSON.stringify(aliasNames.filter(Boolean)));
     if (forceApprove) {
       formData.set("directory_status", "approved");
+    } else if (forceNotEligible) {
+      formData.set("directory_status", "not_eligible");
     }
     return formData;
   }
@@ -128,6 +130,21 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     if (!formData) return;
 
     setPendingAction("approve");
+    startTransition(async () => {
+      const result = await saveArtist(formData);
+      setPendingAction(null);
+      if (result && "error" in result) {
+        setServerError(result.error);
+      }
+    });
+  }
+
+  function handleSaveAndMarkNotEligible() {
+    setServerError(null);
+    const formData = buildFormData(false, true);
+    if (!formData) return;
+
+    setPendingAction("not_eligible");
     startTransition(async () => {
       const result = await saveArtist(formData);
       setPendingAction(null);
@@ -522,6 +539,16 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
                 className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 {pendingAction === "approve" ? "Approving…" : "Save and approve"}
+              </button>
+            )}
+            {artist.directory_status !== "not_eligible" && (
+              <button
+                type="button"
+                onClick={handleSaveAndMarkNotEligible}
+                disabled={isPending}
+                className="rounded-md border border-amber-300 px-5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+              >
+                {pendingAction === "not_eligible" ? "Saving…" : "Not eligible"}
               </button>
             )}
             <a
