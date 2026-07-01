@@ -30,7 +30,7 @@
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
-    "linkify-bios": "node scripts/linkify-bios.mjs",
+    "linkify-bios": "tsx scripts/linkify-bios.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 // ============================================================
 // Bio linkification script.
 //
@@ -9,7 +9,7 @@
 //
 //   2. Converts @mentions into SoundCloud profile links.
 //      e.g. "ONE HALF OF @GREAZUS" becomes
-//           "ONE HALF OF <a href="https://soundcloud.com/greazus">GREAZUS</a>"
+//           "ONE HALF OF @<a href="https://soundcloud.com/greazus">GREAZUS</a>"
 //
 //      @mention rules:
 //        - Only triggers when @ is at the start of the bio, or is
@@ -17,6 +17,10 @@
 //          like artist@gmail.com are left untouched.
 //        - Username is lowercased in the URL; display text preserves
 //          the original casing (minus the @).
+//
+// The linkification logic itself lives in src/lib/sanitize-bio.ts
+// (linkifyBio) — this script just imports it, so there's a single
+// implementation shared with the saveArtist server action.
 //
 // This script is meant to run after sanitize-bios.mjs. It updates
 // bio_sanitized in place.
@@ -40,6 +44,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { linkifyBio } from "../src/lib/sanitize-bio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -97,73 +102,6 @@ if (!SUPABASE_URL || !SECRET_KEY) {
 const supabase = createClient(SUPABASE_URL, SECRET_KEY);
 
 // ------------------------------------------------------------
-// Linkification logic
-// NOTE: keep this logic in sync with src/lib/sanitize-bio.ts,
-// which is the version used by the saveArtist server action.
-// ------------------------------------------------------------
-
-/**
- * Process a plain-text segment (i.e. text that is NOT inside an HTML
- * tag). Replaces @mentions and bare URLs with <a> tags.
- *
- * The combined regex processes left-to-right so the first match wins,
- * preventing any overlap between the two patterns.
- */
-function transformTextSegment(text) {
-  return text.replace(
-    // @mention: @ must be at the start of the string, or preceded by
-    // whitespace. Excludes email addresses (e.g. artist@gmail.com).
-    //
-    // https?:// URL: standard absolute URLs.
-    //
-    // www. URL: bare www. domains not already preceded by :// (so
-    // https://www.domain.com is caught by the https? branch first).
-    // Must be at start or after whitespace. https:// is prepended to
-    // the href automatically.
-    /((?:^|(?<=\s))@([A-Za-z0-9_-]+))|(https?:\/\/[^\s<>"']+)|((?:^|(?<=\s))www\.[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}[^\s<>"']*)/g,
-    (_match, atMatch, username, httpsUrl, wwwUrl) => {
-      if (atMatch) {
-        const slug = username.toLowerCase();
-        return `<a href="https://soundcloud.com/${slug}" target="_blank" rel="noopener noreferrer">${username}</a>`;
-      } else {
-        const raw = httpsUrl ?? wwwUrl;
-        const href = wwwUrl ? `https://${raw}` : raw;
-        // Strip trailing punctuation that's likely not part of the URL.
-        const cleanedHref = href.replace(/[.,;:!?)\]}'">]+$/, "");
-        const cleanedRaw = raw.slice(0, raw.length - (href.length - cleanedHref.length));
-        const trailing = raw.slice(cleanedRaw.length);
-        return `<a href="${cleanedHref}" target="_blank" rel="noopener noreferrer">${cleanedRaw}</a>${trailing}`;
-      }
-    }
-  );
-}
-
-/**
- * Walk the HTML string segment by segment, processing only text nodes
- * that are NOT inside an <a> tag. Skips content inside <a>...</a> to
- * avoid double-linking (making the function idempotent on re-runs).
- */
-function linkifyBio(html) {
-  // Split into alternating [text, tag, text, tag, ...] segments.
-  // Captured groups (the parentheses) mean the tag strings are included.
-  const parts = html.split(/(<[^>]+>)/);
-
-  let insideAnchor = 0;
-  return parts
-    .map((segment) => {
-      if (segment.startsWith("<")) {
-        // It's an HTML tag — update anchor-depth tracking but don't transform.
-        if (/^<a[\s>]/i.test(segment)) insideAnchor++;
-        else if (/^<\/a\s*>/i.test(segment)) insideAnchor = Math.max(0, insideAnchor - 1);
-        return segment;
-      }
-      // It's a text node — only transform if we're not inside an <a>.
-      return insideAnchor > 0 ? segment : transformTextSegment(segment);
-    })
-    .join("");
-}
-
-// ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
 async function main() {
@@ -175,7 +113,7 @@ async function main() {
   );
 
   // Resolve --name filter to artist IDs up front
-  let nameFilterIds = null;
+  let nameFilterIds: string[] | null = null;
   if (NAME_FILTER) {
     const { data: matched, error: nameErr } = await supabase
       .from("artists")
@@ -185,7 +123,7 @@ async function main() {
       console.error("Failed to look up artists by name:", nameErr.message);
       process.exit(1);
     }
-    nameFilterIds = (matched ?? []).map((a) => a.id);
+    nameFilterIds = (matched ?? []).map((a: any) => a.id);
     console.log(`  Name filter "${NAME_FILTER}": ${nameFilterIds.length} artist(s) matched.`);
     if (!nameFilterIds.length) {
       console.log("  No matches — nothing to do.");
@@ -195,7 +133,7 @@ async function main() {
 
   // Fetch all matching enrichment rows, paginating past Supabase's 1000-row limit.
   const PAGE_SIZE = 1000;
-  const rows = [];
+  const rows: any[] = [];
   let from = 0;
   while (true) {
     let q = supabase
@@ -213,8 +151,8 @@ async function main() {
       console.error("Failed to fetch rows:", error.message);
       process.exit(1);
     }
-    rows.push(...data);
-    if (data.length < PAGE_SIZE) break;
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
 

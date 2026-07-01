@@ -72,7 +72,7 @@ function transformTextSegment(text: string): string {
     (_match, atMatch, username, httpsUrl, wwwUrl) => {
       if (atMatch) {
         const slug = username.toLowerCase();
-        return `<a href="https://soundcloud.com/${slug}" target="_blank" rel="noopener noreferrer">${username}</a>`;
+        return `@<a href="https://soundcloud.com/${slug}" target="_blank" rel="noopener noreferrer">${username}</a>`;
       } else {
         // Both https?:// and bare www. URLs share the same link-building logic.
         const raw = httpsUrl ?? wwwUrl;
