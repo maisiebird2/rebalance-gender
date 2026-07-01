@@ -11,7 +11,19 @@
 
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let cachedResend: Resend | null = null;
+
+function getResend(): Resend {
+  if (!cachedResend) {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error("RESEND_API_KEY is not set");
+    }
+    cachedResend = new Resend(apiKey);
+  }
+  return cachedResend;
+}
+
 const FROM_ADDRESS = "noreply@womeninelectronicmusic.com";
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
@@ -65,7 +77,7 @@ export async function sendVerificationEmail(
     `Please confirm your email by visiting this link (expires in 48 hours):\n${verifyUrl}\n\n` +
     `If you didn't submit anything, you can ignore this email.`;
 
-  const { error } = await resend.emails.send({
+  const { error } = await getResend().emails.send({
     from: FROM_ADDRESS,
     to: email,
     subject,
