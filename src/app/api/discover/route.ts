@@ -86,7 +86,57 @@ export async function POST(request: NextRequest) {
   }
 
   const artistName = extractArtistName(query);
+  const supabase = getSupabaseClient();
 
+  // 1. Check for pre-computed similarity scores before hitting Last.fm.
+  //    artist_similarity_scores is pre-computed for every artist in the DB
+  //    (including non-directory ones added from prior cold-start searches),
+  //    so repeat queries are instant lookups.
+  const { data: dbArtist } = await supabase
+    .from("artists")
+    .select("id")
+    .ilike("name", artistName)
+    .eq("deleted", false)
+    .maybeSingle();
+
+  if (dbArtist) {
+    const { data: scoreRows } = await supabase
+      .from("artist_similarity_scores")
+      .select(`
+        total_score,
+        recommended:artists!recommended_artist_id(
+          id,
+          name,
+          profile_image_url,
+          enrichment:artist_enrichment(profile_image_url)
+        )
+      `)
+      .eq("source_artist_id", dbArtist.id)
+      .order("rank")
+      .limit(10);
+
+    if (scoreRows && scoreRows.length > 0) {
+      const results: DiscoverResult[] = (scoreRows as any[])
+        .map((row) => {
+          const a = row.recommended;
+          if (!a) return null;
+          const enrichmentImage =
+            (a.enrichment as Array<{ profile_image_url: string | null }> | null)
+              ?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
+          return {
+            id: a.id,
+            name: a.name,
+            profile_image_url: a.profile_image_url ?? enrichmentImage ?? null,
+            score: row.total_score,
+          };
+        })
+        .filter((r): r is DiscoverResult => r !== null);
+
+      return NextResponse.json({ resolvedName: artistName, results } satisfies DiscoverResponse);
+    }
+  }
+
+  // No pre-computed scores found — fall back to a live Last.fm lookup.
   try {
     // 1. Fetch LFM similar artists and top tags in parallel
     const [similarData, tagsData] = await Promise.all([
@@ -126,8 +176,6 @@ export async function POST(request: NextRequest) {
       lfmByUrl.set(normalizeLfmUrl(s.url), score);
       lfmByName.set(s.name.toLowerCase(), score);
     }
-
-    const supabase = getSupabaseClient();
 
     // 2. Match LFM similar against directory artists' Last.fm links
     const { data: lfmLinks } = await supabase

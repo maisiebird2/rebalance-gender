@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   // Not in the directory yet — save as pending for review
   const { error } = await supabase.from("artists").insert({
     name,
-    directory_status: "pending",
+    directory_status: "search_input",
     notes: "Auto-added from homepage search miss",
     submitted_at: new Date().toISOString(),
   });
