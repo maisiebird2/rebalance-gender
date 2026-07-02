@@ -43,22 +43,40 @@ export default async function ArtistPage({ params }: PageProps) {
     .filter(Boolean)
     .join(" | ");
 
+  const soundcloudEnrichment = artist.enrichment?.find(
+    (e) => e.platform === "soundcloud"
+  );
+  const soundcloudBio = soundcloudEnrichment?.bio_sanitized ?? soundcloudEnrichment?.bio ?? null;
+
   // Prefer the artist's SoundCloud profile (or, if we ever harvest individual
   // track URLs into artist_enrichment, a specific track) for the embedded player.
+  // If enrichment confirms track_count === 0 (account has zero uploads, likely
+  // repost-only), skip the widget entirely rather than falling back to the bare
+  // profile URL — that renders empty/misleading, and there's no SoundCloud
+  // widget option that shows reposts instead of uploads.
   const soundcloudTrack = artist.enrichment
     ?.flatMap((e) => e.recent_tracks ?? [])
     ?.find((t) => t.url?.includes("soundcloud.com"));
   const soundcloudLink = artist.links?.find((l) => l.platform === "soundcloud" && !l.not_found);
   const isSoundCloudSearchUrl = (url?: string | null) =>
     !!url && new URL(url).pathname.startsWith("/search");
-  const soundcloudUrl =
-    soundcloudTrack?.url ??
-    (!isSoundCloudSearchUrl(soundcloudLink?.url) ? soundcloudLink?.url : undefined);
+  const hasZeroSoundCloudTracks = soundcloudEnrichment?.track_count === 0;
+  const soundcloudUrl = hasZeroSoundCloudTracks
+    ? undefined
+    : soundcloudTrack?.url ??
+      (!isSoundCloudSearchUrl(soundcloudLink?.url) ? soundcloudLink?.url : undefined);
 
-  const soundcloudEnrichment = artist.enrichment?.find(
-    (e) => e.platform === "soundcloud"
-  );
-  const soundcloudBio = soundcloudEnrichment?.bio_sanitized ?? soundcloudEnrichment?.bio ?? null;
+  // Fallback for accounts with zero uploads: embed their playlists (sets)
+  // instead. A single widget can only play one playlist at a time — it
+  // can't show "all playlists" — so if an artist has several, we render
+  // one widget per playlist, capped at MAX_SOUNDCLOUD_PLAYLISTS (biggest
+  // playlists first) to keep the page from growing unbounded.
+  const MAX_SOUNDCLOUD_PLAYLISTS = 3;
+  const soundcloudPlaylists = hasZeroSoundCloudTracks
+    ? [...(soundcloudEnrichment?.playlists ?? [])]
+        .sort((a, b) => (b.track_count ?? 0) - (a.track_count ?? 0))
+        .slice(0, MAX_SOUNDCLOUD_PLAYLISTS)
+    : [];
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -181,6 +199,27 @@ export default async function ArtistPage({ params }: PageProps) {
                   soundcloudUrl
                 )}&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true`}
               />
+            </div>
+          )}
+
+          {/* SoundCloud playlists — fallback when the account has 0 uploads */}
+          {hasZeroSoundCloudTracks && soundcloudPlaylists.length > 0 && (
+            <div className="mt-6 space-y-4">
+              <h2 className="mb-2 text-lg font-semibold">Playlists</h2>
+              {soundcloudPlaylists.map((playlist) => (
+                <iframe
+                  key={playlist.url}
+                  title={`${artist.name}: ${playlist.title} on SoundCloud`}
+                  width="100%"
+                  height="300"
+                  scrolling="no"
+                  frameBorder="no"
+                  allow="autoplay"
+                  src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(
+                    playlist.url
+                  )}&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true`}
+                />
+              ))}
             </div>
           )}
 

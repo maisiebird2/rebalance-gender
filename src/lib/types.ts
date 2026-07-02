@@ -108,6 +108,14 @@ export interface RecentTrack {
   published_at?: string;
 }
 
+/** A SoundCloud playlist (set), used as a widget fallback for accounts
+ *  with zero uploaded tracks. See artist_enrichment.playlists. */
+export interface EnrichedPlaylist {
+  title: string;
+  url: string;
+  track_count: number;
+}
+
 export interface BandcampAlbum {
   id: number;
   artist_id: string;
@@ -130,6 +138,10 @@ export interface ArtistEnrichment {
   follower_count: number | null;
   track_count: number | null;
   recent_tracks: RecentTrack[] | null;
+  /** Only populated when track_count is 0 — see the artist_enrichment
+   *  migration comment for why. Null/empty means either the account
+   *  has tracks (so this wasn't fetched) or has no public playlists either. */
+  playlists: EnrichedPlaylist[] | null;
   last_synced_at: string | null;
   sync_error: string | null;
 }

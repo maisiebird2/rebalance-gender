@@ -12,8 +12,16 @@
 //   - bio               (description, trimmed)
 //   - profile_image_url (avatar_url, upgraded from -large to -t500x500)
 //   - external_id       (SoundCloud numeric user ID, as a string)
+//   - playlists         (only fetched when track_count is 0 — see below)
 //   - raw_data          (full user object as JSONB)
 //   - last_synced_at    (timestamp of this run)
+//
+// When track_count is 0 (account has no uploads of its own — often
+// because everything is a repost from another account, e.g. a podcast),
+// this script additionally calls GET /users/{id}/playlists and stores
+// every public playlist found as [{ title, url, track_count }]. The
+// public API has no endpoint for a user's reposts, so playlists are
+// the best available fallback content for the artist page's widget.
 //
 // Uses an upsert on (artist_id, platform) so re-running refreshes
 // existing rows rather than creating duplicates. Artists without an
@@ -340,6 +348,32 @@ async function main() {
       );
     }
 
+    // -- Zero uploads: fall back to the account's playlists (sets) --
+    // There's no public API endpoint for a user's reposts, so this is
+    // the best available substitute for "what can we embed for them."
+    let playlists = null;
+    if (user.track_count === 0 && user.id != null) {
+      const playlistsRes = await soundcloudGet(
+        `/users/${user.id}/playlists?limit=200&linked_partitioning=1`
+      );
+      if (playlistsRes.ok && Array.isArray(playlistsRes.data?.collection ?? playlistsRes.data)) {
+        const raw = playlistsRes.data.collection ?? playlistsRes.data;
+        playlists = raw
+          .filter((p) => p?.permalink_url)
+          .map((p) => ({
+            title: p.title ?? "Untitled playlist",
+            url: p.permalink_url,
+            track_count: p.track_count ?? 0,
+          }));
+        if (DEBUG) {
+          console.log(`  [debug] ${name}: 0 tracks, found ${playlists.length} playlist(s)`);
+        }
+      } else if (DEBUG) {
+        console.log(`  [debug] ${name}: playlists fetch failed (HTTP ${playlistsRes.status ?? "timeout"})`);
+      }
+      await sleep(300);
+    }
+
     // -- Process the bio through the same pipeline as enrich-bios.mjs --
     // decodeEntities → boilerplate check → decodeGateSc → extractLinktree
     // → parseDescription. This splits the raw description into a clean bio
@@ -377,6 +411,7 @@ async function main() {
           follower_count: user.followers_count ?? null,
           track_count: user.track_count ?? null,
           recent_tracks: null,
+          playlists,
           raw_data: user,
           last_synced_at: new Date().toISOString(),
           sync_error: null,
@@ -416,7 +451,8 @@ async function main() {
     }
 
     const followers = user.followers_count != null ? user.followers_count.toLocaleString() : "?";
-    console.log(`✓ ${name}: ${followers} followers, ${user.track_count ?? "?"} tracks`);
+    const playlistsNote = playlists ? `, ${playlists.length} playlist(s) as fallback` : "";
+    console.log(`✓ ${name}: ${followers} followers, ${user.track_count ?? "?"} tracks${playlistsNote}`);
 
     cache[scUrl] = { checkedAt: new Date().toISOString(), ok: true };
     if (!DRY_RUN) saveCache(cache);
