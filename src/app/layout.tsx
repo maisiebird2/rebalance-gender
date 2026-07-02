@@ -1,8 +1,27 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
+import ThemeToggle from "@/components/ThemeToggle";
 import "./globals.css";
+
+// Runs before paint to apply any saved theme preference. Midnight violet
+// (dark) is the default when nothing has been saved yet, so the
+// server-rendered `dark` class on <html> below is left in place unless
+// this finds an explicit "light" choice in localStorage.
+const themeBootstrapScript = `
+(function () {
+  try {
+    var stored = localStorage.getItem("theme");
+    if (stored === "light") {
+      document.documentElement.classList.remove("dark");
+    } else {
+      document.documentElement.classList.add("dark");
+    }
+  } catch (e) {}
+})();
+`;
 
 export const metadata: Metadata = {
   title: "Rebalance Gender",
@@ -21,8 +40,13 @@ export default async function RootLayout({
   } = await supabase.auth.getUser();
 
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black">
+    <html lang="en" className="h-full antialiased dark">
+      <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-gray-950">
+        <Script
+          id="theme-bootstrap"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
+        />
         <header className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
           <div className="mx-auto max-w-6xl px-4">
             {/* Admin row — only rendered when signed in, takes no space otherwise */}
@@ -53,13 +77,14 @@ export default async function RootLayout({
               <div className="hidden sm:block">
                 <HeaderSearch />
               </div>
-              <nav className="flex gap-4 text-sm">
+              <nav className="flex items-center gap-4 text-sm">
                 <a href="/" className="hover:underline">
                   Directory
                 </a>
                 <a href="/submit" className="hover:underline">
                   Submit an artist
                 </a>
+                <ThemeToggle />
               </nav>
             </div>
           </div>
