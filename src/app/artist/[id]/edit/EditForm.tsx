@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist } from "./actions";
 import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistAlias, ArtistLabel, Platform } from "@/lib/types";
 import { platformPlaceholder } from "@/lib/platforms";
+import ProfileLinkField from "@/components/ProfileLinkField";
 
 interface LocationRow {
   city: string;
@@ -461,17 +462,14 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         <div className="grid gap-3 sm:grid-cols-2">
           {LINK_FIELDS.map(({ platform, label, placeholder }) => (
             <div key={platform} className="flex flex-col gap-1">
-              <label htmlFor={`link_${platform}`} className="text-sm font-medium">
-                {label}
-              </label>
-              <input
-                id={`link_${platform}`}
-                type="url"
+              <ProfileLinkField
+                platform={platform}
+                label={label}
+                name={`link_${platform}`}
                 value={linkUrls[platform] ?? ""}
-                onChange={(e) => updateLinkUrl(platform, e.target.value)}
+                onChange={(v) => updateLinkUrl(platform, v)}
                 placeholder={placeholder}
                 disabled={linkNotFound[platform]}
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900"
               />
               <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                 <input

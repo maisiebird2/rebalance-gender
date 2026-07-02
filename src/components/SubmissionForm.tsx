@@ -4,6 +4,7 @@ import { useState, useRef, FormEvent } from "react";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { LinkPlatform, Platform } from "@/lib/types";
 import { platformPlaceholder } from "@/lib/platforms";
+import ProfileLinkField from "./ProfileLinkField";
 
 interface LocationRow {
   city: string;
@@ -221,7 +222,7 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {LINK_FIELDS.map(({ platform, label, placeholder }) => (
-            <Field key={platform} label={label} name={`link_${platform}`} placeholder={placeholder} />
+            <ProfileLinkField key={platform} platform={platform} label={label} name={`link_${platform}`} placeholder={placeholder} />
           ))}
         </div>
       </fieldset>

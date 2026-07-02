@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
+import { resolveProfileLinkUrl } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
@@ -293,7 +294,7 @@ export async function saveArtist(
             };
           }
           const original_url = l.url!.trim();
-          const url = cleanLinkUrl(l.platform, original_url);
+          const url = resolveProfileLinkUrl(l.platform, original_url, cleanLinkUrl);
           return {
             artist_id: artistId,
             platform: l.platform,
@@ -314,7 +315,7 @@ export async function saveArtist(
       !l.not_found &&
       l.url?.trim() &&
       imagePlatforms.has(l.platform) &&
-      !existingImageUrls.has(cleanLinkUrl(l.platform, l.url!.trim()))
+      !existingImageUrls.has(resolveProfileLinkUrl(l.platform, l.url!.trim(), cleanLinkUrl))
   );
 
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────

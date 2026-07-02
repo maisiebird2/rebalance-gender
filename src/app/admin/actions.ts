@@ -247,13 +247,14 @@ export async function approveRevision(
   // Merge links (upsert — don't delete links not mentioned in revision).
   if (rd.links && Object.keys(rd.links).length) {
     const { cleanLinkUrl } = await import("@/lib/platforms");
+    const { resolveProfileLinkUrl } = await import("@/lib/profile-links");
     const rows = Object.entries(rd.links)
       .filter(([, url]) => url?.trim())
       .map(([platform, url]) => ({
         artist_id: artistId,
         platform,
         original_url: url.trim(),
-        url: cleanLinkUrl(platform, url.trim()),
+        url: resolveProfileLinkUrl(platform, url.trim(), cleanLinkUrl),
       }));
     if (rows.length) {
       await admin.from("artist_links").upsert(rows, { onConflict: "artist_id,platform" });

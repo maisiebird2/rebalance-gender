@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
+import { resolveProfileLinkUrl } from "@/lib/profile-links";
 import {
   checkBotProtection,
   getEmailStatus,
@@ -184,7 +185,13 @@ export async function POST(request: NextRequest) {
           artist_id: artistId,
           platform,
           original_url,
-          url: cleanLinkUrl(platform, original_url),
+          // Bare handles for templated platforms (soundcloud, instagram,
+          // bandcamp, resident_advisor) get built into a full URL here too —
+          // this is a safety net in case the client-side normalization in
+          // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
+          // without a blur event). Everything else falls back to the
+          // existing cleanLinkUrl() trimming/query-stripping.
+          url: resolveProfileLinkUrl(platform, original_url, cleanLinkUrl),
         };
       });
 
