@@ -8,56 +8,73 @@ interface Props {
   searchTerm: string;
 }
 
-type State =
+type DiscoverState =
   | { status: "loading" }
-  | { status: "done"; results: DiscoverResult[]; resolvedName: string }
+  | { status: "done"; results: DiscoverResult[] }
   | { status: "error" };
 
-export default function SearchMissResults({ searchTerm }: Props) {
-  const [state, setState] = useState<State>({ status: "loading" });
+type SubmitState = "idle" | "submitting" | "submitted" | "exists" | "error";
 
+export default function SearchMissResults({ searchTerm }: Props) {
+  const [discover, setDiscover] = useState<DiscoverState>({ status: "loading" });
+  const [submitState, setSubmitState] = useState<SubmitState>("idle");
+
+  // Fetching "similar artist" suggestions is read-only, so this can still run
+  // automatically. Saving the searched name to the review queue is not — that
+  // only happens if the visitor clicks the submit button below.
   useEffect(() => {
     let cancelled = false;
+    setDiscover({ status: "loading" });
+    setSubmitState("idle");
 
     async function run() {
       try {
-        // Fire both requests in parallel: save the miss + fetch discover results
-        const [, discoverRes] = await Promise.all([
-          fetch("/api/search-miss", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: searchTerm }),
-          }),
-          fetch("/api/discover", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: searchTerm }),
-          }),
-        ]);
+        const res = await fetch("/api/discover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: searchTerm }),
+        });
 
         if (cancelled) return;
 
-        if (!discoverRes.ok) {
-          setState({ status: "done", results: [], resolvedName: searchTerm });
+        if (!res.ok) {
+          setDiscover({ status: "done", results: [] });
           return;
         }
 
-        const data = (await discoverRes.json()) as DiscoverResponse;
+        const data = (await res.json()) as DiscoverResponse;
         if (!cancelled) {
-          setState({
-            status: "done",
-            results: data.results,
-            resolvedName: data.resolvedName,
-          });
+          setDiscover({ status: "done", results: data.results });
         }
       } catch {
-        if (!cancelled) setState({ status: "error" });
+        if (!cancelled) setDiscover({ status: "error" });
       }
     }
 
     run();
     return () => { cancelled = true; };
   }, [searchTerm]);
+
+  async function handleSubmit() {
+    setSubmitState("submitting");
+    try {
+      const res = await fetch("/api/search-miss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchTerm }),
+      });
+
+      if (!res.ok) {
+        setSubmitState("error");
+        return;
+      }
+
+      const data = await res.json();
+      setSubmitState(data.alreadyExists ? "exists" : "submitted");
+    } catch {
+      setSubmitState("error");
+    }
+  }
 
   return (
     <div className="mt-2">
@@ -66,23 +83,59 @@ export default function SearchMissResults({ searchTerm }: Props) {
         <span className="font-semibold text-gray-800 dark:text-gray-200">
           &ldquo;{searchTerm}&rdquo;
         </span>{" "}
-        are in the directory yet — we&apos;ve noted them for review.
+        are in the directory yet.
       </p>
 
-      {state.status === "loading" && (
+      <div className="mt-3">
+        {submitState === "idle" && (
+          <button
+            onClick={handleSubmit}
+            className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+          >
+            Submit &ldquo;{searchTerm}&rdquo; for review
+          </button>
+        )}
+
+        {submitState === "submitting" && (
+          <button
+            disabled
+            className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white opacity-50"
+          >
+            Submitting…
+          </button>
+        )}
+
+        {submitState === "submitted" && (
+          <p className="text-sm text-green-600 dark:text-green-400">
+            Thanks — we&apos;ve added &ldquo;{searchTerm}&rdquo; to our review queue.
+          </p>
+        )}
+
+        {submitState === "exists" && (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            That name is already in our records and awaiting review.
+          </p>
+        )}
+
+        {submitState === "error" && (
+          <p className="text-sm text-red-600 dark:text-red-400">
+            Something went wrong submitting that — please try again.
+          </p>
+        )}
+      </div>
+
+      {discover.status === "loading" && (
         <p className="mt-6 text-sm text-gray-400 dark:text-gray-500">
           Looking for similar artists…
         </p>
       )}
 
-      {state.status === "error" && null}
-
-      {state.status === "done" && state.results.length > 0 && (
+      {discover.status === "done" && discover.results.length > 0 && (
         <div className="mt-6">
           <p className="mb-4 text-sm font-medium text-gray-600 dark:text-gray-400">
             You might also like these artists from the directory:
           </p>
-          <DiscoverResultsGrid results={state.results} />
+          <DiscoverResultsGrid results={discover.results} />
         </div>
       )}
     </div>

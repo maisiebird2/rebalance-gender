@@ -37,11 +37,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ saved: false, alreadyExists: true } satisfies SearchMissResponse);
   }
 
-  // Not in the directory yet — save as pending for review
+  // Not in the directory yet — user opted to submit it, so save as pending for review
   const { error } = await supabase.from("artists").insert({
     name,
     directory_status: "search_input",
-    notes: "Auto-added from homepage search miss",
+    notes: "Submitted by a visitor after a homepage search found no match",
     submitted_at: new Date().toISOString(),
   });
 
