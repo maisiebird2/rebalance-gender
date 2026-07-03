@@ -28,6 +28,8 @@
     "integrate-harvested-genres": "node scripts/integrate-harvested-genres.mjs",
     "compute-scores": "node scripts/compute-scores.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
+    "harvest-links-discogs": "node scripts/harvest-links-discogs.mjs",
+    "harvest-links-loop": "node scripts/harvest-links-loop.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
     "linkify-bios": "tsx scripts/linkify-bios.ts",
