@@ -15,7 +15,7 @@ ALTER TABLE public.platforms
 UPDATE public.platforms AS p
 SET search_url_template = t.template
 FROM (VALUES
-  ('discogs',          'https://www.discogs.com/search?q={query}&type=all'),
+  ('discogs',          'https://www.discogs.com/search?q={query}&type=artist'),
   ('bandcamp',         'https://bandcamp.com/search?q={query}&item_type=b'),
   ('soundcloud',       'https://soundcloud.com/search/people?q={query}'),
   ('spotify',          'https://open.spotify.com/search/{query}/artists'),

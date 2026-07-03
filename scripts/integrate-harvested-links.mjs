@@ -40,12 +40,11 @@
 //     this script (before this filtering existed) had flagged them.
 //
 // Harvested rows whose parsed_platform doesn't correspond to a key
-// in the platforms table are skipped entirely (left untouched) —
-// e.g. at the time this script was written, "youtube", "facebook",
-// "tiktok", and "website" had not yet been added as platform keys
-// (see supabase_schema.sql's platforms seed list). Add them via the
+// in the platforms table are skipped entirely (left untouched).
+// The run summary lists any such keys. Add missing keys via the
 // admin panel's platform management, or directly in `platforms`,
-// then re-run.
+// then re-run. ("youtube", "facebook", and "tiktok" were added
+// 2026-07-03 and now promote normally.)
 //
 // Before any of the above, link shorteners (currently just bit.ly)
 // are resolved to their real target. This is done with a HEAD
