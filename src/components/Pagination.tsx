@@ -2,7 +2,8 @@ import Link from "next/link";
 
 interface PaginationProps {
   currentPage: number;
-  totalPages: number;
+  /** Whether a page exists after the current one. */
+  hasMore: boolean;
   /** Current search params, used to build links that preserve filters. */
   searchParams: { [key: string]: string | string[] | undefined };
 }
@@ -23,13 +24,13 @@ function pageHref(
 
 export default function Pagination({
   currentPage,
-  totalPages,
+  hasMore,
   searchParams,
 }: PaginationProps) {
-  if (totalPages <= 1) return null;
+  if (currentPage <= 1 && !hasMore) return null;
 
   const prevDisabled = currentPage <= 1;
-  const nextDisabled = currentPage >= totalPages;
+  const nextDisabled = !hasMore;
 
   const linkClass =
     "rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900";
@@ -50,7 +51,7 @@ export default function Pagination({
       )}
 
       <span className="text-sm text-gray-600 dark:text-gray-400">
-        Page {currentPage} of {totalPages}
+        Page {currentPage}
       </span>
 
       {nextDisabled ? (

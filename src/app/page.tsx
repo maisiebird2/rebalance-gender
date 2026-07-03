@@ -3,7 +3,7 @@ import ArtistCard from "@/components/ArtistCard";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
 import SearchMissResults from "@/components/SearchMissResults";
-import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions, PAGE_SIZE } from "@/lib/queries";
+import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions } from "@/lib/queries";
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -21,7 +21,7 @@ export default async function Home({ searchParams }: PageProps) {
 
   const isFiltered = Boolean(genre || country || search);
 
-  const [{ artists, count }, genres, countries] = await Promise.all([
+  const [{ artists, hasMore }, genres, countries] = await Promise.all([
     isFiltered
       ? getArtists({ genre, country, search, page })
       : getRandomArtists(page),
@@ -29,11 +29,9 @@ export default async function Home({ searchParams }: PageProps) {
     getCountryOptions(),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-2 flex items-baseline justify-between">
+      <div className="mb-6 flex items-baseline justify-between">
         <h1 className="text-2xl font-bold">Artist Directory</h1>
         <Link
           href="/discover"
@@ -42,10 +40,6 @@ export default async function Home({ searchParams }: PageProps) {
           Find artists similar to one you love →
         </Link>
       </div>
-      <p className="mb-6 text-gray-600 dark:text-gray-400">
-        {count} artist{count === 1 ? "" : "s"}
-      </p>
-
       <FilterBar genres={genres} countries={countries} />
 
       {artists.length === 0 ? (
@@ -62,7 +56,7 @@ export default async function Home({ searchParams }: PageProps) {
         </div>
       )}
 
-      <Pagination currentPage={page} totalPages={totalPages} searchParams={params} />
+      <Pagination currentPage={page} hasMore={hasMore} searchParams={params} />
     </div>
   );
 }

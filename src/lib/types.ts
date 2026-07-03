@@ -192,6 +192,6 @@ export interface DirectoryFilters {
 // Result of a paginated artist query
 export interface ArtistPage {
   artists: ArtistWithRelations[];
-  /** Total number of artists matching the filters, across all pages */
-  count: number;
+  /** Whether at least one more page of results exists after this one */
+  hasMore: boolean;
 }

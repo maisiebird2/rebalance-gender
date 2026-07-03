@@ -80,7 +80,7 @@ export async function getArtists(
 
   let query = supabase
     .from("artists")
-    .select(select, { count: "exact" })
+    .select(select)
     .eq("directory_status", "approved")
     .eq("deleted", false)
     .order("name");
@@ -95,19 +95,27 @@ export async function getArtists(
     query = query.ilike("name_search", `%${normalizeSearch(filters.search)}%`);
   }
 
+  // Fetch one extra row beyond the page: its presence tells us a next
+  // page exists, without the cost of an exact COUNT over all matches.
   const page = Math.max(1, filters.page ?? 1);
   const from = (page - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const to = from + PAGE_SIZE; // inclusive → PAGE_SIZE + 1 rows
   query = query.range(from, to);
 
-  const { data, error, count } = await query;
+  const { data, error } = await query;
 
   if (error) {
     console.error("getArtists error:", error);
-    return { artists: [], count: 0 };
+    return { artists: [], hasMore: false };
   }
 
-  return { artists: (data ?? []).map(normalizeArtist), count: count ?? 0 };
+  const rows = data ?? [];
+  const hasMore = rows.length > PAGE_SIZE;
+
+  return {
+    artists: rows.slice(0, PAGE_SIZE).map(normalizeArtist),
+    hasMore,
+  };
 }
 
 /** Fetch a single approved artist (with all relations) by id, for the detail page. */
@@ -143,15 +151,15 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   const supabase = getSupabaseClient();
 
   // 1. Fetch all approved IDs (just UUIDs, very lightweight)
-  const { data: idRows, error: idError, count } = await supabase
+  const { data: idRows, error: idError } = await supabase
     .from("artists")
-    .select("id", { count: "exact" })
+    .select("id")
     .eq("directory_status", "approved")
     .eq("deleted", false);
 
   if (idError || !idRows) {
     console.error("getRandomArtists id error:", idError);
-    return { artists: [], count: 0 };
+    return { artists: [], hasMore: false };
   }
 
   // 2. Fisher-Yates shuffle
@@ -161,10 +169,12 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
     [ids[i], ids[j]] = [ids[j], ids[i]];
   }
 
-  // 3. Slice for the requested page
+  // 3. Slice for the requested page; we already have every ID, so
+  // "more pages exist" is a simple length check.
   const from = (Math.max(1, page) - 1) * PAGE_SIZE;
   const pageIds = ids.slice(from, from + PAGE_SIZE);
-  if (pageIds.length === 0) return { artists: [], count: count ?? 0 };
+  const hasMore = from + PAGE_SIZE < ids.length;
+  if (pageIds.length === 0) return { artists: [], hasMore: false };
 
   // 4. Fetch full records for this page's IDs
   const { data, error } = await supabase
@@ -176,7 +186,7 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
 
   if (error) {
     console.error("getRandomArtists fetch error:", error);
-    return { artists: [], count: 0 };
+    return { artists: [], hasMore: false };
   }
 
   // 5. Re-order to match the shuffled ID order (DB returns arbitrary order)
@@ -187,7 +197,7 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
 
   return {
     artists: ordered.map(normalizeArtist),
-    count: count ?? 0,
+    hasMore,
   };
 }
 
