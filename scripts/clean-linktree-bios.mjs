@@ -4,7 +4,7 @@
 // label text) out of bios already stored in artist_enrichment, and
 // move the URL into artists.linktree_url.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/clean-linktree-bios.mjs            # clean all stored SoundCloud bios
 //   node scripts/clean-linktree-bios.mjs --limit=20 # only process the first 20 (for testing)

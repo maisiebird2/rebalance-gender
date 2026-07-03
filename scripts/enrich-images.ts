@@ -8,7 +8,7 @@
 // and pulls the og:image meta tag as a best-effort profile photo.
 // No API keys required.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   npm run enrich-images                       # run on all approved directory artists missing an image
 //   npm run enrich-images -- --limit=20         # only process the first 20 (for testing)

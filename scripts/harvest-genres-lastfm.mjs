@@ -19,7 +19,7 @@
 // API results are cached to .cache/lastfm_genres/<encoded-name>.json.
 // Re-runs skip cached artists unless --force is passed.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/harvest-genres-lastfm.mjs
 //   node scripts/harvest-genres-lastfm.mjs --limit=20

@@ -35,11 +35,11 @@ anyone can submit a new artist, which goes into a moderation queue.
 
 ### 2. Configure environment variables
 
-`.env.local.example` is in this folder (`wem-directory/`), alongside
+`.env.local.example` is in this folder (`rebalance-gender/`), alongside
 `package.json`. It's a template listing the three values the app needs but
 with no actual values filled in.
 
-1. Open a terminal in this folder (`wem-directory/`) and run:
+1. Open a terminal in this folder (`rebalance-gender/`) and run:
 
    ```bash
    cp .env.local.example .env.local

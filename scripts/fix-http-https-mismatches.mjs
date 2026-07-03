@@ -30,7 +30,7 @@
 // All comparisons/decisions are made up front; writes only happen
 // once you're past the summary (or are skipped entirely in DRY_RUN).
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/fix-http-https-mismatches.mjs                  # fix every row that needs it
 //   node scripts/fix-http-https-mismatches.mjs --limit=20       # only the first 20 affected rows (for testing)

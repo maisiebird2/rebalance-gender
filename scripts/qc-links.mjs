@@ -23,7 +23,7 @@
 // This script is read-only — it reports issues but makes no changes.
 // Fix any problems it finds via the admin edit page for each artist.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/qc-links.mjs                        # check all rows
 //   node scripts/qc-links.mjs --platform=lastfm      # one platform only

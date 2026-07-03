@@ -6,7 +6,7 @@
 // The JSON file should be at:
 //   ../../beatport-links.json
 // (i.e. next to the spreadsheet, in the "Women in electronic
-// music" folder, not inside wem-directory/).
+// music" folder, not inside rebalance-gender/).
 //
 // Expected format — an array of objects:
 //   [
@@ -24,7 +24,7 @@
 // trimming whitespace and normalizing to Unicode NFC, to handle
 // encoding inconsistencies).
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/add-beatport-links.mjs            # import all Beatport links
 //   DRY_RUN=1 node scripts/add-beatport-links.mjs  # log only, don't write to the DB

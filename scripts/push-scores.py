@@ -9,7 +9,7 @@ writes them to the artist_similarity_scores table in the database.
 Run this after you're satisfied with compute-scores.py output and have
 identified good weights from tune-weights.py.
 
-Usage (from wem-directory/):
+Usage (from rebalance-gender/):
 
     # Use equal weights (0.20 each):
     python scripts/push-scores.py

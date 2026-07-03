@@ -18,7 +18,7 @@
 // not_eligible, search_input, sc_followee, duplicate.
 // Rows with an unrecognised status value are skipped with a warning.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/apply-review-csv.mjs path/to/review.csv
 //   DRY_RUN=1 node scripts/apply-review-csv.mjs path/to/review.csv   # log actions, no writes

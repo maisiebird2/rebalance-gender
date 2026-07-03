@@ -39,7 +39,7 @@
 // (also requires NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY, as
 // with the other scripts in this folder.)
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/build-soundcloud-follow-graph.mjs                  # all approved artists not yet processed
 //   node scripts/build-soundcloud-follow-graph.mjs --limit=5        # only the next 5 unprocessed source artists (for testing)

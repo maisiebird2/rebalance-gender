@@ -14,7 +14,7 @@
 // MusicBrainz enforces a strict 1 request/second rate limit.
 // A full run over ~1,400 artists takes roughly 25–30 minutes.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/enrich-musicbrainz.mjs
 //   node scripts/enrich-musicbrainz.mjs --limit=20

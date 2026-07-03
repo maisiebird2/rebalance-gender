@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-// Duplicate candidate detection for the WEM directory.
+// Duplicate candidate detection for the Rebalance Gender directory.
 //
 // Signals used (in roughly descending strength):
 //
@@ -48,7 +48,7 @@
 //
 // Makes no database writes. Safe to run at any time.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/find-duplicates.mjs
 //   node scripts/find-duplicates.mjs --min-score=0.75   # default 0.6

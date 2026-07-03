@@ -22,7 +22,7 @@
 // API results are cached to .cache/spotify_genres/<spotify-id>.json.
 // Re-runs skip cached artists unless --force is passed.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/harvest-genres-spotify.mjs
 //   node scripts/harvest-genres-spotify.mjs --limit=20

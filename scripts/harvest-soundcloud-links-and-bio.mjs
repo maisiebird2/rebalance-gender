@@ -54,7 +54,7 @@
 // (also requires NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY, as
 // with the other scripts in this folder.)
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-soundcloud-links-and-bio.mjs                  # all artists with a SoundCloud link
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --limit=20       # only the first 20 (for testing)

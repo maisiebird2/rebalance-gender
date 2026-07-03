@@ -24,7 +24,7 @@
 //   - Adds rel="noopener noreferrer" to every <a> tag so outbound
 //     links don't expose the referrer or allow tab-napping.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   npm run sanitize-bios                      # process all un-sanitized bios
 //   npm run sanitize-bios -- --force           # re-sanitize even rows that already have bio_sanitized

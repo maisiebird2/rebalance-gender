@@ -65,7 +65,7 @@
 //
 // Both constants are near the top of this file for easy editing.
 //
-// ── Usage (from wem-directory/) ────────────────────────────
+// ── Usage (from rebalance-gender/) ────────────────────────────
 //
 //   node scripts/integrate-harvested-genres.mjs
 //   node scripts/integrate-harvested-genres.mjs --limit=50

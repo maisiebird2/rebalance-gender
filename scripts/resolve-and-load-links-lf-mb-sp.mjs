@@ -312,7 +312,7 @@ async function searchMusicBrainz(artistName, limit) {
   await throttleMb()
   const qs  = new URLSearchParams({ query: `artist:"${artistName}"`, limit: String(limit), fmt: 'json' })
   const res = await fetch(`https://musicbrainz.org/ws/2/artist?${qs}`, {
-    headers: { 'User-Agent': 'WEMDirectory/1.0 (contact via site)' },
+    headers: { 'User-Agent': 'RebalanceGender/1.0 (contact via site)' },
   })
   if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`)
   const data = await res.json()

@@ -9,7 +9,7 @@
 // Safe to run at any time — reads all artists, writes only the
 // rows that need fixing.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/clean-artist-names.mjs           # fix all affected artists
 //   node scripts/clean-artist-names.mjs --dry-run # report without writing

@@ -15,7 +15,7 @@
 // No API keys required. Uses one HTTP request per artist
 // with a short delay between requests to be polite.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/enrich-bandcamp.mjs                  # artists missing bandcamp albums
 //   node scripts/enrich-bandcamp.mjs --limit=20       # only the first 20 (for testing)
@@ -151,7 +151,7 @@ async function fetchBandcampPage(artistUrl) {
         signal: controller.signal,
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (compatible; WEMDirectoryBot/1.0; +discography enrichment)",
+            "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +discography enrichment)",
           Accept: "text/html",
         },
         redirect: "follow",

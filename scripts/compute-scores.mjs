@@ -16,7 +16,7 @@
 // running tune-weights.py, update these values and re-run
 // with --force to refresh stored scores and ranks.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/compute-scores.mjs           # score artists without existing scores
 //   node scripts/compute-scores.mjs --force   # truncate table and recompute everything

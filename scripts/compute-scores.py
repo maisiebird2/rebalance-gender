@@ -13,7 +13,7 @@ The CSV contains raw signal scores (not weighted totals) so that
 tune-weights.py can explore different weight combinations without
 re-fetching from the DB.
 
-Usage (from wem-directory/):
+Usage (from rebalance-gender/):
 
     python scripts/compute-scores.py                  # fetch from DB, cache signals, write CSV
     python scripts/compute-scores.py --cached         # use cached signals, no DB calls

@@ -17,7 +17,7 @@
 // between calls. A full run over ~1,400 artists takes roughly
 // 6–8 minutes.
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/fetch-lastfm-similar.mjs
 //   node scripts/fetch-lastfm-similar.mjs --limit=20

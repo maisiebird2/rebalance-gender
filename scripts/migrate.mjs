@@ -5,7 +5,7 @@
 // (genres normalized).csv), plus the genres and pronouns lookup
 // tables, into Supabase.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   npm run migrate            # run the import
 //   DRY_RUN=1 npm run migrate  # parse + validate only, no writes

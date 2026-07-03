@@ -18,7 +18,7 @@
 // Rate limit: 60 requests/minute with a personal access token
 // (throttled to ~55/min here to be safe).
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-links-discogs.mjs                 # all unprocessed artists with a discogs link
 //   node scripts/harvest-links-discogs.mjs --limit=20      # only the first 20 (for testing)
@@ -216,7 +216,7 @@ async function fetchDiscogsArtist(discogsId, { retried = false } = {}) {
   await throttle();
   const res = await fetch(`https://api.discogs.com/artists/${discogsId}`, {
     headers: {
-      "User-Agent": "WEMDirectory/1.0 +https://rebalance-gender.com",
+      "User-Agent": "RebalanceGender/1.0 +https://rebalance-gender.com",
       Authorization: `Discogs token=${DISCOGS_TOKEN}`,
     },
   });

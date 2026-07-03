@@ -58,7 +58,7 @@
 // This is the one place this script makes outbound HTTP calls;
 // everything else is pure DB-to-DB.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/integrate-harvested-links.mjs                  # process every (artist, platform) pair
 //   node scripts/integrate-harvested-links.mjs --limit=20       # only the first 20 pairs (for testing)
@@ -234,7 +234,7 @@ async function followOneRedirect(url) {
       redirect: "manual",
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; WEMDirectoryBot/1.0; +link resolving)",
+        "User-Agent": "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +link resolving)",
       },
     });
     const location = res.headers.get("location");

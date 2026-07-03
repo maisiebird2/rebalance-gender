@@ -15,7 +15,7 @@
 // (artist_id, source_platform, raw_tag) means existing rows are
 // left untouched (ON CONFLICT DO NOTHING).
 //
-// Usage (from wem-directory/):
+// Usage (from rebalance-gender/):
 //
 //   node scripts/harvest-genres-mb.mjs
 //   node scripts/harvest-genres-mb.mjs --limit=100

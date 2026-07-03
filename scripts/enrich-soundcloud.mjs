@@ -31,7 +31,7 @@
 //   SOUNDCLOUD_CLIENT_ID / SOUNDCLOUD_CLIENT_SECRET in .env.local
 //   (also NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY)
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/enrich-soundcloud.mjs                    # all artists with a SoundCloud link
 //   node scripts/enrich-soundcloud.mjs --limit=20         # next 20 unprocessed (for testing)

@@ -9,7 +9,7 @@ predict which artists Last.fm considers similar.
 
 After finding the best weights, pass them to push-scores.py.
 
-Usage (from wem-directory/):
+Usage (from rebalance-gender/):
 
     python scripts/tune-weights.py
     python scripts/tune-weights.py --input=.cache/pair-scores.csv

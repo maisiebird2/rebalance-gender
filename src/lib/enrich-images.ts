@@ -35,7 +35,7 @@ export async function fetchOgImage(url: string): Promise<string | null> {
       signal: controller.signal,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; WEMDirectoryBot/1.0; +profile picture enrichment)",
+          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile picture enrichment)",
         Accept: "text/html",
       },
       redirect: "follow",

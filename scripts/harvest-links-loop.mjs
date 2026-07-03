@@ -19,7 +19,7 @@
 // state, convergence detection. Add future harvesters (linktree,
 // bandcamp) to the HARVESTERS array and nothing else changes.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-links-loop.mjs                  # loop to convergence (max 4 rounds)
 //   node scripts/harvest-links-loop.mjs --max-rounds=2   # cap the number of rounds

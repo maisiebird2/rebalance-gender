@@ -13,7 +13,7 @@
 // Artists that already have a Supabase Storage URL (containing "/storage/v1/object/")
 // are skipped unless --force is passed.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/store-images.mjs                  # all artists missing a stored image
 //   node scripts/store-images.mjs --limit=20       # test on first 20
@@ -123,7 +123,7 @@ async function downloadImage(url) {
       signal: controller.signal,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; WEMDirectoryBot/1.0; +profile image storage)",
+          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile image storage)",
       },
       redirect: "follow",
     });

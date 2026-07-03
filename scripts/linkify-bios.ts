@@ -29,7 +29,7 @@
 // nodes that are inside an existing <a> tag are skipped entirely.
 // The script also skips rows where bio_sanitized didn't change.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   npm run linkify-bios                      # process all rows with bio_sanitized
 //   npm run linkify-bios -- --limit=20        # only process the first 20

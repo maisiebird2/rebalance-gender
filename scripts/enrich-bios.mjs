@@ -21,7 +21,7 @@
 //
 // No API keys required.
 //
-// Usage (from the wem-directory/ folder):
+// Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/enrich-bios.mjs                  # run on artists missing a SoundCloud bio
 //   node scripts/enrich-bios.mjs --limit=20       # only process the first 20 (for testing)
@@ -239,7 +239,7 @@ async function fetchSoundCloudInfo(url) {
       signal: controller.signal,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; WEMDirectoryBot/1.0; +bio enrichment)",
+          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +bio enrichment)",
         Accept: "text/html",
       },
       redirect: "follow",
