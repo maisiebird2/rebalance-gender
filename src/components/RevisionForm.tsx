@@ -141,7 +141,7 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
       <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
         <p className="font-medium">Check your email</p>
         <p className="mt-1 text-sm">
-          We've sent you a confirmation link. Click it to send your suggested
+          We&apos;ve sent you a confirmation link. Click it to send your suggested
           revision to our review queue. The link expires in 48 hours.
         </p>
       </div>
@@ -168,7 +168,7 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
       </div>
 
       <p className="text-sm text-gray-600 dark:text-gray-400">
-        All fields are pre-filled with the current data. Update anything that's wrong or out of date.
+        All fields are pre-filled with the current data. Update anything that&apos;s wrong or out of date.
       </p>
 
       <Field label="Name *" name="name" required defaultValue={artist.name} />

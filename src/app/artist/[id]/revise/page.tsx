@@ -44,7 +44,7 @@ export default async function RevisePage({ params }: PageProps) {
       <h1 className="mb-2 text-2xl font-bold">Suggest a correction</h1>
       <p className="mb-6 text-gray-600 dark:text-gray-400">
         Spotted something wrong or out of date? Update the fields below and
-        we'll review your suggested changes.
+        we&apos;ll review your suggested changes.
       </p>
       <RevisionForm artist={artist} allGenres={allGenres} platforms={platforms} />
     </div>

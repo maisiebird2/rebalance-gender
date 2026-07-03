@@ -1,23 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
-export default function ThemeToggle() {
-  // Default assumption matches the server-rendered class (dark); the
-  // effect below reconciles with whatever localStorage/the inline
-  // bootstrap script actually set before paint.
-  const [theme, setTheme] = useState<Theme>("dark");
+// The <html> element's class list (set by the inline bootstrap script
+// before paint, and by applyTheme below) is the actual source of truth
+// for the theme — treat it as an external system via useSyncExternalStore
+// rather than shadowing it in local state.
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    setTheme(document.documentElement.classList.contains("dark") ? "dark" : "light");
-  }, []);
+function subscribe(callback: () => void) {
+  listeners.add(callback);
+  return () => listeners.delete(callback);
+}
+
+function getSnapshot(): Theme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+// Server-rendered <html> always has the `dark` class (see layout.tsx).
+function getServerSnapshot(): Theme {
+  return "dark";
+}
+
+export default function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const applyTheme = (next: Theme) => {
-    setTheme(next);
     document.documentElement.classList.toggle("dark", next === "dark");
     window.localStorage.setItem("theme", next);
+    listeners.forEach((l) => l());
   };
 
   return (

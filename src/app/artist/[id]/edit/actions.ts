@@ -31,7 +31,6 @@ export async function saveArtist(
   const artistId = formData.get("artist_id") as string;
   const name = ((formData.get("name") ?? "") as string).trim();
   const pronounsValue = ((formData.get("pronouns") ?? "") as string).trim();
-  const labels = ((formData.get("labels") ?? "") as string).trim() || null;
   const directoryStatus = formData.get("directory_status") as ArtistStatus;
   const locationsRaw = (formData.get("locations") ?? "[]") as string;
   const labelListRaw = (formData.get("label_list") ?? "[]") as string;

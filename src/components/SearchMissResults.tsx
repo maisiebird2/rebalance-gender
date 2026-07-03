@@ -16,16 +16,23 @@ type DiscoverState =
 type SubmitState = "idle" | "submitting" | "submitted" | "exists" | "error";
 
 export default function SearchMissResults({ searchTerm }: Props) {
+  const [trackedTerm, setTrackedTerm] = useState(searchTerm);
   const [discover, setDiscover] = useState<DiscoverState>({ status: "loading" });
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
+
+  // Reset to "loading" as soon as the search term changes, during render
+  // rather than in an effect — avoids an extra render pass.
+  if (searchTerm !== trackedTerm) {
+    setTrackedTerm(searchTerm);
+    setDiscover({ status: "loading" });
+    setSubmitState("idle");
+  }
 
   // Fetching "similar artist" suggestions is read-only, so this can still run
   // automatically. Saving the searched name to the review queue is not — that
   // only happens if the visitor clicks the submit button below.
   useEffect(() => {
     let cancelled = false;
-    setDiscover({ status: "loading" });
-    setSubmitState("idle");
 
     async function run() {
       try {

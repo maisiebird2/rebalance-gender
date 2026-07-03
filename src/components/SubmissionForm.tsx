@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, FormEvent } from "react";
+import Link from "next/link";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { LinkPlatform, Platform } from "@/lib/types";
 import { platformPlaceholder } from "@/lib/platforms";
@@ -116,7 +117,7 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
       <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
         <p className="font-medium">Check your email</p>
         <p className="mt-1 text-sm">
-          We've sent you a confirmation link. Click it to send your submission to
+          We&apos;ve sent you a confirmation link. Click it to send your submission to
           our review queue. The link expires in 48 hours.
         </p>
       </div>
@@ -126,7 +127,7 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
   if (status === "success") {
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
-        Thanks! Your submission has been received and will appear once it's reviewed.
+        Thanks! Your submission has been received and will appear once it&apos;s reviewed.
       </div>
     );
   }
@@ -259,9 +260,9 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
           >
             {status === "submitting" ? "Submitting…" : "Submit"}
           </button>
-          <a href="/" className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300">
+          <Link href="/" className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300">
             Cancel
-          </a>
+          </Link>
         </div>
       </div>
     </form>

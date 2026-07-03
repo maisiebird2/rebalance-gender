@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
@@ -71,16 +72,16 @@ export default async function RootLayout({
 
             {/* Main ribbon */}
             <div className="flex items-center justify-between gap-4 py-4">
-              <a href="/" className="shrink-0 text-lg font-semibold">
+              <Link href="/" className="shrink-0 text-lg font-semibold">
                 Rebalance Gender
-              </a>
+              </Link>
               <div className="hidden sm:block">
                 <HeaderSearch />
               </div>
               <nav className="flex items-center gap-4 text-sm">
-                <a href="/" className="hover:underline">
+                <Link href="/" className="hover:underline">
                   Directory
-                </a>
+                </Link>
                 <a href="/submit" className="hover:underline">
                   Submit an artist
                 </a>

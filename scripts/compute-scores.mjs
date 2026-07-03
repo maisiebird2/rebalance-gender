@@ -222,7 +222,7 @@ async function loadScFollowEdges(dirIds) {
 // Build the set of pairs that have at least one signal,
 // and for co-follow pairs, the raw co-follow counts.
 // ------------------------------------------------------------
-function buildPairs(dirIds, genres, tags, collabs, dirEdges, followersOf) {
+function buildPairs(dirIds, genres, tags, collabs, dirEdges) {
   const pairs = new Set()
 
   // Helper: enumerate pairs within a list of IDs sharing a common attribute
@@ -269,11 +269,6 @@ function buildPairs(dirIds, genres, tags, collabs, dirEdges, followersOf) {
   // SC co-follow pairs: for each directory artist (as follower),
   // find all pairs of directory artists they follow
   const coFollowCounts = new Map()   // pairKey → count
-  for (const [, followers] of followersOf) {
-    // For each follower, get all directory artists this follower also follows
-    // We need: for each followed artist A, all other followed artists B
-    // This is done by looking at followersOf in reverse
-  }
 
   // Build following lists: follower → [followed dir artists]
   const followingLists = new Map()
@@ -387,7 +382,7 @@ async function main() {
 
   // 3. Build pair set + co-follow counts
   console.log('\nBuilding pair set…')
-  const { pairs, coFollowCounts } = buildPairs(dirIds, genres, tags, collabs, dirEdges, followersOf)
+  const { pairs, coFollowCounts } = buildPairs(dirIds, genres, tags, collabs, dirEdges)
   console.log(`  ${pairs.size} pairs with at least one signal.`)
   console.log(`  ${coFollowCounts.size} pairs with co-follow signal.`)
 

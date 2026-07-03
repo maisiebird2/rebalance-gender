@@ -30,7 +30,6 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -258,7 +257,7 @@ async function fetchAllPages(query) {
 async function upsertTags(artistId, tags) {
   if (!tags.length) return { inserted: 0, skipped: 0 }
   const rows = tags.map(t => ({ artist_id: artistId, tag: t }))
-  const { error, data } = await supabase
+  const { error } = await supabase
     .from('mb_tags')
     .upsert(rows, { onConflict: 'artist_id,tag', ignoreDuplicates: true })
   if (error) throw error

@@ -3,7 +3,29 @@ import type {
   ArtistPage,
   ArtistWithRelations,
   DirectoryFilters,
+  Artist,
+  Pronoun,
+  Genre,
+  ArtistLocation,
+  ArtistLabel,
+  ArtistAlias,
+  ArtistLink,
+  ArtistEnrichment,
+  BandcampAlbum,
 } from "./types";
+
+// Raw shape of a row returned by ARTIST_SELECT below, before genres are
+// flattened out of the artist_genres junction rows.
+type RawArtistRow = Artist & {
+  pronoun: Pronoun | null;
+  artist_genres: { genres: (Genre & { status?: string }) | null }[];
+  locations: ArtistLocation[];
+  label_list: ArtistLabel[];
+  aliases: ArtistAlias[];
+  links: ArtistLink[];
+  enrichment: ArtistEnrichment[];
+  bandcamp_albums?: BandcampAlbum[];
+};
 
 export const PAGE_SIZE = 24;
 
@@ -40,10 +62,10 @@ const ARTIST_SELECT = `
 
 // Flatten the nested artist_genres(genres(*)) shape into a plain
 // genres[] array on each artist for easier use in components.
-function normalizeArtist(row: any): ArtistWithRelations {
-  const genres = (row.artist_genres ?? [])
-    .map((ag: any) => ag.genres)
-    .filter((g: any) => g?.status === "approved");
+function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
+  const genres: Genre[] = (row.artist_genres ?? [])
+    .map((ag) => ag.genres)
+    .filter((g): g is Genre & { status?: string } => g?.status === "approved");
 
   return {
     ...row,
@@ -109,7 +131,9 @@ export async function getArtists(
     return { artists: [], hasMore: false };
   }
 
-  const rows = data ?? [];
+  // The select string is built dynamically (not a literal), so supabase-js
+  // can't infer its shape — cast through unknown to our known row shape.
+  const rows = (data ?? []) as unknown as RawArtistRow[];
   const hasMore = rows.length > PAGE_SIZE;
 
   return {
@@ -234,10 +258,10 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   }
 
   // 5. Re-order to match the shuffled ID order (DB returns arbitrary order)
-  const byId = new Map((data ?? []).map((a: any) => [a.id, a]));
+  const byId = new Map((data ?? []).map((a: RawArtistRow) => [a.id, a]));
   const ordered = pageIds
     .map((id) => byId.get(id))
-    .filter(Boolean) as any[];
+    .filter((a): a is RawArtistRow => Boolean(a));
 
   return {
     artists: ordered.map(normalizeArtist),
@@ -262,6 +286,16 @@ export async function getRecommendedArtists(
 ): Promise<RecommendedArtist[]> {
   const supabase = getSupabaseClient();
 
+  type RecommendedScoreRow = {
+    rank: number;
+    recommended: {
+      id: string;
+      name: string;
+      profile_image_url: string | null;
+      enrichment: { profile_image_url: string | null }[] | null;
+    } | null;
+  };
+
   const { data, error } = await supabase
     .from("artist_similarity_scores")
     .select(`
@@ -282,14 +316,12 @@ export async function getRecommendedArtists(
     return [];
   }
 
-  return (data ?? [])
-    .map((row: any) => {
+  return ((data as unknown as RecommendedScoreRow[]) ?? [])
+    .map((row) => {
       const a = row.recommended;
       if (!a) return null;
       const enrichmentImage =
-        (a.enrichment as Array<{ profile_image_url: string | null }> | null)
-          ?.find((e) => e.profile_image_url)
-          ?.profile_image_url ?? null;
+        a.enrichment?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
       return {
         id:               a.id,
         name:             a.name,
@@ -316,9 +348,11 @@ export async function getGenreOptions(): Promise<string[]> {
     return [];
   }
 
+  type GenreOptionRow = { genres: { name: string } | null };
+
   const names = new Set(
-    (data ?? [])
-      .map((row: any) => row.genres?.name as string | undefined)
+    ((data as unknown as GenreOptionRow[]) ?? [])
+      .map((row) => row.genres?.name)
       .filter((name): name is string => Boolean(name))
   );
   return Array.from(names).sort((a, b) => a.localeCompare(b));
@@ -340,8 +374,12 @@ export async function getCountryOptions(): Promise<string[]> {
     return [];
   }
 
+  type CountryOptionRow = { country: string | null };
+
   const countries = new Set(
-    (data ?? []).map((l: any) => l.country as string).filter(Boolean)
+    (data ?? [])
+      .map((l: CountryOptionRow) => l.country)
+      .filter((c): c is string => Boolean(c))
   );
   return Array.from(countries).sort((a, b) => a.localeCompare(b));
 }

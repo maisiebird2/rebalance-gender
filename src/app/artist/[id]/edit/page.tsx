@@ -4,7 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
-import type { ArtistWithRelations } from "@/lib/types";
+import type {
+  ArtistWithRelations,
+  Artist,
+  Pronoun,
+  Genre,
+  ArtistLocation,
+  ArtistLabel,
+  ArtistLink,
+  ArtistEnrichment,
+} from "@/lib/types";
 
 // Always fetch fresh data for admin pages
 export const dynamic = "force-dynamic";
@@ -24,11 +33,20 @@ const ARTIST_ADMIN_SELECT = `
   enrichment:artist_enrichment(*)
 `;
 
-function normalizeArtist(row: any): ArtistWithRelations {
+type RawArtistRow = Artist & {
+  pronoun: Pronoun | null;
+  artist_genres: { genres: Genre | null }[];
+  locations: ArtistLocation[];
+  label_list: ArtistLabel[];
+  links: ArtistLink[];
+  enrichment: ArtistEnrichment[];
+};
+
+function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
   const genres = (row.artist_genres ?? [])
-    .map((ag: any) => ag.genres)
-    .filter(Boolean);
-  return { ...row, genres };
+    .map((ag) => ag.genres)
+    .filter((g): g is Genre => Boolean(g));
+  return { ...row, genres } as unknown as ArtistWithRelations;
 }
 
 export default async function ArtistEditPage({ params, searchParams }: PageProps) {

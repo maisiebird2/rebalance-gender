@@ -123,7 +123,7 @@ async function main() {
       console.error("Failed to look up artists by name:", nameErr.message);
       process.exit(1);
     }
-    nameFilterIds = (matched ?? []).map((a: any) => a.id);
+    nameFilterIds = (matched ?? []).map((a: { id: string }) => a.id);
     console.log(`  Name filter "${NAME_FILTER}": ${nameFilterIds.length} artist(s) matched.`);
     if (!nameFilterIds.length) {
       console.log("  No matches — nothing to do.");
@@ -132,8 +132,10 @@ async function main() {
   }
 
   // Fetch all matching enrichment rows, paginating past Supabase's 1000-row limit.
+  type EnrichmentRow = { id: number; platform: string; bio_sanitized: string };
+
   const PAGE_SIZE = 1000;
-  const rows: any[] = [];
+  const rows: EnrichmentRow[] = [];
   let from = 0;
   while (true) {
     let q = supabase

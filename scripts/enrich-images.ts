@@ -54,8 +54,9 @@ function loadCache(): Record<string, { checkedAt: string; result: string | null 
     if (fs.existsSync(CACHE_PATH)) {
       return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
     }
-  } catch (err: any) {
-    console.warn(`Warning: could not read cache file (${err.message}); starting fresh.`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`Warning: could not read cache file (${message}); starting fresh.`);
   }
   return {};
 }
@@ -63,8 +64,9 @@ function loadCache(): Record<string, { checkedAt: string; result: string | null 
 function saveCache(cache: Record<string, { checkedAt: string; result: string | null }>) {
   try {
     fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
-  } catch (err: any) {
-    console.warn(`Warning: could not write cache file (${err.message}).`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`Warning: could not write cache file (${message}).`);
   }
 }
 
@@ -167,12 +169,19 @@ async function main() {
     _linksByPlatform: Map<string, string>;
   };
 
+  type RawArtistRow = {
+    id: string;
+    name: string;
+    profile_image_url: string | null;
+    links: { platform: string; url: string }[] | null;
+  };
+
   const artists: ArtistRow[] = [];
   let noLinkCount = 0;
 
-  for (const artist of allArtists as any[]) {
+  for (const artist of allArtists as RawArtistRow[]) {
     const linksByPlatform = new Map<string, string>(
-      (artist.links ?? []).map((l: any) => [l.platform, l.url])
+      (artist.links ?? []).map((l) => [l.platform, l.url])
     );
 
     let candidates = PLATFORM_PRIORITY.filter((p) => linksByPlatform.has(p));
@@ -183,7 +192,12 @@ async function main() {
     if (candidates.length === 0) {
       noLinkCount++;
     } else {
-      artists.push({ ...artist, _candidates: candidates, _linksByPlatform: linksByPlatform });
+      artists.push({
+        ...artist,
+        links: artist.links ?? [],
+        _candidates: candidates,
+        _linksByPlatform: linksByPlatform,
+      });
     }
   }
 

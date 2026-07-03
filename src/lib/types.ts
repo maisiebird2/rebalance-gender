@@ -61,7 +61,7 @@ export interface Platform {
   /**
    * Search-page URL template for the platform, with `{query}` as the
    * placeholder for the URL-encoded artist name (e.g.
-   * "https://www.discogs.com/search?q={query}&type=all"). NULL when the
+   * "https://www.discogs.com/search?q={query}&type=artist"). NULL when the
    * platform has no usable search page. See buildPlatformSearchUrl().
    */
   search_url_template: string | null;
@@ -160,6 +160,8 @@ export interface Artist {
   labels: string | null;
   notes: string | null;
   directory_status: ArtistStatus;
+  submitted_by_email: string | null;
+  submitted_at: string | null;
   profile_image_url: string | null;
   profile_image_source: LinkPlatform | null;
   profile_image_fetched_at: string | null;

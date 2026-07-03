@@ -88,7 +88,7 @@ export async function enrichArtistImage(
   { force = false }: { force?: boolean } = {}
 ): Promise<boolean> {
   // Fetch the artist + their links.
-  let query = adminClient
+  const query = adminClient
     .from("artists")
     .select("id, name, profile_image_url, links:artist_links(platform, url)")
     .eq("id", artistId)

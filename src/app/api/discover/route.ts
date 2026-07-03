@@ -35,10 +35,30 @@ function extractArtistName(query: string): string {
   return q;
 }
 
-async function lfmGet(
+interface LfmSimilarArtist {
+  name: string;
+  match: string;
+  mbid: string;
+  url: string;
+}
+
+interface LfmSimilarResponse {
+  similarartists?: {
+    artist?: LfmSimilarArtist | LfmSimilarArtist[];
+    "@attr"?: { artist?: string };
+  };
+}
+
+interface LfmTopTagsResponse {
+  toptags?: {
+    tag?: { name: string; count?: number }[];
+  };
+}
+
+async function lfmGet<T>(
   method: string,
   params: Record<string, string>
-): Promise<any> {
+): Promise<T> {
   const apiKey = process.env.LASTFM_API_KEY;
   if (!apiKey) throw new Error("LASTFM_API_KEY is not set");
 
@@ -116,13 +136,22 @@ export async function POST(request: NextRequest) {
       .limit(10);
 
     if (scoreRows && scoreRows.length > 0) {
-      const results: DiscoverResult[] = (scoreRows as any[])
+      type ScoreRow = {
+        total_score: number;
+        recommended: {
+          id: string;
+          name: string;
+          profile_image_url: string | null;
+          enrichment: { profile_image_url: string | null }[] | null;
+        } | null;
+      };
+
+      const results: DiscoverResult[] = (scoreRows as unknown as ScoreRow[])
         .map((row) => {
           const a = row.recommended;
           if (!a) return null;
           const enrichmentImage =
-            (a.enrichment as Array<{ profile_image_url: string | null }> | null)
-              ?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
+            a.enrichment?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
           return {
             id: a.id,
             name: a.name,
@@ -140,12 +169,12 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Fetch LFM similar artists and top tags in parallel
     const [similarData, tagsData] = await Promise.all([
-      lfmGet("artist.getSimilar", {
+      lfmGet<LfmSimilarResponse>("artist.getSimilar", {
         artist: artistName,
         limit: "100",
         autocorrect: "1",
       }),
-      lfmGet("artist.getTopTags", {
+      lfmGet<LfmTopTagsResponse>("artist.getTopTags", {
         artist: artistName,
         autocorrect: "1",
       }),
@@ -164,9 +193,9 @@ export async function POST(request: NextRequest) {
       url: string;
     }> = Array.isArray(raw) ? raw : raw ? [raw] : [];
 
-    const topTags: string[] = ((tagsData?.toptags?.tag as any[]) ?? [])
+    const topTags: string[] = (tagsData?.toptags?.tag ?? [])
       .slice(0, 15)
-      .map((t) => (t.name as string).toLowerCase());
+      .map((t) => t.name.toLowerCase());
 
     // Build quick-lookup maps from LFM similar list
     const lfmByUrl = new Map<string, number>(); // normalized URL → match score
@@ -288,9 +317,9 @@ export async function POST(request: NextRequest) {
       .slice(0, 10);
 
     return NextResponse.json({ resolvedName, results } satisfies DiscoverResponse);
-  } catch (err: any) {
+  } catch (err) {
     console.error("discover error:", err);
-    const message: string = err?.message ?? "Something went wrong";
+    const message: string = err instanceof Error ? err.message : "Something went wrong";
     const isNotFound = message.toLowerCase().includes("not found") ||
       message.toLowerCase().includes("no artist");
     return NextResponse.json(

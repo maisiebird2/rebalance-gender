@@ -227,7 +227,7 @@ function SubmissionCard({
   const locationStr = [location?.city, location?.country].filter(Boolean).join(", ");
   const genreStr = artist.genres?.map((g) => g.name).join(", ");
   const linkPlatforms = artist.links?.map((l) => l.platform).join(", ");
-  const submittedAt = (artist as any).submitted_at ?? artist.created_at;
+  const submittedAt = artist.submitted_at ?? artist.created_at;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
@@ -251,11 +251,11 @@ function SubmissionCard({
             {artist.label_list?.length > 0 && (
               <><dt className="text-gray-500 dark:text-gray-400">Labels</dt><dd>{artist.label_list.map((l) => l.name).join(", ")}</dd></>
             )}
-            {(artist as any).notes && (
-              <><dt className="text-gray-500 dark:text-gray-400">Notes</dt><dd className="italic text-gray-600 dark:text-gray-400">{(artist as any).notes}</dd></>
+            {artist.notes && (
+              <><dt className="text-gray-500 dark:text-gray-400">Notes</dt><dd className="italic text-gray-600 dark:text-gray-400">{artist.notes}</dd></>
             )}
-            {(artist as any).submitted_by_email && (
-              <><dt className="text-gray-500 dark:text-gray-400">From</dt><dd className="text-gray-600 dark:text-gray-400">{(artist as any).submitted_by_email}</dd></>
+            {artist.submitted_by_email && (
+              <><dt className="text-gray-500 dark:text-gray-400">From</dt><dd className="text-gray-600 dark:text-gray-400">{artist.submitted_by_email}</dd></>
             )}
           </dl>
         </div>

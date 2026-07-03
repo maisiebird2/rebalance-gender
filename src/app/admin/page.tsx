@@ -3,7 +3,16 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import SubmissionsPanel, { type SubmissionItem } from "./SubmissionsPanel";
-import type { ArtistWithRelations, ArtistRevision } from "@/lib/types";
+import type {
+  ArtistWithRelations,
+  ArtistRevision,
+  Artist,
+  Pronoun,
+  Genre,
+  ArtistLocation,
+  ArtistLabel,
+  ArtistLink,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +25,19 @@ const SUBMISSION_SELECT = `
   links:artist_links(*)
 `;
 
-function normalizeArtist(row: any): ArtistWithRelations {
-  const genres = (row.artist_genres ?? []).map((ag: any) => ag.genres).filter(Boolean);
-  return { ...row, genres };
+type RawSubmissionRow = Artist & {
+  pronoun: Pronoun | null;
+  artist_genres: { genres: Genre | null }[];
+  locations: ArtistLocation[];
+  label_list: ArtistLabel[];
+  links: ArtistLink[];
+};
+
+function normalizeArtist(row: RawSubmissionRow): ArtistWithRelations {
+  const genres = (row.artist_genres ?? [])
+    .map((ag) => ag.genres)
+    .filter((g): g is Genre => Boolean(g));
+  return { ...row, genres } as unknown as ArtistWithRelations;
 }
 
 export default async function AdminPage() {
@@ -62,12 +81,12 @@ export default async function AdminPage() {
   const items: SubmissionItem[] = [
     ...submissions.map((artist) => ({
       kind: "submission" as const,
-      sortDate: (artist as any).submitted_at ?? artist.created_at,
+      sortDate: artist.submitted_at ?? artist.created_at,
       artist,
     })),
     ...searchInputs.map((artist) => ({
       kind: "search_input" as const,
-      sortDate: (artist as any).submitted_at ?? artist.created_at,
+      sortDate: artist.submitted_at ?? artist.created_at,
       artist,
     })),
     ...revisions.map((revision) => ({
