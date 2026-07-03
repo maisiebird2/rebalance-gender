@@ -125,6 +125,80 @@ function looksUrlShaped(input: string): boolean {
   );
 }
 
+// ── Handle derivation ─────────────────────────────────────────────
+// Derives a handle from a profile URL following the same conventions
+// used in the migration scripts (add-beatport-links.mjs, enrich-bios.mjs).
+// Moved here from app/artist/[id]/edit/actions.ts so other save paths
+// (e.g. /admin/missing-links) can share it.
+
+/** Last non-empty path segment of a full URL, or null. */
+function lastPathSegmentOfUrl(url: string): string | null {
+  try {
+    return lastPathSegment(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+}
+
+export function deriveHandle(platform: string, url: string): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+
+    switch (platform) {
+      case "soundcloud":
+      case "instagram":
+      case "discogs":
+        // https://soundcloud.com/handle
+        // https://www.instagram.com/handle/
+        // https://www.discogs.com/artist/Handle  (last segment)
+        return lastPathSegmentOfUrl(url);
+
+      case "resident_advisor": {
+        // https://ra.co/djs/handle
+        const match = parsed.pathname.match(/\/djs\/([^/]+)/);
+        return match ? match[1] : lastPathSegmentOfUrl(url);
+      }
+
+      case "bandcamp": {
+        // https://handle.bandcamp.com
+        const host = parsed.hostname.toLowerCase();
+        const sub = host.replace(/\.bandcamp\.com$/, "");
+        return sub !== host ? sub : null;
+      }
+
+      case "beatport": {
+        // https://www.beatport.com/artist/slug/12345
+        // handle = slug between "artist/" and the final numeric segment
+        const afterArtist = url.split("artist/")[1];
+        if (!afterArtist) return null;
+        const withoutQuery = afterArtist.split(/[?#]/)[0];
+        const trimmed = withoutQuery.replace(/\/+$/, "");
+        const lastSlash = trimmed.lastIndexOf("/");
+        return lastSlash === -1 ? trimmed : trimmed.slice(0, lastSlash) || null;
+      }
+
+      case "qobuz":
+        // https://www.qobuz.com/us-en/interpreter/artist-slug/id
+        // second-to-last segment is the slug
+        try {
+          const parts = new URL(url).pathname
+            .split("/")
+            .filter(Boolean);
+          return parts.length >= 2 ? (parts.at(-2) ?? null) : null;
+        } catch {
+          return null;
+        }
+
+      case "other":
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeProfileLink(platformKey: string, rawInput: string): NormalizeResult {
   const trimmed = rawInput.trim();
   const passthrough: NormalizeResult = { url: trimmed, handle: null, wasTransformed: false, warning: null };

@@ -27,6 +27,22 @@ export function platformLabel(platforms: Platform[], key: string): string {
   return platforms.find((p) => p.key === key)?.label ?? key;
 }
 
+/**
+ * Builds a "search this platform for <artist>" URL from the platform's
+ * `search_url_template` ({query} placeholder → URL-encoded artist name).
+ * Returns null when the platform has no template.
+ */
+export function buildPlatformSearchUrl(
+  platform: Platform,
+  artistName: string
+): string | null {
+  if (!platform.search_url_template) return null;
+  return platform.search_url_template.replace(
+    "{query}",
+    encodeURIComponent(artistName)
+  );
+}
+
 /** Builds a generic profile-link placeholder for a form field. */
 export function platformPlaceholder(label: string): string {
   return `https://... (${label})`;

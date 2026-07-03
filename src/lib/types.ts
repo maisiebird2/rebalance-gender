@@ -58,6 +58,13 @@ export interface Platform {
   key: string;
   label: string;
   sort_order: number;
+  /**
+   * Search-page URL template for the platform, with `{query}` as the
+   * placeholder for the URL-encoded artist name (e.g.
+   * "https://www.discogs.com/search?q={query}&type=all"). NULL when the
+   * platform has no usable search page. See buildPlatformSearchUrl().
+   */
+  search_url_template: string | null;
 }
 
 export interface Genre {

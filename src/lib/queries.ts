@@ -118,6 +118,50 @@ export async function getArtists(
   };
 }
 
+/**
+ * Fetch one page of approved artists that have NO artist_links row for the
+ * given platform — used by the admin "Missing links" page. An artist with a
+ * `not_found: true` row for the platform is NOT considered missing (someone
+ * already searched and concluded the artist isn't on that platform).
+ *
+ * Implemented as a PostgREST anti-join: embed artist_links filtered to the
+ * platform, then keep only rows where that (filtered) embed is empty.
+ */
+export async function getArtistsMissingLink(
+  platform: string,
+  page: number = 1
+): Promise<ArtistPage> {
+  const supabase = getSupabaseClient();
+
+  // Second embed of artist_links under its own alias, used only for the
+  // anti-join filter; ARTIST_SELECT's `links` embed stays unfiltered.
+  const select = `${ARTIST_SELECT}, link_check:artist_links(platform)`;
+
+  const from = (Math.max(1, page) - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE; // one extra row → hasMore
+
+  const { data, error } = await supabase
+    .from("artists")
+    .select(select)
+    .eq("directory_status", "approved")
+    .eq("deleted", false)
+    .eq("link_check.platform", platform)
+    .is("link_check", null)
+    .order("name")
+    .range(from, to);
+
+  if (error) {
+    console.error("getArtistsMissingLink error:", error);
+    return { artists: [], hasMore: false };
+  }
+
+  const rows = data ?? [];
+  return {
+    artists: rows.slice(0, PAGE_SIZE).map(normalizeArtist),
+    hasMore: rows.length > PAGE_SIZE,
+  };
+}
+
 /** Fetch a single approved artist (with all relations) by id, for the detail page. */
 export async function getArtistById(
   id: string

@@ -1,7 +1,19 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { ArtistWithRelations } from "@/lib/types";
 
-export default function ArtistCard({ artist }: { artist: ArtistWithRelations }) {
+interface ArtistCardProps {
+  artist: ArtistWithRelations;
+  /**
+   * Optional extra content rendered at the bottom of the card, e.g. the
+   * platform-search links on /admin/missing-links. Rendered OUTSIDE the
+   * card's <Link> (nested anchors are invalid HTML), so the footer can
+   * safely contain its own links and buttons.
+   */
+  footer?: ReactNode;
+}
+
+export default function ArtistCard({ artist, footer }: ArtistCardProps) {
   // Prefer the artist's harvested profile picture; fall back to a cached
   // enrichment image (currently SoundCloud) if no dedicated one is set yet.
   const profileImage =
@@ -13,10 +25,14 @@ export default function ArtistCard({ artist }: { artist: ArtistWithRelations }) 
     .filter(Boolean)
     .join(" | ");
 
-  return (
+  const card = (
     <Link
       href={`/artist/${artist.id}`}
-      className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
+      className={
+        footer
+          ? "flex flex-col"
+          : "flex flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
+      }
     >
       <div className="flex items-center gap-3">
         <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
@@ -57,5 +73,18 @@ export default function ArtistCard({ artist }: { artist: ArtistWithRelations }) 
         </div>
       )}
     </Link>
+  );
+
+  if (!footer) return card;
+
+  // With a footer, the card chrome moves to an outer <div> so the footer's
+  // own links/buttons sit outside the artist-page <Link>.
+  return (
+    <div className="flex flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-gray-800 dark:bg-gray-900">
+      {card}
+      <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+        {footer}
+      </div>
+    </div>
   );
 }

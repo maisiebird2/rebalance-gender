@@ -6,11 +6,14 @@ interface PaginationProps {
   hasMore: boolean;
   /** Current search params, used to build links that preserve filters. */
   searchParams: { [key: string]: string | string[] | undefined };
+  /** Path the page links point at. Defaults to the homepage. */
+  basePath?: string;
 }
 
 function pageHref(
   page: number,
-  searchParams: PaginationProps["searchParams"]
+  searchParams: PaginationProps["searchParams"],
+  basePath: string
 ): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
@@ -19,13 +22,14 @@ function pageHref(
   }
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
-  return qs ? `/?${qs}` : "/";
+  return qs ? `${basePath}?${qs}` : basePath;
 }
 
 export default function Pagination({
   currentPage,
   hasMore,
   searchParams,
+  basePath = "/",
 }: PaginationProps) {
   if (currentPage <= 1 && !hasMore) return null;
 
@@ -45,7 +49,7 @@ export default function Pagination({
       {prevDisabled ? (
         <span className={disabledClass}>← Previous</span>
       ) : (
-        <Link href={pageHref(currentPage - 1, searchParams)} className={linkClass}>
+        <Link href={pageHref(currentPage - 1, searchParams, basePath)} className={linkClass}>
           ← Previous
         </Link>
       )}
@@ -57,7 +61,7 @@ export default function Pagination({
       {nextDisabled ? (
         <span className={disabledClass}>Next →</span>
       ) : (
-        <Link href={pageHref(currentPage + 1, searchParams)} className={linkClass}>
+        <Link href={pageHref(currentPage + 1, searchParams, basePath)} className={linkClass}>
           Next →
         </Link>
       )}

@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
-import { resolveProfileLinkUrl } from "@/lib/profile-links";
+import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
@@ -15,81 +15,6 @@ interface LinkInput {
   platform: LinkPlatform;
   url: string | null;
   not_found?: boolean;
-}
-
-// ── Handle derivation ─────────────────────────────────────────────
-// Derives a handle from a profile URL following the same conventions
-// used in the migration scripts (add-beatport-links.mjs, enrich-bios.mjs).
-
-function lastPathSegment(url: string): string | null {
-  try {
-    const parts = new URL(url).pathname
-      .split("/")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return parts.at(-1) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function deriveHandle(platform: LinkPlatform, url: string): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-
-    switch (platform) {
-      case "soundcloud":
-      case "instagram":
-      case "discogs":
-        // https://soundcloud.com/handle
-        // https://www.instagram.com/handle/
-        // https://www.discogs.com/artist/Handle  (last segment)
-        return lastPathSegment(url);
-
-      case "resident_advisor": {
-        // https://ra.co/djs/handle
-        const match = parsed.pathname.match(/\/djs\/([^/]+)/);
-        return match ? match[1] : lastPathSegment(url);
-      }
-
-      case "bandcamp": {
-        // https://handle.bandcamp.com
-        const host = parsed.hostname.toLowerCase();
-        const sub = host.replace(/\.bandcamp\.com$/, "");
-        return sub !== host ? sub : null;
-      }
-
-      case "beatport": {
-        // https://www.beatport.com/artist/slug/12345
-        // handle = slug between "artist/" and the final numeric segment
-        const afterArtist = url.split("artist/")[1];
-        if (!afterArtist) return null;
-        const withoutQuery = afterArtist.split(/[?#]/)[0];
-        const trimmed = withoutQuery.replace(/\/+$/, "");
-        const lastSlash = trimmed.lastIndexOf("/");
-        return lastSlash === -1 ? trimmed : trimmed.slice(0, lastSlash) || null;
-      }
-
-      case "qobuz":
-        // https://www.qobuz.com/us-en/interpreter/artist-slug/id
-        // second-to-last segment is the slug
-        try {
-          const parts = new URL(url).pathname
-            .split("/")
-            .filter(Boolean);
-          return parts.length >= 2 ? (parts.at(-2) ?? null) : null;
-        } catch {
-          return null;
-        }
-
-      case "other":
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
 }
 
 export async function saveArtist(
