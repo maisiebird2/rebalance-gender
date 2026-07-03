@@ -11,10 +11,17 @@ anyone can submit a new artist, which goes into a moderation queue.
 ### 1. Create the Supabase project
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the **SQL Editor** and run `supabase_schema.sql` (in the project
-   root, one level up from this app) to create all tables, enums, and
-   RLS policies.
-3. Go to **Project Settings → API**:
+2. Open the **SQL Editor** and run `supabase_schema_current.sql` (in the
+   project root) to create all tables, enums, functions, triggers, and
+   RLS policies. This file is a schema dump of the live database — the
+   `supabase_migration_*.sql` files alongside it are historical
+   migrations already reflected in the dump; you don't need to run them
+   on a fresh setup.
+3. Note on Storage: profile images are re-hosted in a public bucket
+   named `artist-images`. It isn't part of the SQL schema, but no
+   manual step is needed — `scripts/store-images.mjs` creates the
+   bucket automatically on first run.
+4. Go to **Project Settings → API**:
    - On the **Data API** sub-page, copy the **Project URL** (also shown
      as "API URL"), e.g. `https://xxxxxxxxxxxx.supabase.co`. This is
      different from the "Database URL" / Postgres connection string
@@ -154,6 +161,9 @@ To use your own domain instead of the default Vercel URL:
   location, links, latest track)
 - `src/components/FilterBar.tsx` — genre/country/search filter controls
 - `src/components/SubmissionForm.tsx` — the submission form UI
+- `src/app/admin/missing-links/` — admin tool for finding and filling
+  artists' missing platform links (inline suggestions, manual paste,
+  search links; see "Missing-links admin page" in CONTEXT.md)
 - `src/lib/supabase.ts` — Supabase client helpers (public + admin)
 - `src/lib/queries.ts` — data-fetching functions for the directory
 - `src/lib/types.ts` — TypeScript types mirroring the database schema

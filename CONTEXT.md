@@ -35,9 +35,11 @@ where visitors can search by any artist name or URL.
 | `SUPABASE_SECRET_KEY` | server only | bypasses RLS; admin routes only |
 | `SOUNDCLOUD_CLIENT_ID` | scripts only | SC API credential |
 | `SOUNDCLOUD_CLIENT_SECRET` | scripts only | SC API credential |
-| `SPOTIFY_CLIENT_ID` | scripts only | Spotify API credential |
-| `SPOTIFY_CLIENT_SECRET` | scripts only | Spotify API credential |
+| `SPOTIFY_CLIENT_ID` | server + scripts | Spotify API credential (also missing-links suggestions) |
+| `SPOTIFY_CLIENT_SECRET` | server + scripts | Spotify API credential (also missing-links suggestions) |
 | `LASTFM_API_KEY` | server + scripts | Last.fm API key; no `NEXT_PUBLIC_` prefix |
+| `DISCOGS_TOKEN` | server only | Discogs personal access token, for missing-links suggestions. Alternative: the two below. |
+| `DISCOGS_CONSUMER_KEY` / `DISCOGS_CONSUMER_SECRET` | server only | Discogs app credentials — either these or `DISCOGS_TOKEN` (token wins if both set) |
 
 The Supabase client helpers live in `src/lib/supabase.ts`:
 - `getSupabaseClient()` — public client, safe for browser and server components
@@ -87,9 +89,11 @@ src/
       submit/route.ts           # POST — public artist submission
       discover/route.ts         # POST — discover similar artists via LFM + genre matching
     admin/page.tsx              # Moderation queue (auth-gated)
+    admin/missing-links/        # Find + fill artists' missing platform links (auth-gated)
+    api/admin/platform-search/  # GET — top-3 profile candidates on an external platform
     submit/page.tsx             # Submission form
   components/
-    ArtistCard.tsx              # Card used in directory listing
+    ArtistCard.tsx              # Card used in directory listing; optional `footer` slot
     RecommendedArtists.tsx      # "You might also like" strip on artist pages
     FilterBar.tsx               # Genre/country/search filters
     BandcampWidget.tsx          # Embedded Bandcamp player
@@ -97,9 +101,65 @@ src/
     supabase.ts                 # Supabase client helpers
     queries.ts                  # All data-fetching functions (inc. getRecommendedArtists)
     types.ts                    # TypeScript types mirroring DB schema
-    platforms.ts                # Platform label helpers
+    platforms.ts                # Platform label helpers + search-URL builder
+    search-providers.ts         # Server-only per-platform artist search (missing-links)
+    profile-links.ts            # Link normalization + handle derivation (shared save paths)
     linkify.ts                  # URL linkification for bios
 ```
+
+---
+
+## Missing-links admin page (`/admin/missing-links`)
+
+Auth-gated tool for filling gaps in `artist_links`. Pick a platform from
+the dropdown → cards (shared `ArtistCard` with a `footer` slot) list
+approved artists with **no** `artist_links` row for it (a `not_found:
+true` row counts as handled). The anti-join lives in
+`getArtistsMissingLink()` in `src/lib/queries.ts`.
+
+Each card offers, in order of convenience:
+
+1. **Inline suggestions** — top 3 profile candidates fetched from the
+   platform's API via `src/lib/search-providers.ts` (providers: discogs,
+   musicbrainz, lastfm, spotify, bandcamp; each degrades to nothing if
+   its env keys are missing). Served by `/api/admin/platform-search`;
+   card fetches are staggered client-side for rate limits (MusicBrainz
+   1 req/s). Ticking a candidate saves it.
+2. **Manual paste field** — for URLs found by hand.
+3. **Search link** — e.g. "Discogs search for PHLOXO", built from
+   `platforms.search_url_template` (`{query}` placeholder; added by
+   `supabase_migration_platform_search_templates.sql`). Only platforms
+   with a template appear in the dropdown.
+4. **"Not on {platform}"** — writes a `not_found: true` row so the
+   artist stops appearing.
+
+Saves go through `saveArtistPlatformLink()` (`admin/missing-links/actions.ts`),
+which reuses the edit form's normalization (`resolveProfileLinkUrl` →
+`cleanLinkUrl` → `deriveHandle`) and triggers image enrichment for
+image-capable platforms.
+
+---
+
+## Directory search performance
+
+The homepage name search matches substrings against the `name_search`
+generated column (normalized: unaccented, lowercased, spaces stripped —
+`normalizeSearch()` in `src/lib/queries.ts` must stay in sync with the
+Postgres expression). Two design decisions keep it fast even though the
+`artists` table is dominated by non-directory graph nodes
+(`sc_followee` / `lfm_search` rows):
+
+- **Partial trigram index** — a `pg_trgm` GIN index on `name_search`,
+  restricted to `directory_status = 'approved' AND deleted = false`
+  (`supabase_migration_search_indexes.sql`). It serves `%term%` ILIKE
+  lookups and only covers the actual directory, so follow-graph growth
+  doesn't slow search. Any query that wants this index must include
+  both filter conditions.
+- **No exact result counts** — directory queries return `hasMore`
+  (fetch `PAGE_SIZE + 1` rows, check for the extra) instead of a
+  `count: "exact"` total, which would force a second full scan of all
+  matches. Pagination is Previous/Next only; the UI doesn't show
+  "N artists" or total pages.
 
 ---
 
