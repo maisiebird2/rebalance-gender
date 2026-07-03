@@ -48,7 +48,7 @@ artist with a SC link and writes directed edges to `sc_follow_edges`.
 **Impact: high. Effort: run one script.**
 
 433 artists have MusicBrainz links (added by `resolve-and-load-links-lf-mb-sp.mjs`
-in Phase 6). None have been enriched yet. Running Phase 7b populates both
+— external platform matching, now Phase 3 in PIPELINE.md). None have been enriched yet. Running Phase 7b populates both
 `mb_tags` (folksonomy tags from the MusicBrainz community, e.g. "minimal techno",
 "Berlin school", "electroacoustic") and `mb_collaborations` (artist relationships
 where both artists are in the database).

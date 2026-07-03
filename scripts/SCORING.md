@@ -197,3 +197,10 @@ are in `scripts/lib/scoring.py`. All three scripts import from it.
   from the scoring signals — it is used only for tuning.
 - `compute-scores.mjs` (Node.js) is superseded by the Python pipeline
   and no longer maintained.
+- An even earlier recommendation engine (`recommender/graph.py`,
+  `recommend.py`, writing to an `artist_recommendations` table that no
+  longer exists) is documented in `MATCHING.md` under "legacy".
+- Scores pushed by `push-scores.py` are served by
+  `src/app/api/discover/route.ts`, which reads
+  `artist_similarity_scores` first and falls back to live Last.fm
+  lookups for artists not in the directory.
