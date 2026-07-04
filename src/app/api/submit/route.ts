@@ -6,7 +6,7 @@ import { resolveProfileLinkUrl } from "@/lib/profile-links";
 import {
   checkBotProtection,
   getEmailStatus,
-  isDuplicateArtist,
+  findDuplicateArtists,
   createTokenAndSendEmail,
 } from "@/lib/submission-helpers";
 import type { LinkPlatform } from "@/lib/types";
@@ -89,10 +89,22 @@ export async function POST(request: NextRequest) {
   }
 
   // ── 3. Duplicate check ──────────────────────────────────────────────────────
-  const duplicate = await isDuplicateArtist(supabase, name);
-  if (duplicate) {
+  // A duplicate is decided by shared profile links, NOT by a matching name —
+  // two different artists can share a name. Submissions with no links (or no
+  // link matching an existing artist) are allowed through. When we do block,
+  // return the matching entries so the client can link the submitter to the
+  // existing record(s) that caused the block.
+  const submittedLinks = Object.entries(body.links ?? {})
+    .filter(([, url]) => typeof url === "string" && url.trim())
+    .map(([platform, url]) => ({ platform, url: (url as string).trim() }));
+
+  const duplicates = await findDuplicateArtists(supabase, submittedLinks);
+  if (duplicates.length > 0) {
     return NextResponse.json(
-      { error: "This artist is already in our database or has been submitted recently." },
+      {
+        error: "An artist with one of these profile links already exists.",
+        duplicates: duplicates.map((d) => ({ id: d.id, name: d.name })),
+      },
       { status: 409 }
     );
   }
@@ -136,7 +148,8 @@ export async function POST(request: NextRequest) {
     .insert({
       name,
       pronoun_id: pronounId,
-      notes: body.notes?.trim() || null,
+      // Internal notes are admin-only: ignore any notes sent by anonymous requests.
+      notes: user ? body.notes?.trim() || null : null,
       directory_status: initialStatus,
       submitted_by_email: email,
       submitted_at: new Date().toISOString(),

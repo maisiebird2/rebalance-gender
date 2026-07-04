@@ -12,6 +12,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { verifyTurnstileToken } from "@/lib/turnstile";
 import { sendVerificationEmail, type SubmissionKind } from "@/lib/email";
+import { cleanLinkUrl } from "@/lib/platforms";
+import { resolveProfileLinkUrl, deriveHandle } from "@/lib/profile-links";
 
 // ── Bot protection ────────────────────────────────────────────────────────────
 
@@ -70,38 +72,110 @@ export async function getEmailStatus(
 }
 
 // ── Duplicate artist check ───────────────────────────────────────────────────
+//
+// We do NOT treat a matching *name* as a duplicate: two different artists can
+// legitimately share a name. A submission is only a duplicate when one of its
+// submitted platform links points at the same profile as an existing artist's
+// link — same platform AND (same canonical URL OR same derived handle).
 
-/** Normalize a name for fuzzy duplicate matching. */
-function normalizeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "") // strip punctuation
-    .replace(/\s+/g, " ")
-    .trim();
+/** A duplicate artist match, used to link the submitter to existing entries. */
+export interface DuplicateMatch {
+  id: string;
+  name: string;
+}
+
+/** A submitted profile link to check against existing artists' links. */
+export interface SubmittedLink {
+  platform: string;
+  url: string;
 }
 
 /**
- * Returns true if an artist with a similar name already exists
- * (in any status, including pending/unverified).
+ * Canonicalize a profile URL for equality comparison: drop the scheme,
+ * a leading "www.", the query string, the fragment, and any trailing slash,
+ * and lowercase the host. This is intentionally lossy — it's only used to
+ * decide whether two links point at the same profile.
  */
-export async function isDuplicateArtist(
+function canonicalizeUrl(url: string): string {
+  const trimmed = url.trim();
+  try {
+    const u = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${host}${path}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+/** Build the set of match keys (per platform) for a single link's canonical
+ *  URL and derived handle. */
+function linkKeys(platform: string, canonicalLinkUrl: string): string[] {
+  const keys: string[] = [];
+  const urlKey = canonicalizeUrl(canonicalLinkUrl);
+  if (urlKey) keys.push(`${platform}|url|${urlKey}`);
+  const handle = deriveHandle(platform, canonicalLinkUrl);
+  if (handle) keys.push(`${platform}|handle|${handle.toLowerCase()}`);
+  return keys;
+}
+
+interface ArtistLinkRow {
+  platform: string;
+  url: string | null;
+  handle: string | null;
+  artists: { id: string; name: string; deleted: boolean } | null;
+}
+
+/**
+ * Returns the existing (non-deleted) artists that share a profile link with
+ * the submitted links. An empty array means no duplicate — including when no
+ * links were submitted, since there's nothing to match on. The returned rows
+ * let callers link the submitter to the entries that caused the block.
+ */
+export async function findDuplicateArtists(
   supabase: SupabaseClient,
-  name: string
-): Promise<boolean> {
-  const normalized = normalizeName(name);
-  if (!normalized) return false;
+  links: SubmittedLink[]
+): Promise<DuplicateMatch[]> {
+  if (!links.length) return [];
 
-  // Fetch all artist names (only name + status; not a huge dataset).
+  // Normalize submitted links the same way they'd be stored, then build the
+  // lookup keys and the set of platforms we need to query.
+  const wantedKeys = new Set<string>();
+  const platforms = new Set<string>();
+  for (const { platform, url } of links) {
+    if (!platform || !url?.trim()) continue;
+    const canonical = resolveProfileLinkUrl(platform, url, cleanLinkUrl);
+    if (!canonical) continue;
+    const keys = linkKeys(platform, canonical);
+    if (keys.length === 0) continue;
+    platforms.add(platform);
+    for (const k of keys) wantedKeys.add(k);
+  }
+  if (wantedKeys.size === 0) return [];
+
+  // Fetch existing links for just the submitted platforms, with owning artist.
   const { data } = await supabase
-    .from("artists")
-    .select("name")
-    .eq("deleted", false);
+    .from("artist_links")
+    .select("platform, url, handle, artists!inner(id, name, deleted)")
+    .in("platform", Array.from(platforms));
 
-  if (!data) return false;
+  if (!data) return [];
 
-  return data.some(
-    (row: { name: string }) => normalizeName(row.name) === normalized
-  );
+  const matches = new Map<string, DuplicateMatch>();
+  for (const row of data as unknown as ArtistLinkRow[]) {
+    const artist = row.artists;
+    if (!artist || artist.deleted) continue;
+
+    const rowKeys: string[] = [];
+    if (row.url) rowKeys.push(...linkKeys(row.platform, row.url));
+    if (row.handle) rowKeys.push(`${row.platform}|handle|${row.handle.toLowerCase()}`);
+
+    if (rowKeys.some((k) => wantedKeys.has(k))) {
+      matches.set(artist.id, { id: artist.id, name: artist.name });
+    }
+  }
+
+  return Array.from(matches.values());
 }
 
 // ── Token + email ─────────────────────────────────────────────────────────────
