@@ -38,11 +38,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // ── 1. Bot protection ───────────────────────────────────────────────────────
-  const botError = await checkBotProtection(body.turnstileToken, body.honeypot);
-  if (botError) {
-    // Return a plausible success-looking response to confuse bots.
-    return NextResponse.json({ success: true });
+  // ── 1. Auth: is this an authenticated (admin) submission? ───────────────────
+  // Trust to skip email verification AND bot protection is granted because the
+  // server confirms a logged-in session — not merely because the payload
+  // omitted an email or a Turnstile token.
+  const authClient = await createClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+
+  // ── 2. Bot protection (skipped for logged-in users) ─────────────────────────
+  // Logged-in admins don't get served a Turnstile challenge, so there's no
+  // token to check; the authenticated session is trust enough.
+  if (!user) {
+    const botError = await checkBotProtection(body.turnstileToken, body.honeypot);
+    if (botError) {
+      // Return a plausible success-looking response to confuse bots.
+      return NextResponse.json({ success: true });
+    }
   }
 
   const name = body.name?.trim();
@@ -55,14 +68,6 @@ export async function POST(request: NextRequest) {
 
   const email = body.submittedByEmail?.trim() || null;
   const supabase = getSupabaseAdminClient();
-
-  // ── 1b. Auth: is this an authenticated (admin) submission? ──────────────────
-  // Trust to skip email verification is granted because the server confirms a
-  // logged-in session — not merely because the payload omitted an email.
-  const authClient = await createClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
 
   // An email-less submission is only allowed from a logged-in user. Anonymous
   // requests (e.g. scripted POSTs) must provide an email so they go through the

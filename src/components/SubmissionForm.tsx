@@ -238,8 +238,8 @@ export default function SubmissionForm({ allGenres, platforms, isLoggedIn = fals
         />
       )}
 
-      {/* ── Turnstile widget ────────────────────────────────────── */}
-      {siteKey && (
+      {/* ── Turnstile widget (not shown to logged-in admins) ────── */}
+      {siteKey && !isLoggedIn && (
         <Turnstile
           siteKey={siteKey}
           onSuccess={(token) => setTurnstileToken(token)}
@@ -258,7 +258,7 @@ export default function SubmissionForm({ allGenres, platforms, isLoggedIn = fals
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
             type="submit"
-            disabled={status === "submitting" || (!!siteKey && !turnstileToken)}
+            disabled={status === "submitting" || (!isLoggedIn && !!siteKey && !turnstileToken)}
             className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {status === "submitting" ? "Submitting…" : "Submit"}
