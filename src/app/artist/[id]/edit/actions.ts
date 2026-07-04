@@ -38,6 +38,7 @@ export async function saveArtist(
   const genresRaw = (formData.get("genres") ?? "[]") as string;
   const linksRaw = (formData.get("links") ?? "[]") as string;
 
+  const notes = ((formData.get("notes") ?? "") as string).trim() || null;
   const bio = ((formData.get("bio") ?? "") as string).trim() || null;
   const bookingInfo = ((formData.get("booking_info") ?? "") as string).trim() || null;
   const managementInfo = ((formData.get("management_info") ?? "") as string).trim() || null;
@@ -112,6 +113,7 @@ export async function saveArtist(
       name,
       pronoun_id: pronounId,
       directory_status: directoryStatus,
+      notes,
       booking_info: bookingInfo,
       management_info: managementInfo,
       contact_info: contactInfo,
