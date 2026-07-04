@@ -114,7 +114,39 @@ export async function getArtists(
     query = query.eq("locations.country", filters.country);
   }
   if (filters.search) {
-    query = query.ilike("name_search", `%${normalizeSearch(filters.search)}%`);
+    const term = normalizeSearch(filters.search);
+    const like = `%${term}%`;
+
+    // Match on the primary name OR any alias. Aliases live in their own
+    // table (an artist can have several), so first collect the ids of
+    // artists whose alias matches, then OR those into the main filter.
+    // artist_aliases.name_search mirrors artists.name_search, so the same
+    // normalized term matches both columns identically.
+    const { data: aliasRows, error: aliasError } = await supabase
+      .from("artist_aliases")
+      .select("artist_id")
+      .ilike("name_search", like);
+
+    if (aliasError) {
+      console.error("getArtists alias search error:", aliasError);
+    }
+
+    const aliasIds = Array.from(
+      new Set(
+        (aliasRows ?? []).map((r: { artist_id: string }) => r.artist_id)
+      )
+    );
+
+    if (aliasIds.length > 0) {
+      // Within .or(), ilike uses `*` as the wildcard (not `%`); the pattern
+      // is double-quoted so terms containing commas/periods/parens (e.g.
+      // "Tyler, the Creator", "M.I.A.") don't break the filter grammar.
+      query = query.or(
+        `name_search.ilike."*${term}*",id.in.(${aliasIds.join(",")})`
+      );
+    } else {
+      query = query.ilike("name_search", like);
+    }
   }
 
   // Fetch one extra row beyond the page: its presence tells us a next
