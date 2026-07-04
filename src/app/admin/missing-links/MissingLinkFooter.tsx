@@ -50,6 +50,7 @@ export default function MissingLinkFooter({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [manualUrl, setManualUrl] = useState("");
+  const [confirmingNotFound, setConfirmingNotFound] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function MissingLinkFooter({
   }
 
   function notFound() {
+    setConfirmingNotFound(false);
     setSaveError(null);
     startTransition(async () => {
       const result = await markArtistLinkNotFound(artistId, platformKey);
@@ -215,13 +217,50 @@ export default function MissingLinkFooter({
           </a>
         )}
         <button
-          onClick={notFound}
+          onClick={() => setConfirmingNotFound(true)}
           disabled={isPending}
           className="text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
         >
           Not on {platformLabel}
         </button>
       </div>
+
+      {/* Confirmation modal for "Not on {platform}" */}
+      {confirmingNotFound && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setConfirmingNotFound(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Confirm marking ${artistName} as not on ${platformLabel}`}
+        >
+          <div
+            className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-5 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="mb-4">
+              Mark <span className="font-semibold">{artistName}</span> as not
+              on {platformLabel}? They&apos;ll stop appearing in this list for{" "}
+              {platformLabel}.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmingNotFound(false)}
+                autoFocus
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={notFound}
+                className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700"
+              >
+                Not on {platformLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
