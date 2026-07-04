@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/server";
 import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
 import { resolveProfileLinkUrl } from "@/lib/profile-links";
 import {
@@ -55,6 +56,24 @@ export async function POST(request: NextRequest) {
   const email = body.submittedByEmail?.trim() || null;
   const supabase = getSupabaseAdminClient();
 
+  // ── 1b. Auth: is this an authenticated (admin) submission? ──────────────────
+  // Trust to skip email verification is granted because the server confirms a
+  // logged-in session — not merely because the payload omitted an email.
+  const authClient = await createClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+
+  // An email-less submission is only allowed from a logged-in user. Anonymous
+  // requests (e.g. scripted POSTs) must provide an email so they go through the
+  // verification flow rather than landing straight in the review queue.
+  if (!email && !user) {
+    return NextResponse.json(
+      { error: "An email address is required." },
+      { status: 400 }
+    );
+  }
+
   // ── 2. Blocked email → silently discard ────────────────────────────────────
   if (email) {
     const emailStatus = await getEmailStatus(supabase, email);
@@ -72,9 +91,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── 4. Resolve email status: verified emails skip email verification ────────
+  // ── 4. Resolve email status: logged-in users and verified emails skip
+  //       email verification ────────────────────────────────────────────────
   const skipVerification =
-    !email ||
+    !!user ||
     (email ? await getEmailStatus(supabase, email) === "verified" : false);
 
   const initialStatus = skipVerification ? "pending" : "unverified";

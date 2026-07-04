@@ -15,11 +15,12 @@ interface LocationRow {
 interface Props {
   allGenres: string[];
   platforms: Platform[];
+  isLoggedIn?: boolean;
 }
 
 type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
 
-export default function SubmissionForm({ allGenres, platforms }: Props) {
+export default function SubmissionForm({ allGenres, platforms, isLoggedIn = false }: Props) {
   const LINK_FIELDS = platforms.map((p) => ({
     platform: p.key as LinkPlatform,
     label: p.label,
@@ -228,12 +229,14 @@ export default function SubmissionForm({ allGenres, platforms }: Props) {
         </div>
       </fieldset>
 
-      <Field
-        label="Your email (required — we'll send a confirmation link)"
-        name="submittedByEmail"
-        type="email"
-        required
-      />
+      {!isLoggedIn && (
+        <Field
+          label="Your email (required — we'll send a confirmation link)"
+          name="submittedByEmail"
+          type="email"
+          required
+        />
+      )}
 
       {/* ── Turnstile widget ────────────────────────────────────── */}
       {siteKey && (
