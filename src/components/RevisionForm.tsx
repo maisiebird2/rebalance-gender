@@ -3,13 +3,10 @@
 import { useState, useRef, FormEvent } from "react";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type { LinkPlatform, Platform, ArtistWithRelations } from "@/lib/types";
-import { platformPlaceholder } from "@/lib/platforms";
-import ProfileLinkField from "./ProfileLinkField";
-
-interface LocationRow {
-  city: string;
-  country: string;
-}
+import TextList from "./form/TextList";
+import GenreList from "./form/GenreList";
+import LocationList, { type LocationRow } from "./form/LocationList";
+import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
 
 interface Props {
   artist: ArtistWithRelations;
@@ -20,15 +17,9 @@ interface Props {
 type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
 
 export default function RevisionForm({ artist, allGenres, platforms }: Props) {
-  const LINK_FIELDS = platforms.map((p) => ({
-    platform: p.key as LinkPlatform,
-    label: p.label,
-    placeholder: platformPlaceholder(p.label),
-  }));
-
   // Pre-populate with existing artist data
   const [genres, setGenres] = useState<string[]>(
-    artist.genres?.map((g) => g.name) ?? [""]
+    artist.genres?.length ? artist.genres.map((g) => g.name) : [""]
   );
   const [locations, setLocations] = useState<LocationRow[]>(
     artist.locations?.length
@@ -38,42 +29,26 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
   const [labelList, setLabelList] = useState<string[]>(
     artist.label_list?.length ? artist.label_list.map((l) => l.name) : [""]
   );
-
-  // Build initial link map from existing artist links
-  const initialLinks: Partial<Record<string, string>> = {};
-  for (const link of artist.links ?? []) {
-    if (link.url && !link.not_found) {
-      initialLinks[link.platform] = link.original_url ?? link.url ?? "";
+  const [aliasNames, setAliasNames] = useState<string[]>(
+    artist.aliases?.length ? artist.aliases.map((a) => a.name) : [""]
+  );
+  const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const link of artist.links ?? []) {
+      if (link.url && !link.not_found) {
+        map[link.platform] = link.original_url ?? link.url ?? "";
+      }
     }
-  }
+    return map;
+  });
 
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  function addLabel() { setLabelList((prev) => [...prev, ""]); }
-  function removeLabel(i: number) {
-    setLabelList((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [""]; });
-  }
-  function updateLabel(i: number, value: string) {
-    setLabelList((prev) => prev.map((l, idx) => (idx === i ? value : l)));
-  }
-
-  function addLocation() { setLocations((prev) => [...prev, { city: "", country: "" }]); }
-  function removeLocation(i: number) {
-    setLocations((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [{ city: "", country: "" }]; });
-  }
-  function updateLocation(i: number, field: keyof LocationRow, value: string) {
-    setLocations((prev) => prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l)));
-  }
-
-  function addGenre() { setGenres((prev) => [...prev, ""]); }
-  function removeGenre(i: number) {
-    setGenres((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [""]; });
-  }
-  function updateGenre(i: number, value: string) {
-    setGenres((prev) => prev.map((g, idx) => (idx === i ? value : g)));
+  function updateLinkUrl(platform: LinkPlatform, url: string) {
+    setLinkUrls((prev) => ({ ...prev, [platform]: url }));
   }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -85,11 +60,9 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
     const data = new FormData(form);
 
     const links: Partial<Record<LinkPlatform, string>> = {};
-    for (const { platform } of LINK_FIELDS) {
-      const value = data.get(`link_${platform}`);
-      if (typeof value === "string" && value.trim()) {
-        links[platform] = value.trim();
-      }
+    for (const p of platforms) {
+      const value = linkUrls[p.key]?.trim();
+      if (value) links[p.key] = value;
     }
 
     const revisionData = {
@@ -100,6 +73,7 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
         ? locations.filter((l) => l.city || l.country)
         : undefined,
       labels: labelList.filter(Boolean).length ? labelList.filter(Boolean) : undefined,
+      aliases: aliasNames.filter(Boolean).length ? aliasNames.filter(Boolean) : undefined,
       links: Object.keys(links).length ? links : undefined,
     };
 
@@ -175,84 +149,22 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
       <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her"
         defaultValue={artist.pronoun?.value ?? ""} />
 
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Genres</span>
-        {genres.map((genre, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <select value={genre} onChange={(e) => updateGenre(i, e.target.value)}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
-              <option value="">— select a genre —</option>
-              {allGenres.map((g) => (
-                <option key={g} value={g}>{g}</option>
-              ))}
-            </select>
-            {genres.length > 1 && (
-              <button type="button" onClick={() => removeGenre(i)}
-                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove genre">✕</button>
-            )}
-          </div>
-        ))}
-        <button type="button" onClick={addGenre}
-          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
-          + Add genre
-        </button>
-      </div>
+      <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
+        placeholder="e.g. DJ Name, Former name" />
+
+      <GenreList label="Genres" values={genres} onChange={setGenres} options={allGenres} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Location</legend>
-        <div className="flex flex-col gap-3">
-          {locations.map((loc, i) => (
-            <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-              <div className="flex flex-col gap-1">
-                {i === 0 && <span className="text-xs font-medium text-gray-500">City</span>}
-                <input type="text" value={loc.city} onChange={(e) => updateLocation(i, "city", e.target.value)}
-                  placeholder="City" className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div className="flex flex-col gap-1">
-                {i === 0 && <span className="text-xs font-medium text-gray-500">Country</span>}
-                <input type="text" value={loc.country} onChange={(e) => updateLocation(i, "country", e.target.value)}
-                  placeholder="Country" className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              {locations.length > 1 && (
-                <button type="button" onClick={() => removeLocation(i)}
-                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove location">✕</button>
-              )}
-            </div>
-          ))}
-          <button type="button" onClick={addLocation}
-            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
-            + Add location
-          </button>
-        </div>
+        <LocationList values={locations} onChange={setLocations} />
       </fieldset>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Labels / crews</span>
-        {labelList.map((label, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input type="text" value={label} onChange={(e) => updateLabel(i, e.target.value)}
-              placeholder="e.g. Ostgut Ton"
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-            {labelList.length > 1 && (
-              <button type="button" onClick={() => removeLabel(i)}
-                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500" aria-label="Remove label">✕</button>
-            )}
-          </div>
-        ))}
-        <button type="button" onClick={addLabel}
-          className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400">
-          + Add label
-        </button>
-      </div>
+      <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
+        placeholder="e.g. Ostgut Ton" />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {LINK_FIELDS.map(({ platform, label, placeholder }) => (
-            <ProfileLinkField key={platform} platform={platform} label={label} name={`link_${platform}`}
-              placeholder={placeholder} defaultValue={initialLinks[platform] ?? ""} />
-          ))}
-        </div>
+        <ProfileLinksFieldset platforms={platforms} values={linkUrls} onChange={updateLinkUrl} />
       </fieldset>
 
       <div className="flex flex-col gap-1">

@@ -3,13 +3,10 @@
 import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist } from "./actions";
 import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistAlias, ArtistLabel, Platform } from "@/lib/types";
-import { platformPlaceholder } from "@/lib/platforms";
-import ProfileLinkField from "@/components/ProfileLinkField";
-
-interface LocationRow {
-  city: string;
-  country: string;
-}
+import TextList from "@/components/form/TextList";
+import GenreList from "@/components/form/GenreList";
+import LocationList, { type LocationRow } from "@/components/form/LocationList";
+import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
 
 interface Props {
   artist: ArtistWithRelations;
@@ -42,13 +39,6 @@ function statusLabel(status: ArtistStatus): string {
 }
 
 export default function EditForm({ artist, allGenres, platforms }: Props) {
-  const LINK_FIELDS: { platform: LinkPlatform; label: string; placeholder: string }[] =
-    platforms.map((p) => ({
-      platform: p.key,
-      label: p.label,
-      placeholder: platformPlaceholder(p.label),
-    }));
-
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -56,47 +46,66 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   const [isDeleting, setIsDeleting] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
+  // ── Field state ───────────────────────────────────────────────
+  const [aliasNames, setAliasNames] = useState<string[]>(
+    artist.aliases?.length > 0 ? artist.aliases.map((a: ArtistAlias) => a.name) : [""]
+  );
+  const [labelList, setLabelList] = useState<string[]>(
+    artist.label_list?.length > 0 ? artist.label_list.map((l: ArtistLabel) => l.name) : [""]
+  );
+  const [genres, setGenres] = useState<string[]>(
+    artist.genres?.map((g) => g.name).length > 0 ? artist.genres.map((g) => g.name) : [""]
+  );
+  const [locations, setLocations] = useState<LocationRow[]>(
+    artist.locations?.length > 0
+      ? artist.locations.map((l) => ({ city: l.city ?? "", country: l.country ?? "" }))
+      : [{ city: "", country: "" }]
+  );
+
   // ── Link state ────────────────────────────────────────────────
   const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
-    for (const { platform } of LINK_FIELDS) {
-      map[platform] = artist.links?.find((l) => l.platform === platform && !l.not_found)?.url ?? "";
+    for (const p of platforms) {
+      map[p.key] = artist.links?.find((l) => l.platform === p.key && !l.not_found)?.url ?? "";
     }
     return map;
   });
 
   const [linkNotFound, setLinkNotFound] = useState<Record<string, boolean>>(() => {
     const map: Record<string, boolean> = {};
-    for (const { platform } of LINK_FIELDS) {
-      map[platform] = artist.links?.some((l) => l.platform === platform && l.not_found) ?? false;
+    for (const p of platforms) {
+      map[p.key] = artist.links?.some((l) => l.platform === p.key && l.not_found) ?? false;
     }
     return map;
   });
 
-  function updateLinkUrl(platform: string, url: string) {
+  function updateLinkUrl(platform: LinkPlatform, url: string) {
     setLinkUrls((prev) => ({ ...prev, [platform]: url }));
   }
 
-  function toggleLinkNotFound(platform: string, checked: boolean) {
+  function toggleLinkNotFound(platform: LinkPlatform, checked: boolean) {
     setLinkNotFound((prev) => ({ ...prev, [platform]: checked }));
     if (checked) setLinkUrls((prev) => ({ ...prev, [platform]: "" }));
   }
 
   // ── Submit ────────────────────────────────────────────────────
+  function serializedLinks() {
+    return platforms
+      .filter((p) => linkUrls[p.key]?.trim() || linkNotFound[p.key])
+      .map((p) => ({
+        platform: p.key,
+        url: linkNotFound[p.key] ? null : linkUrls[p.key].trim(),
+        not_found: linkNotFound[p.key] ?? false,
+      }));
+  }
+
   function buildFormData(forceApprove = false, forceNotEligible = false): FormData | null {
     const form = formRef.current;
     if (!form) return null;
 
     const formData = new FormData(form);
     // Overwrite hidden inputs with current React state
-    const links = LINK_FIELDS
-      .filter(({ platform }) => linkUrls[platform]?.trim() || linkNotFound[platform])
-      .map(({ platform }) => ({
-        platform,
-        url: linkNotFound[platform] ? null : linkUrls[platform].trim(),
-        not_found: linkNotFound[platform] ?? false,
-      }));
-    formData.set("links", JSON.stringify(links));
+    formData.set("links", JSON.stringify(serializedLinks()));
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
     formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
@@ -109,13 +118,13 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
     return formData;
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setServerError(null);
-    const formData = buildFormData();
+  function runSave(
+    formData: FormData | null,
+    action: "save" | "approve" | "not_eligible"
+  ) {
     if (!formData) return;
-
-    setPendingAction("save");
+    setServerError(null);
+    setPendingAction(action);
     startTransition(async () => {
       const result = await saveArtist(formData);
       setPendingAction(null);
@@ -123,126 +132,19 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         setServerError(result.error);
       }
     });
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    runSave(buildFormData(), "save");
   }
 
   function handleSaveAndApprove() {
-    setServerError(null);
-    const formData = buildFormData(true);
-    if (!formData) return;
-
-    setPendingAction("approve");
-    startTransition(async () => {
-      const result = await saveArtist(formData);
-      setPendingAction(null);
-      if (result && "error" in result) {
-        setServerError(result.error);
-      }
-    });
+    runSave(buildFormData(true), "approve");
   }
 
   function handleSaveAndMarkNotEligible() {
-    setServerError(null);
-    const formData = buildFormData(false, true);
-    if (!formData) return;
-
-    setPendingAction("not_eligible");
-    startTransition(async () => {
-      const result = await saveArtist(formData);
-      setPendingAction(null);
-      if (result && "error" in result) {
-        setServerError(result.error);
-      }
-    });
-  }
-
-  // ── Alias state ───────────────────────────────────────────────
-  const [aliasNames, setAliasNames] = useState<string[]>(
-    artist.aliases?.length > 0
-      ? artist.aliases.map((a: ArtistAlias) => a.name)
-      : [""]
-  );
-
-  function addAlias() {
-    setAliasNames((prev) => [...prev, ""]);
-  }
-
-  function removeAlias(i: number) {
-    setAliasNames((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [""];
-    });
-  }
-
-  function updateAlias(i: number, value: string) {
-    setAliasNames((prev) => prev.map((a, idx) => (idx === i ? value : a)));
-  }
-
-  // ── Label state ───────────────────────────────────────────────
-  const [labelList, setLabelList] = useState<string[]>(
-    artist.label_list?.length > 0
-      ? artist.label_list.map((l: ArtistLabel) => l.name)
-      : [""]
-  );
-
-  function addLabel() {
-    setLabelList((prev) => [...prev, ""]);
-  }
-
-  function removeLabel(i: number) {
-    setLabelList((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [""];
-    });
-  }
-
-  function updateLabel(i: number, value: string) {
-    setLabelList((prev) => prev.map((l, idx) => (idx === i ? value : l)));
-  }
-
-  // ── Genre state ───────────────────────────────────────────────
-  const [genres, setGenres] = useState<string[]>(
-    artist.genres?.map((g) => g.name).length > 0
-      ? artist.genres.map((g) => g.name)
-      : [""]
-  );
-
-  function addGenre() {
-    setGenres((prev) => [...prev, ""]);
-  }
-
-  function removeGenre(i: number) {
-    setGenres((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [""];
-    });
-  }
-
-  function updateGenre(i: number, value: string) {
-    setGenres((prev) => prev.map((g, idx) => (idx === i ? value : g)));
-  }
-
-  // ── Location state ────────────────────────────────────────────
-  const [locations, setLocations] = useState<LocationRow[]>(
-    artist.locations?.length > 0
-      ? artist.locations.map((l) => ({ city: l.city ?? "", country: l.country ?? "" }))
-      : [{ city: "", country: "" }]
-  );
-
-  function addLocation() {
-    setLocations((prev) => [...prev, { city: "", country: "" }]);
-  }
-
-  function removeLocation(i: number) {
-    setLocations((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length > 0 ? next : [{ city: "", country: "" }];
-    });
-  }
-
-  function updateLocation(i: number, field: keyof LocationRow, value: string) {
-    setLocations((prev) =>
-      prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l))
-    );
+    runSave(buildFormData(false, true), "not_eligible");
   }
 
   // ── Derived initial values ────────────────────────────────────
@@ -252,8 +154,8 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-8 pb-20">
       <input type="hidden" name="artist_id" value={artist.id} />
-      {/* hidden inputs — values are overwritten in handleSubmit */}
-      <input type="hidden" name="links" value={JSON.stringify(LINK_FIELDS.filter(({ platform }) => linkUrls[platform]?.trim() || linkNotFound[platform]).map(({ platform }) => ({ platform, url: linkNotFound[platform] ? null : linkUrls[platform].trim(), not_found: linkNotFound[platform] ?? false })))} />
+      {/* hidden inputs — values are overwritten from React state in buildFormData */}
+      <input type="hidden" name="links" value={JSON.stringify(serializedLinks())} />
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
       <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
@@ -278,69 +180,11 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
           placeholder="she/her"
         />
 
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium">Aliases</span>
-          {aliasNames.map((alias, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={alias}
-                onChange={(e) => updateAlias(i, e.target.value)}
-                placeholder="e.g. DJ Name, Former name"
-                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-              />
-              {aliasNames.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeAlias(i)}
-                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                  aria-label="Remove alias"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addAlias}
-            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
-          >
-            + Add alias
-          </button>
-        </div>
+        <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
+          placeholder="e.g. DJ Name, Former name" />
 
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium">Labels / crews</span>
-          {labelList.map((label, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={label}
-                onChange={(e) => updateLabel(i, e.target.value)}
-                placeholder="e.g. Ostgut Ton"
-                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-              />
-              {labelList.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeLabel(i)}
-                  className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                  aria-label="Remove label"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addLabel}
-            className="self-start text-sm text-violet-600 hover:underline dark:text-violet-400"
-          >
-            + Add label
-          </button>
-        </div>
+        <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
+          placeholder="e.g. Ostgut Ton" />
 
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium" htmlFor="directory_status">
@@ -364,94 +208,13 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
       {/* ── Location ───────────────────────────────────────────── */}
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Location</legend>
-
-        {locations.map((loc, i) => (
-          <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-            <div className="flex flex-col gap-1">
-              {i === 0 && (
-                <span className="text-xs font-medium text-gray-500">City</span>
-              )}
-              <input
-                type="text"
-                value={loc.city}
-                onChange={(e) => updateLocation(i, "city", e.target.value)}
-                placeholder="City"
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              {i === 0 && (
-                <span className="text-xs font-medium text-gray-500">Country</span>
-              )}
-              <input
-                type="text"
-                value={loc.country}
-                onChange={(e) => updateLocation(i, "country", e.target.value)}
-                placeholder="Country"
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-              />
-            </div>
-            {locations.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeLocation(i)}
-                className="mb-0.5 rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                aria-label="Remove location"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        ))}
-
-        <button
-          type="button"
-          onClick={addLocation}
-          className="text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
-          + Add location
-        </button>
+        <LocationList values={locations} onChange={setLocations} />
       </fieldset>
 
       {/* ── Genres ─────────────────────────────────────────────── */}
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Genres</legend>
-
-        {genres.map((genre, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <select
-              value={genre}
-              onChange={(e) => updateGenre(i, e.target.value)}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-            >
-              <option value="">— select a genre —</option>
-              {allGenres.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
-
-            {genres.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeGenre(i)}
-                className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-                aria-label="Remove genre"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        ))}
-
-        <button
-          type="button"
-          onClick={addGenre}
-          className="text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
-          + Add genre
-        </button>
+        <GenreList values={genres} onChange={setGenres} options={allGenres} />
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}
@@ -459,30 +222,13 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">
           Profile links
         </legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {LINK_FIELDS.map(({ platform, label, placeholder }) => (
-            <div key={platform} className="flex flex-col gap-1">
-              <ProfileLinkField
-                platform={platform}
-                label={label}
-                name={`link_${platform}`}
-                value={linkUrls[platform] ?? ""}
-                onChange={(v) => updateLinkUrl(platform, v)}
-                placeholder={placeholder}
-                disabled={linkNotFound[platform]}
-              />
-              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={linkNotFound[platform] ?? false}
-                  onChange={(e) => toggleLinkNotFound(platform, e.target.checked)}
-                  className="rounded"
-                />
-                Not found
-              </label>
-            </div>
-          ))}
-        </div>
+        <ProfileLinksFieldset
+          platforms={platforms}
+          values={linkUrls}
+          onChange={updateLinkUrl}
+          notFound={linkNotFound}
+          onNotFoundChange={toggleLinkNotFound}
+        />
       </fieldset>
 
       {/* ── Bio & contact ──────────────────────────────────────── */}

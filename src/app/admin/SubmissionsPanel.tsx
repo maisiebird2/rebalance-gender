@@ -334,6 +334,7 @@ function RevisionCard({
             <dd>{rd.locations.map((l) => [l.city, l.country].filter(Boolean).join(", ")).join(" | ")}</dd></>
           )}
           {rd.labels?.length && (<><dt className="text-gray-500">Labels</dt><dd>{rd.labels.join(", ")}</dd></>)}
+          {rd.aliases?.length && (<><dt className="text-gray-500">Aliases</dt><dd>{rd.aliases.join(", ")}</dd></>)}
           {rd.links && Object.keys(rd.links).length > 0 && (
             <><dt className="text-gray-500">Links</dt>
             <dd className="break-all">{Object.entries(rd.links).map(([k, v]) => `${k}: ${v}`).join("; ")}</dd></>

@@ -22,6 +22,7 @@ interface SubmitBody {
   genres?: string[];
   locations?: LocationInput[];
   labels?: string[];
+  aliases?: string[];
   notes?: string;
   submittedByEmail?: string;
   links?: Partial<Record<LinkPlatform, string>>;
@@ -179,6 +180,14 @@ export async function POST(request: NextRequest) {
   if (labelNames.length > 0) {
     await supabase.from("artist_labels").insert(
       labelNames.map((n) => ({ artist_id: artistId, name: n }))
+    );
+  }
+
+  // ── 8b. Aliases ─────────────────────────────────────────────────────────────
+  const aliasNames = (body.aliases ?? []).map((a) => a.trim()).filter(Boolean);
+  if (aliasNames.length > 0) {
+    await supabase.from("artist_aliases").insert(
+      aliasNames.map((n) => ({ artist_id: artistId, name: n }))
     );
   }
 

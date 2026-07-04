@@ -164,6 +164,7 @@ export async function approveRevision(
     genres?: string[];
     locations?: { city?: string; country?: string }[];
     labels?: string[];
+    aliases?: string[];
     links?: Record<string, string>;
   };
 
@@ -240,6 +241,17 @@ export async function approveRevision(
     if (validLabels.length) {
       await admin.from("artist_labels").insert(
         validLabels.map((name) => ({ artist_id: artistId, name }))
+      );
+    }
+  }
+
+  // Replace aliases.
+  if (rd.aliases?.length) {
+    await admin.from("artist_aliases").delete().eq("artist_id", artistId);
+    const validAliases = rd.aliases.map((a) => a.trim()).filter(Boolean);
+    if (validAliases.length) {
+      await admin.from("artist_aliases").insert(
+        validAliases.map((name) => ({ artist_id: artistId, name }))
       );
     }
   }

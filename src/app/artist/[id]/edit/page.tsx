@@ -11,6 +11,7 @@ import type {
   Genre,
   ArtistLocation,
   ArtistLabel,
+  ArtistAlias,
   ArtistLink,
   ArtistEnrichment,
 } from "@/lib/types";
@@ -29,6 +30,7 @@ const ARTIST_ADMIN_SELECT = `
   artist_genres(genres(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
+  aliases:artist_aliases(*),
   links:artist_links(*),
   enrichment:artist_enrichment(*)
 `;
@@ -38,6 +40,7 @@ type RawArtistRow = Artist & {
   artist_genres: { genres: Genre | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
+  aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
 };

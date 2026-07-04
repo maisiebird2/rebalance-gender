@@ -33,6 +33,7 @@ export interface RevisionData {
   genres?: string[];
   locations?: { city?: string; country?: string }[];
   labels?: string[];
+  aliases?: string[];
   links?: Partial<Record<string, string>>;
 }
 
