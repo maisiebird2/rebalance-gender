@@ -43,6 +43,11 @@ export default async function ArtistPage({ params }: PageProps) {
     .filter(Boolean)
     .join(" | ");
 
+  const aliasText = artist.aliases
+    ?.map((a) => a.name)
+    .filter(Boolean)
+    .join(", ");
+
   const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
   );
@@ -131,6 +136,11 @@ export default async function ArtistPage({ params }: PageProps) {
                   .filter(Boolean)
                   .join(" · ")}
               </p>
+              {aliasText && (
+                <p className="text-sm text-gray-400 dark:text-gray-500">
+                  aka {aliasText}
+                </p>
+              )}
             </div>
           </div>
 

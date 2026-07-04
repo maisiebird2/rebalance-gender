@@ -25,6 +25,11 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
     .filter(Boolean)
     .join(" | ");
 
+  const aliasText = artist.aliases
+    ?.map((a) => a.name)
+    .filter(Boolean)
+    .join(", ");
+
   const card = (
     <Link
       href={`/artist/${artist.id}`}
@@ -57,6 +62,11 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
               .filter(Boolean)
               .join(" · ")}
           </p>
+          {aliasText && (
+            <p className="truncate text-xs text-gray-400 dark:text-gray-500">
+              aka {aliasText}
+            </p>
+          )}
         </div>
       </div>
 
