@@ -236,6 +236,13 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
         <legend className="text-base font-semibold">Bio &amp; contact</legend>
 
         <TextArea
+          label="Internal notes (admin only — never shown publicly)"
+          name="notes"
+          defaultValue={artist.notes ?? ""}
+          rows={3}
+        />
+
+        <TextArea
           label="Bio (SoundCloud)"
           name="bio"
           defaultValue={bio}
