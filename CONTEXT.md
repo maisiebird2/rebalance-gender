@@ -225,6 +225,20 @@ not in the directory that are searched for are saved as stubs with
 
 ---
 
+## Authentication
+
+Login, sign-out, and password recovery for the admin/edit side (Supabase
+Auth, email + password, no public sign-up), plus the Supabase dashboard
+config and Resend SMTP setup that auth emails depend on.
+
+**Read `OPERATIONS.md` for full detail** (backend/ops setup runbook; auth is
+its first section), including the password-reset flow
+(`/reset-password`), the "Forgot password?" login trigger, required Site
+URL / Redirect URL / email-template settings, and how to point auth emails
+at Resend SMTP to avoid the built-in "email rate limit exceeded" cap.
+
+---
+
 ## Conventions
 
 - PostgREST pagination: Supabase returns max 1000 rows per request;
