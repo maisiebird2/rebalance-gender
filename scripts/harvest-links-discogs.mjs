@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 // ============================================================
-// Phase 2d: harvest platform links from Discogs.
+// Phase 2c: harvest platform links from Discogs.
 //
 // For each artist with a Discogs link in artist_links, calls the
 // official Discogs API (GET /artists/{id}) and stages every external
 // URL from the response's `urls` array into artist_harvested_links —
 // never touching artist_links directly. integrate-harvested-links.mjs
-// (2e) handles promotion and conflict-flagging, exactly as it does
+// (2d) handles promotion and conflict-flagging, exactly as it does
 // for SoundCloud web-profile finds.
 //
 // Processed state is tracked in the DATABASE (resolved_artists, with
 // service = 'discogs-links'), not in cache files — per project
 // convention. An artist is skipped if a state row exists, so re-runs
 // only touch artists whose Discogs link arrived since the last run.
-// That is what lets the 2d+2e convergence loop terminate.
+// That is what lets the 2c+2d convergence loop terminate.
+//
+// Old-format Discogs links carry the artist name instead of a numeric id
+// (e.g. /artist/Bruno+Pronsato, or double-encoded /artist/Violet+%252814%2529).
+// Those can't be parsed for an id, so we resolve them via the authenticated
+// Discogs SEARCH API (the website's redirect is client-side / bot-blocked,
+// so scraping it is unreliable) — matching the decoded name exactly — and
+// write the canonical /artist/<id> URL back to artist_links so later runs
+// skip the round-trip. Non-artist Discogs URLs (user profiles, labels, etc.)
+// can never resolve to an artist id, so they're skipped, not errored.
+// See searchDiscogsArtistId / discogsPathInfo.
 //
 // Rate limit: 60 requests/minute with a personal access token
 // (throttled to ~55/min here to be safe).
@@ -230,6 +240,81 @@ async function fetchDiscogsArtist(discogsId, { retried = false } = {}) {
   return { ok: true, status: res.status, data: await res.json() };
 }
 
+// Break a Discogs URL into { kind, slug }. `kind` is the resource type
+// ("artist", "label", "user", "release", ...); `slug` is the first path
+// segment after it. Handles a locale prefix like /de/ or /it/.
+function discogsPathInfo(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (!/(^|\.)discogs\.com$/i.test(u.hostname)) return null;
+  const path = u.pathname.replace(/^\/[a-z]{2}(?=\/)/i, ""); // drop /xx/ locale
+  const seg = path.split("/").filter(Boolean);
+  if (seg.length < 2) return { kind: seg[0]?.toLowerCase() ?? "other", slug: "" };
+  return { kind: seg[0].toLowerCase(), slug: seg[1] };
+}
+
+// Old-format artist URLs carry the name as the slug (e.g. /artist/Bruno+Pronsato,
+// or double-encoded /artist/Violet+%252814%2529). Recover the human name:
+// fully decode (undo double/triple encoding), then turn "+" into spaces.
+function decodeDiscogsName(slug) {
+  let s = slug;
+  for (let i = 0; i < 3; i++) {
+    let next;
+    try {
+      next = decodeURIComponent(s);
+    } catch {
+      break; // malformed escape — stop decoding
+    }
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/\+/g, " ").trim();
+}
+
+// Resolve a name-based artist URL to a numeric id via the authenticated
+// Discogs search API (the website's redirect happens client-side, and bot
+// fetches get blocked, so scraping www.discogs.com is unreliable — the API
+// isn't). We only accept an EXACT name match, so we never guess a wrong
+// artist; anything ambiguous stays unresolved and is reported.
+const norm = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+
+async function searchDiscogsArtistId(name) {
+  const target = norm(name);
+  if (!target) return null;
+  // Query the full name first (precise), then the base name with any
+  // trailing "(disambiguator)" stripped (broader) if the first misses.
+  const base = name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const queries = base && norm(base) !== target ? [name, base] : [name];
+
+  for (const q of queries) {
+    await throttle();
+    let res;
+    try {
+      res = await fetch(
+        `https://api.discogs.com/database/search?type=artist&per_page=100&q=${encodeURIComponent(q)}`,
+        {
+          headers: {
+            "User-Agent": "RebalanceGender/1.0 +https://rebalance-gender.com",
+            Authorization: `Discogs token=${DISCOGS_TOKEN}`,
+          },
+        }
+      );
+    } catch {
+      continue;
+    }
+    if (!res.ok) continue;
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const hit = results.find((r) => r.id && norm(r.title) === target);
+    if (hit) return String(hit.id);
+  }
+  return null;
+}
+
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
@@ -290,17 +375,69 @@ async function main() {
   let staged = 0;
   let failed = 0;
   let noUrls = 0;
+  let skippedNonArtist = 0;
+  let resolvedOld = 0;
   const stagedByPlatform = {};
 
   for (const row of targets) {
     const name = row.artists?.name ?? row.artist_id;
-    const discogsId = discogsArtistIdFromUrl(row.url);
+    let discogsId = discogsArtistIdFromUrl(row.url);
 
     if (!discogsId) {
-      console.log(`✗ ${name}: could not parse artist id from ${row.url}`);
-      failed++;
-      if (!DRY_RUN) await markProcessed(row.artist_id);
-      continue;
+      const info = discogsPathInfo(row.url);
+
+      // Not an artist URL at all (user profile, label, release, ...). No
+      // artist id can ever exist — skip cleanly rather than erroring.
+      if (info && info.kind !== "artist") {
+        console.log(`· ${name}: skipping non-artist Discogs URL (${info.kind}): ${row.url}`);
+        skippedNonArtist++;
+        if (!DRY_RUN) await markProcessed(row.artist_id);
+        continue;
+      }
+
+      // Old-format, name-based artist URL — resolve to a numeric id via the
+      // Discogs search API, matching the name from the URL slug (fall back
+      // to our own artist name if the slug is missing).
+      const wantedName = info?.slug ? decodeDiscogsName(info.slug) : (row.artists?.name ?? "");
+      const resolvedId = wantedName ? await searchDiscogsArtistId(wantedName) : null;
+      if (!resolvedId) {
+        console.log(`✗ ${name}: could not resolve artist id from ${row.url}`);
+        failed++;
+        if (!DRY_RUN) await markProcessed(row.artist_id);
+        continue;
+      }
+      const canonicalUrl = `https://www.discogs.com/artist/${resolvedId}`;
+      console.log(`  ↳ ${name}: resolved ${row.url} → ${canonicalUrl} (name "${wantedName}")`);
+      discogsId = resolvedId;
+      resolvedOld++;
+      // Replace the old-format URL in place with the canonical one, so
+      // future runs parse it directly (no resolution round-trip) and we
+      // stop carrying URLs built from the old template. State in the DB,
+      // not a cache.
+      if (!DRY_RUN && canonicalUrl !== row.url) {
+        const { error: updErr } = await supabase
+          .from("artist_links")
+          .update({ url: canonicalUrl })
+          .eq("id", row.id);
+        if (updErr) {
+          // 23505 = unique violation: a canonical row for this artist +
+          // platform already exists, so the old-format row is redundant.
+          // Delete it rather than leaving an old-template duplicate behind.
+          if (updErr.code === "23505") {
+            const { error: delErr } = await supabase
+              .from("artist_links")
+              .delete()
+              .eq("id", row.id);
+            if (delErr) {
+              console.error(`  (couldn't remove old-format artist_links row for ${name}: ${delErr.message})`);
+            } else {
+              console.log(`  ↳ ${name}: canonical URL already present — removed old-format row`);
+            }
+          } else {
+            console.error(`  (couldn't update artist_links url for ${name}: ${updErr.message})`);
+          }
+        }
+      }
     }
 
     const res = await fetchDiscogsArtist(discogsId);
@@ -370,7 +507,11 @@ async function main() {
     await markProcessed(row.artist_id);
   }
 
-  console.log(`\nDone. ${staged} new link(s) staged, ${noUrls} artist(s) with no usable URLs, ${failed} failure(s).`);
+  console.log(
+    `\nDone. ${staged} new link(s) staged, ${noUrls} artist(s) with no usable URLs, ` +
+      `${resolvedOld} old-format URL(s) resolved, ${skippedNonArtist} non-artist URL(s) skipped, ` +
+      `${failed} failure(s).`
+  );
   if (Object.keys(stagedByPlatform).length > 0) {
     console.log("New staged links by platform:");
     for (const [platform, count] of Object.entries(stagedByPlatform).sort((a, b) => b[1] - a[1])) {
