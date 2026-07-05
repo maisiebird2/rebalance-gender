@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
-import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
@@ -205,6 +205,19 @@ export async function saveArtist(
 
   await admin.from("artist_links").delete().eq("artist_id", artistId);
 
+  // Resolve each link's stored URL once (async: SoundCloud mobile share links
+  // need a redirect-follow), keyed by the link object so both the insert below
+  // and the new-image-URL check reuse the same resolved value — no double fetch.
+  const resolvedUrls = new Map<(typeof links)[number], string>();
+  for (const l of links) {
+    if (!l.not_found && l.url?.trim()) {
+      resolvedUrls.set(
+        l,
+        await resolveProfileLinkUrlAsync(l.platform, l.url.trim(), cleanLinkUrl)
+      );
+    }
+  }
+
   if (links.length > 0) {
     const validLinks = links.filter((l) => l.not_found || l.url?.trim());
     if (validLinks.length > 0) {
@@ -220,7 +233,7 @@ export async function saveArtist(
             };
           }
           const original_url = l.url!.trim();
-          const url = resolveProfileLinkUrl(l.platform, original_url, cleanLinkUrl);
+          const url = resolvedUrls.get(l)!;
           return {
             artist_id: artistId,
             platform: l.platform,
@@ -241,7 +254,7 @@ export async function saveArtist(
       !l.not_found &&
       l.url?.trim() &&
       imagePlatforms.has(l.platform) &&
-      !existingImageUrls.has(resolveProfileLinkUrl(l.platform, l.url!.trim(), cleanLinkUrl))
+      !existingImageUrls.has(resolvedUrls.get(l)!)
   );
 
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────

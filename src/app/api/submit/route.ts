@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
-import { resolveProfileLinkUrl } from "@/lib/profile-links";
+import { resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import {
   checkBotProtection,
   getEmailStatus,
@@ -224,23 +224,27 @@ export async function POST(request: NextRequest) {
     const platforms = await getPlatforms(supabase);
     const validKeys = new Set(platforms.map((p) => p.key));
 
-    const rows = (Object.keys(body.links) as LinkPlatform[])
-      .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
-      .map((platform) => {
-        const original_url = body.links![platform]!.trim();
-        return {
-          artist_id: artistId,
-          platform,
-          original_url,
-          // Bare handles for templated platforms (soundcloud, instagram,
-          // bandcamp, resident_advisor) get built into a full URL here too —
-          // this is a safety net in case the client-side normalization in
-          // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
-          // without a blur event). Everything else falls back to the
-          // existing cleanLinkUrl() trimming/query-stripping.
-          url: resolveProfileLinkUrl(platform, original_url, cleanLinkUrl),
-        };
-      });
+    const rows = await Promise.all(
+      (Object.keys(body.links) as LinkPlatform[])
+        .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
+        .map(async (platform) => {
+          const original_url = body.links![platform]!.trim();
+          return {
+            artist_id: artistId,
+            platform,
+            original_url,
+            // Bare handles for templated platforms (soundcloud, instagram,
+            // bandcamp, resident_advisor) get built into a full URL here too —
+            // this is a safety net in case the client-side normalization in
+            // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
+            // without a blur event). SoundCloud mobile share links
+            // (on.soundcloud.com/...) are expanded via a redirect-follow here
+            // too. Everything else falls back to the existing cleanLinkUrl()
+            // trimming/query-stripping.
+            url: await resolveProfileLinkUrlAsync(platform, original_url, cleanLinkUrl),
+          };
+        })
+    );
 
     if (rows.length > 0) {
       await supabase.from("artist_links").insert(rows);

@@ -63,12 +63,18 @@ const CONFIG: Record<string, PlatformLinkConfig> = {
     domainHints: ["instagram.com"],
     // 1-30 chars, letters/digits/periods/underscores, no "..".
     handlePattern: /^(?!.*\.\.)[a-zA-Z0-9._]{1,30}$/,
-    buildUrl: (h) => `https://www.instagram.com/${h}/`,
+    // No trailing slash — resolveProfileLinkUrl strips them uniformly
+    // across every platform so stored URLs are consistent.
+    buildUrl: (h) => `https://www.instagram.com/${h}`,
     extractHandle: (u) => lastPathSegment(u.pathname),
   },
   bandcamp: {
     domainHints: [".bandcamp.com"],
     handlePattern: /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i,
+    // Any /album/, /track/, /releases, /follow_me path is dropped
+    // because the URL is rebuilt from the subdomain alone. No trailing
+    // slash — resolveProfileLinkUrl strips them uniformly across every
+    // platform so stored URLs are consistent.
     buildUrl: (h) => `https://${h.toLowerCase()}.bandcamp.com`,
     extractHandle: (u) => {
       const host = u.hostname.toLowerCase();
@@ -209,6 +215,18 @@ export function normalizeProfileLink(platformKey: string, rawInput: string): Nor
 
   const withoutAt = trimmed.replace(/^@/, "");
 
+  // A SoundCloud mobile share link (on.soundcloud.com/<id>) only resolves to a
+  // real profile by following its redirect — an async, network-bound step
+  // handled by resolveShareUrl() on the server save paths. If one reaches this
+  // synchronous normalizer (the resolve step was skipped, or its fetch failed),
+  // do NOT run the extract logic below: on.soundcloud.com matches the
+  // soundcloud domain hint, so extractHandle would turn the opaque share ID
+  // into a bogus https://soundcloud.com/<id>. Pass it through untouched so the
+  // original share link is preserved instead.
+  if (platformKey === "soundcloud" && isSoundcloudShareLink(withoutAt)) {
+    return passthrough;
+  }
+
   const parsed = tryParseAsPlatformUrl(withoutAt, config);
 
   if (parsed) {
@@ -252,10 +270,25 @@ export function normalizeProfileLink(platformKey: string, rawInput: string): Nor
 }
 
 /**
+ * Removes any trailing slash(es) so every stored platform URL follows a
+ * single, consistent no-trailing-slash convention — regardless of whether
+ * it came from a templated buildUrl or the fallback cleaner, and whether the
+ * user pasted one with or without a slash. A query/hash-only tail is left
+ * alone (the save-path cleaners already strip query strings for these
+ * platforms, so in practice the tail is a plain path). A bare-domain URL
+ * loses its root slash too (https://x.bandcamp.com/ -> https://x.bandcamp.com),
+ * which is still a valid, canonical URL.
+ */
+export function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/**
  * Server-side convenience: resolves the URL to store for a link field.
  * Templated platforms get the full normalize/construct treatment;
  * everything else falls back to the caller's existing cleaner (e.g.
- * cleanLinkUrl from lib/platforms.ts), unchanged from prior behavior.
+ * cleanLinkUrl from lib/platforms.ts). The result is then stripped of any
+ * trailing slash so stored URLs are consistent across all platforms.
  */
 export function resolveProfileLinkUrl(
   platformKey: string,
@@ -264,6 +297,123 @@ export function resolveProfileLinkUrl(
 ): string {
   const trimmed = rawInput.trim();
   if (!trimmed) return trimmed;
-  if (!isTemplatedPlatform(platformKey)) return fallbackClean(platformKey, trimmed);
-  return normalizeProfileLink(platformKey, trimmed).url;
+  const resolved = isTemplatedPlatform(platformKey)
+    ? normalizeProfileLink(platformKey, trimmed).url
+    : fallbackClean(platformKey, trimmed);
+  return stripTrailingSlash(resolved);
+}
+
+// ============================================================
+// Mobile share-link resolution (async, server-side only)
+//
+// SoundCloud's mobile "share" sheet hands out links like
+// https://on.soundcloud.com/8KP9u6WaRSeo1ycHww — the path is an opaque
+// ID, not a handle, and the real profile URL is only knowable by
+// following the redirect. That's a network round-trip, so unlike the
+// rest of this module it can't be done synchronously in the client
+// field's blur handler. It runs on the server save paths instead,
+// BEFORE the synchronous normalize/extract step.
+// ============================================================
+
+/** Hosts used by SoundCloud's mobile share sheet. They 30x-redirect to the
+ *  canonical https://soundcloud.com/<artist>... URL. */
+const SOUNDCLOUD_SHARE_HOSTS = new Set(["on.soundcloud.com"]);
+
+/** How long to wait on the redirect-follow before giving up and keeping the
+ *  original link. Kept short so a slow/hung request can't stall a submission. */
+const SHARE_RESOLVE_TIMEOUT_MS = 5000;
+
+function hostnameOf(input: string): string | null {
+  const withScheme = /^https?:\/\//i.test(input) ? input : `https://${input}`;
+  try {
+    return new URL(withScheme).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** True when `input` is a SoundCloud mobile share link (on.soundcloud.com/...).
+ *  Used by normalizeProfileLink to leave such links untouched if they reach the
+ *  sync path unresolved. */
+export function isSoundcloudShareLink(input: string): boolean {
+  const host = hostnameOf(input.trim());
+  return host !== null && SOUNDCLOUD_SHARE_HOSTS.has(host);
+}
+
+/**
+ * Expands a SoundCloud mobile share link to the canonical profile URL it
+ * redirects to. Network-bound, so async and server-only — never call from a
+ * client/sync context.
+ *
+ * Behavior:
+ *   - Non-share input is returned unchanged with NO network call.
+ *   - On success, returns the redirect's final URL with its query string
+ *     stripped (normalizeProfileLink canonicalizes the path afterwards).
+ *   - On ANY failure — network error, timeout, non-2xx, or a redirect that
+ *     doesn't land on soundcloud.com — returns the ORIGINAL input unchanged,
+ *     so the caller stores the share link as-is rather than losing it.
+ */
+export async function resolveShareUrl(rawInput: string): Promise<string> {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return trimmed;
+
+  const host = hostnameOf(trimmed);
+  if (host === null || !SOUNDCLOUD_SHARE_HOSTS.has(host)) return trimmed;
+
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SHARE_RESOLVE_TIMEOUT_MS);
+  try {
+    // `redirect: "follow"` + response.url gives the final destination after the
+    // share host's hops. HEAD is cheap; some hosts reject it, so fall back to
+    // GET. We only read the resolved URL, never the body.
+    let res = await fetch(withScheme, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.url) {
+      res = await fetch(withScheme, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+      });
+    }
+
+    const resolvedHost = res.url ? hostnameOf(res.url) : null;
+    // Only trust a redirect that actually landed on a soundcloud.com profile
+    // (and not back on a share host). Anything else → keep the original.
+    if (
+      !res.ok ||
+      resolvedHost === null ||
+      !resolvedHost.endsWith("soundcloud.com") ||
+      SOUNDCLOUD_SHARE_HOSTS.has(resolvedHost)
+    ) {
+      return trimmed;
+    }
+    return res.url.split("?")[0];
+  } catch {
+    return trimmed;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Async sibling of resolveProfileLinkUrl for server-side save paths. Runs the
+ * network resolve step FIRST (expanding SoundCloud mobile share links), then
+ * applies the same synchronous normalization. If the resolve step fails the
+ * original input flows through unchanged (and normalizeProfileLink leaves an
+ * unresolved on.soundcloud.com link alone). Only SoundCloud incurs a possible
+ * network call; every other platform is a plain sync passthrough.
+ */
+export async function resolveProfileLinkUrlAsync(
+  platformKey: string,
+  rawInput: string,
+  fallbackClean: (platform: string, url: string) => string
+): Promise<string> {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return trimmed;
+  const expanded = platformKey === "soundcloud" ? await resolveShareUrl(trimmed) : trimmed;
+  return resolveProfileLinkUrl(platformKey, expanded, fallbackClean);
 }
