@@ -167,12 +167,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // left unmarked so the next run retries them automatically.
 // ------------------------------------------------------------
 async function loadProcessedArtistIds() {
-  const { data, error } = await supabase
-    .from("resolved_artists")
-    .select("artist_id")
-    .eq("service", STATE_SERVICE);
-  if (error) throw error;
-  return new Set((data ?? []).map((r) => r.artist_id));
+  // Paginated: PostgREST caps unpaginated selects at 1000 rows, and
+  // there can be more state rows than that. Ordered by artist_id
+  // (the PK's first column) for stable pages.
+  const STATE_PAGE_SIZE = 1000;
+  const ids = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("resolved_artists")
+      .select("artist_id")
+      .eq("service", STATE_SERVICE)
+      .order("artist_id", { ascending: true })
+      .range(from, from + STATE_PAGE_SIZE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) ids.add(r.artist_id);
+    if ((data?.length ?? 0) < STATE_PAGE_SIZE) break;
+    from += STATE_PAGE_SIZE;
+  }
+  return ids;
 }
 
 async function markProcessed(artistId) {

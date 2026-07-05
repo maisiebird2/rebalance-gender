@@ -257,12 +257,23 @@ async function main() {
   }
 
   // Already-processed state from the DB (not a cache file).
-  const { data: stateRows, error: stateError } = await supabase
-    .from("resolved_artists")
-    .select("artist_id")
-    .eq("service", STATE_SERVICE);
-  if (stateError) throw stateError;
-  const processed = new Set((stateRows ?? []).map((r) => r.artist_id));
+  // Paginated: PostgREST caps unpaginated selects at 1000 rows.
+  const processed = new Set();
+  {
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("resolved_artists")
+        .select("artist_id")
+        .eq("service", STATE_SERVICE)
+        .order("artist_id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      for (const r of data ?? []) processed.add(r.artist_id);
+      if ((data?.length ?? 0) < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
 
   let targets = [...byArtist.values()].filter(
     (row) => FORCE || !processed.has(row.artist_id)
