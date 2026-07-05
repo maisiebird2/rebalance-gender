@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getSupabaseClient } from "./supabase";
 import type {
   ArtistPage,
@@ -365,30 +366,68 @@ export async function getRecommendedArtists(
 }
 
 /** All approved genres that have at least one approved artist, for the filter UI. */
-export async function getGenreOptions(): Promise<string[]> {
+/**
+ * Minimum number of approved, non-deleted artists a genre must have to
+ * appear in the public genre filter. Genres at or below (this − 1) are
+ * hidden "live" at read time: nothing is written to the database, so a
+ * genre reappears automatically once it crosses the threshold, and this
+ * is fully independent of genres.status (manual moderation stays separate).
+ * Set to 3 → any genre with ≤2 approved artists is hidden.
+ */
+export const MIN_APPROVED_ARTISTS_FOR_GENRE = 3;
+
+async function computeGenreOptions(): Promise<string[]> {
   const supabase = getSupabaseClient();
-
-  const { data, error } = await supabase
-    .from("artist_genres")
-    .select("genres!inner(name, status), artists!inner(directory_status, deleted)")
-    .eq("artists.directory_status", "approved")
-    .eq("artists.deleted", false)
-    .eq("genres.status", "approved");
-
-  if (error) {
-    console.error("getGenreOptions error:", error);
-    return [];
-  }
 
   type GenreOptionRow = { genres: { name: string } | null };
 
-  const names = new Set(
-    ((data as unknown as GenreOptionRow[]) ?? [])
-      .map((row) => row.genres?.name)
-      .filter((name): name is string => Boolean(name))
-  );
-  return Array.from(names).sort((a, b) => a.localeCompare(b));
+  // One row per (approved non-deleted artist × approved genre) link, so
+  // counting rows per genre = its number of approved artists. Page through
+  // because PostgREST caps a single response at ~1000 rows and there are
+  // typically far more artist-genre links than that.
+  const PAGE = 1000;
+  const counts = new Map<string, number>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("artist_genres")
+      .select("genres!inner(name, status), artists!inner(directory_status, deleted)")
+      .eq("artists.directory_status", "approved")
+      .eq("artists.deleted", false)
+      .eq("genres.status", "approved")
+      .range(from, from + PAGE - 1);
+
+    if (error) {
+      console.error("getGenreOptions error:", error);
+      return [];
+    }
+
+    const rows = (data as unknown as GenreOptionRow[]) ?? [];
+    for (const row of rows) {
+      const name = row.genres?.name;
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    if (rows.length < PAGE) break;
+  }
+
+  return Array.from(counts.entries())
+    .filter(([, n]) => n >= MIN_APPROVED_ARTISTS_FOR_GENRE)
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b));
 }
+
+/**
+ * Public genre filter list — genres with ≥ MIN_APPROVED_ARTISTS_FOR_GENRE
+ * approved artists. Cached across requests so the heavy per-genre count
+ * doesn't run on every page load; it recomputes at most once every
+ * `revalidate` seconds (the list only changes as artists are approved/
+ * removed, so short staleness is fine). Bump the window down for fresher
+ * results or up to cut load further.
+ */
+export const getGenreOptions = unstable_cache(
+  computeGenreOptions,
+  ["genre-options"],
+  { revalidate: 600 },
+);
 
 /** All countries with at least one approved artist, for the filter UI. */
 export async function getCountryOptions(): Promise<string[]> {

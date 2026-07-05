@@ -28,6 +28,7 @@
 .cache/
 scripts/*-cache.json
 resolve-candidates-*.csv
+genre-report*.csv
 __pycache__/
 *.pyc
 

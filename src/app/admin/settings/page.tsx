@@ -9,6 +9,31 @@ import type { SubmitterEmail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+type GenreRow = { id: number; name: string; status: "pending" | "approved" | "deleted" };
+
+// PostgREST caps a single select at ~1000 rows (the API "Max rows" setting),
+// so a plain .limit(10000) still returns only the first 1000 genres by name —
+// which is why the panel used to stop around "rnb". Page through with .range()
+// to load the full list regardless of how many genres exist.
+async function fetchAllGenres(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+): Promise<GenreRow[]> {
+  const PAGE_SIZE = 1000;
+  const all: GenreRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await admin
+      .from("genres")
+      .select("id, name, status")
+      .order("name")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as GenreRow[];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export default async function AdminSettingsPage() {
   // ── Auth guard ────────────────────────────────────────────────
   const supabase = await createClient();
@@ -18,17 +43,16 @@ export default async function AdminSettingsPage() {
   const admin = getSupabaseAdminClient();
 
   const [
-    { data: genreRows },
+    genres,
     { data: platformRows },
     { data: emailRows },
   ] = await Promise.all([
-    admin.from("genres").select("id, name, status").order("name").limit(10000),
+    fetchAllGenres(admin),
     admin.from("platforms").select("key, label").order("sort_order").order("label"),
     admin.from("submitter_emails").select("*")
       .order("first_seen_at", { ascending: false }).limit(100),
   ]);
 
-  const genres = (genreRows ?? []) as { id: number; name: string; status: "pending" | "approved" | "deleted" }[];
   const platforms = platformRows ?? [];
   const emails = (emailRows ?? []) as SubmitterEmail[];
 

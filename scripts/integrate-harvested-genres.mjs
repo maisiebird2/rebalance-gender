@@ -99,8 +99,23 @@ function removeAccents(str) {
 // Used for BROAD_TAGS/GENRE_ALIASES lookup and genre cache keys —
 // NOT for the stored canonical name, which preserves intentional
 // hyphens (e.g. "2-step garage", "nu-breaks").
-function normalizeForLookup(str) {
+export function normalizeForLookup(str) {
   return removeAccents(str).replace(/-/g, ' ').toLowerCase().trim()
+}
+
+// Collapse "stylised" spelled-out genre names where every character
+// is separated by spaces or hyphens — e.g. "t e c h n o" → "techno",
+// "e-l-e-c-t-r-o" → "electro". Only fires when the name is 3+ tokens
+// that are ALL single characters, so real multi-word genres
+// ("drum & bass", "2-step garage", "nu-breaks", "a cappella") are
+// never touched. The collapsed form then flows through the normal
+// alias/broad-tag lookup below, so it dedupes against the real genre.
+export function collapseSpacedLetters(str) {
+  const tokens = str.trim().split(/[\s-]+/).filter(Boolean)
+  if (tokens.length >= 3 && tokens.every((t) => t.length === 1)) {
+    return tokens.join('')
+  }
+  return str
 }
 
 // ============================================================
@@ -115,7 +130,7 @@ function normalizeForLookup(str) {
 // used as-is (title-cased by the normaliseTag() function below).
 // Add aliases here whenever you spot duplicates in the staging table.
 // ============================================================
-const GENRE_ALIASES = new Map([
+export const GENRE_ALIASES = new Map([
   // Drum & Bass
   ['drum and bass',               'drum & bass'],
   ['d&b',                         'drum & bass'],
@@ -154,6 +169,7 @@ const GENRE_ALIASES = new Map([
   // Techno variants (keep as distinct genres)
   ['minimal',                     'minimal techno'],
   ['micro techno',                'minimal techno'],
+  ['hard tekno',                  'hard techno'],
 
   // Trance
   ['psy trance',                  'psytrance'],
@@ -185,6 +201,7 @@ const GENRE_ALIASES = new Map([
   // Experimental / Noise
   ['experimental electronic',     'experimental'],
   ['experimental music',          'experimental'],
+  ['experiemental',               'experimental'],
   ['noise music',                 'noise'],
   ['power electronics',           'power electronics'],
 
@@ -201,6 +218,7 @@ const GENRE_ALIASES = new Map([
 
   // Electro
   ['e-l-e-c-t-r-o',              'electro'],
+  ['eletrohouse',                 'electro house'],
 
   // Acid
   ['acidtechno',                  'acid techno'],
@@ -242,6 +260,11 @@ const GENRE_ALIASES = new Map([
 
   // Drill
   ['uk drill',                    'UK drill'],
+
+  // R&B
+  ['rnb',                         'r&b'],
+  ['rhythm & blues',              'r&b'],
+  ['rhythm and blues',            'r&b'],
 
   // Afro
   ['afrohouse',                   'afro house'],
@@ -390,7 +413,7 @@ const BROAD_TAGS_NORM = new Set([...BROAD_TAGS].map(normalizeForLookup))
 //   2. GENRE_ALIASES (exact lowercase, then accent/hyphen-normalised)
 //   3. Unknown — store accent-stripped lowercase as-is
 // ============================================================
-function normaliseTag(rawTag) {
+export function normaliseTag(rawTag) {
   let lower = rawTag.toLowerCase().trim()
 
   // Apply word-level substitutions before alias lookup, so compound
@@ -399,6 +422,10 @@ function normaliseTag(rawTag) {
   for (const [pattern, replacement] of WORD_FIXES) {
     lower = lower.replace(pattern, replacement)
   }
+
+  // Collapse spelled-out spacing ("t e c h n o", "e-l-e-c-t-r-o") so it
+  // resolves to the real genre in the alias/lookup steps below.
+  lower = collapseSpacedLetters(lower)
 
   const norm  = normalizeForLookup(lower)   // accent-stripped, hyphens → spaces
 
@@ -805,7 +832,14 @@ async function main() {
   console.log('\nDone.')
 }
 
-main().catch(err => {
-  console.error('\nFailed:', err?.message ?? err)
-  process.exit(1)
-})
+// Only run the pipeline when this file is executed directly, not when
+// it is imported (e.g. by dedupe-genres-by-alias.mjs to reuse the alias
+// vocabulary via the exported normaliseTag / GENRE_ALIASES).
+const isMainModule = process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+if (isMainModule) {
+  main().catch(err => {
+    console.error('\nFailed:', err?.message ?? err)
+    process.exit(1)
+  })
+}
