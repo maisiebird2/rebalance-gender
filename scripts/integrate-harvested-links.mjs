@@ -4,6 +4,10 @@
 // (populated by harvest-soundcloud-links-and-bio.mjs) into the live
 // artist_links table.
 //
+// Note: this script never edits or removes rows in artist_links, but it
+// DOES delete redundant duplicate rows from the artist_harvested_links
+// staging table (see the de-duplication step below).
+//
 // Rule, per (artist, platform):
 //
 //   - First, an artist can have more than one harvested candidate
@@ -51,16 +55,33 @@
 // request and redirect:"manual" — we only ever read the redirect
 // response's `Location` header, never the destination page's body —
 // so it's fast and stays fast even across many rows. The resolved
-// URL replaces parsed_url and is reclassified by domain (same
-// platform list as harvest-soundcloud-links-and-bio.mjs), both
-// in-memory for this run's decisions and persisted back to
-// artist_harvested_links so future runs don't need to re-resolve it.
-// This is the one place this script makes outbound HTTP calls;
-// everything else is pure DB-to-DB.
+// URL replaces both parsed_url and raw_url — the original bit.ly link
+// is discarded, since only the real target is worth keeping — and is
+// reclassified by domain (same platform list as
+// harvest-soundcloud-links-and-bio.mjs), both in-memory for this run's
+// decisions and persisted back to artist_harvested_links so future
+// runs don't need to re-resolve it. This is the one place this script
+// makes outbound HTTP calls; everything else is pure DB-to-DB.
+//
+// After resolution, harvested rows are de-duplicated on
+// (artist_id, parsed_url): resolution can leave two staging rows for
+// the same artist pointing at the same URL (two shorteners resolving
+// to one target, or a resolved link matching one already present),
+// which the artist_harvested_links (artist_id, parsed_url) unique
+// constraint can't hold. The first-listed row (earliest discovered_at,
+// tie-broken by lowest id) is kept and the rest are deleted from the
+// staging table before any grouping, so they're never processed and
+// can't re-create the collision on write.
+//
+// Batched writes (inserts, updates, and the dedup delete) log failures
+// down to the individual offending row: if a batch fails, it's
+// binary-split until the specific row(s) and error can be named,
+// rather than reporting just a batch count.
 //
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/integrate-harvested-links.mjs                  # process every (artist, platform) pair
+//   node scripts/integrate-harvested-links.mjs --approved       # only artists in the directory (directory_status = 'approved')
 //   node scripts/integrate-harvested-links.mjs --limit=20       # only the first 20 pairs (for testing)
 //   node scripts/integrate-harvested-links.mjs --name="Danz"    # only artists whose name contains this (case-insensitive)
 //   node scripts/integrate-harvested-links.mjs --debug          # log every group's decision
@@ -85,6 +106,10 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // ------------------------------------------------------------
 const args = process.argv.slice(2);
 const DEBUG = args.includes("--debug");
+// --approved: only promote/flag harvested links for artists in the live
+// directory (directory_status = 'approved'). Lets the loop and
+// orchestrator restrict every stage to directory artists with one flag.
+const APPROVED_ONLY = args.includes("--approved");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
@@ -165,6 +190,24 @@ function chunk(array, size) {
     out.push(array.slice(i, i + size));
   }
   return out;
+}
+
+// Runs `doWrite(rows)` (which resolves to a Supabase { error } result).
+// If the batch fails, binary-splits it and recurses until it can name
+// the individual row(s) that error — so a whole-batch failure like a
+// duplicate-key violation gets logged down to the exact offending rows
+// via `describe(row)`, instead of just a count.
+async function writeIsolatingFailures(rows, doWrite, describe) {
+  if (rows.length === 0) return;
+  const { error } = await doWrite(rows);
+  if (!error) return;
+  if (rows.length === 1) {
+    console.error(`  ✗ ${await describe(rows[0])} — ${error.message}`);
+    return;
+  }
+  const mid = Math.ceil(rows.length / 2);
+  await writeIsolatingFailures(rows.slice(0, mid), doWrite, describe);
+  await writeIsolatingFailures(rows.slice(mid), doWrite, describe);
 }
 
 // ------------------------------------------------------------
@@ -312,14 +355,21 @@ function classifyResolved(rawUrl) {
 // ------------------------------------------------------------
 async function main() {
   console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Integrating harvested links into artist_links\n");
+  if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status = 'approved')\n");
 
   const [harvested, existingLinks, platforms] = await Promise.all([
     fetchAll(
       "artist_harvested_links",
-      NAME_FILTER
-        ? "id, artist_id, source_platform, source_url, raw_url, parsed_platform, parsed_url, discovered_at, artist_links_url, artists!inner(name)"
+      // Join artists (inner) whenever we need to filter on one of its
+      // columns — a name substring and/or directory_status = 'approved'.
+      NAME_FILTER || APPROVED_ONLY
+        ? "id, artist_id, source_platform, source_url, raw_url, parsed_platform, parsed_url, discovered_at, artist_links_url, artists!inner(name, directory_status)"
         : "id, artist_id, source_platform, source_url, raw_url, parsed_platform, parsed_url, discovered_at, artist_links_url",
-      (q) => (NAME_FILTER ? q.ilike("artists.name", `%${NAME_FILTER}%`) : q)
+      (q) => {
+        if (APPROVED_ONLY) q = q.eq("artists.directory_status", "approved").eq("artists.deleted", false);
+        if (NAME_FILTER) q = q.ilike("artists.name", `%${NAME_FILTER}%`);
+        return q;
+      }
     ),
     fetchAll("artist_links", "id, artist_id, platform, url"),
     supabase.from("platforms").select("key").then(({ data, error }) => {
@@ -359,7 +409,8 @@ async function main() {
         }
         row.parsed_url = resolved;
         row.parsed_platform = newPlatform;
-        mergeUpdate(row.id, { parsed_url: resolved, parsed_platform: newPlatform });
+        row.raw_url = resolved; // drop the bit.ly clutter — keep only the real target
+        mergeUpdate(row.id, { parsed_url: resolved, parsed_platform: newPlatform, raw_url: resolved });
         resolvedCount++;
       } else {
         resolveFailedCount++;
@@ -368,6 +419,51 @@ async function main() {
       await sleep(150);
     }
     console.log(`Resolved ${resolvedCount}, failed to resolve ${resolveFailedCount}.\n`);
+  }
+
+  // ------------------------------------------------------------
+  // De-duplicate on (artist_id, parsed_url). Resolution can leave two
+  // staging rows for the same artist with the same parsed_url (two
+  // shorteners pointing at one target, or a resolved link matching one
+  // already present). The artist_harvested_links (artist_id,
+  // parsed_url) unique constraint can't hold both, so keep the
+  // first-listed row (earliest discovered_at, tie-broken by lowest id)
+  // and delete the rest. Done before grouping so the deleted rows are
+  // never processed or written — otherwise the update upsert would
+  // re-insert them by id and re-create the collision.
+  // ------------------------------------------------------------
+  const dupBuckets = new Map();
+  for (const row of harvested) {
+    if (!row.parsed_url) continue;
+    const bkey = `${row.artist_id}|${row.parsed_url}`;
+    if (!dupBuckets.has(bkey)) dupBuckets.set(bkey, []);
+    dupBuckets.get(bkey).push(row);
+  }
+
+  const deleteIds = new Set();
+  for (const bucket of dupBuckets.values()) {
+    if (bucket.length < 2) continue;
+    const sorted = [...bucket].sort((a, b) => {
+      const byDate = new Date(a.discovered_at) - new Date(b.discovered_at);
+      return byDate !== 0 ? byDate : a.id - b.id;
+    });
+    for (const row of sorted.slice(1)) deleteIds.add(row.id);
+  }
+
+  if (deleteIds.size > 0) {
+    console.log(
+      `Deleting ${deleteIds.size} redundant duplicate harvested row(s) ` +
+        `(same artist + parsed_url as a kept row)${DRY_RUN ? " — skipped in dry run" : ""}.`
+    );
+    for (const id of deleteIds) rowUpdates.delete(id); // don't update rows we're deleting
+    if (!DRY_RUN) {
+      for (const batch of chunk([...deleteIds], 500)) {
+        const { error } = await supabase.from("artist_harvested_links").delete().in("id", batch);
+        if (error) {
+          console.error(`Failed to delete a batch of ${batch.length} duplicate row(s): ${error.message}`);
+        }
+      }
+    }
   }
 
   // Canonical URL already in artist_links, per (artist_id, platform).
@@ -383,6 +479,7 @@ async function main() {
   // Group harvested rows by (artist_id, parsed_platform).
   const groups = new Map();
   for (const row of harvested) {
+    if (deleteIds.has(row.id)) continue; // removed as a redundant duplicate above
     if (!row.parsed_platform) continue; // undetected platform, nothing to integrate
     const key = `${row.artist_id}|${row.parsed_platform}`;
     if (!groups.has(key)) groups.set(key, []);
@@ -494,12 +591,26 @@ async function main() {
 
   if (toInsert.length > 0) {
     for (const batch of chunk(toInsert, 500)) {
-      const { error } = await supabase
-        .from("artist_links")
-        .upsert(batch, { onConflict: "artist_id,platform,url", ignoreDuplicates: true });
-      if (error) {
-        console.error(`Failed to insert a batch of ${batch.length} new artist_links row(s): ${error.message}`);
-      }
+      await writeIsolatingFailures(
+        batch,
+        (rows) =>
+          supabase
+            .from("artist_links")
+            .upsert(rows, { onConflict: "artist_id,platform,url", ignoreDuplicates: true }),
+        async (r) => {
+          const mapHad = existingMap.get(`${r.artist_id}|${r.platform}`) ?? "(nothing — existingMap missed it)";
+          const { data } = await supabase
+            .from("artist_links")
+            .select("id, url")
+            .eq("artist_id", r.artist_id)
+            .eq("platform", r.platform);
+          const live = (data ?? []).map((x) => `#${x.id} ${x.url}`).join(", ") || "(no live row found?!)";
+          return (
+            `artist_links insert: artist_id=${r.artist_id} platform=${r.platform} url=${r.url}` +
+            ` | live now: ${live} | existingMap had: ${mapHad}`
+          );
+        }
+      );
     }
   }
 
@@ -527,19 +638,18 @@ async function main() {
       artist_id: original.artist_id,
       source_platform: original.source_platform,
       source_url: original.source_url,
-      raw_url: original.raw_url,
+      raw_url: "raw_url" in u ? u.raw_url : original.raw_url,
       parsed_url: "parsed_url" in u ? u.parsed_url : original.parsed_url,
       parsed_platform: "parsed_platform" in u ? u.parsed_platform : original.parsed_platform,
       artist_links_url: "artist_links_url" in u ? u.artist_links_url : (original.artist_links_url ?? null),
     };
   });
   for (const batch of chunk(updates, 500)) {
-    const { error } = await supabase
-      .from("artist_harvested_links")
-      .upsert(batch, { onConflict: "id" });
-    if (error) {
-      console.error(`Failed to update a batch of ${batch.length} artist_harvested_links row(s): ${error.message}`);
-    }
+    await writeIsolatingFailures(
+      batch,
+      (rows) => supabase.from("artist_harvested_links").upsert(rows, { onConflict: "id" }),
+      (r) => `artist_harvested_links update: id=${r.id} artist_id=${r.artist_id} parsed_url=${r.parsed_url}`
+    );
   }
 
   console.log("\nDone.");
