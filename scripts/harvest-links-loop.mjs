@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-// Phase 2d + 2e convergence loop — the orchestrator in miniature.
+// Phase 2c + 2d convergence loop — the orchestrator in miniature.
 //
 // Runs the direct-link harvesters, then integrate-harvested-links,
 // in rounds, until a round produces no new links. Links beget links
@@ -22,8 +22,13 @@
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-links-loop.mjs                  # loop to convergence (max 4 rounds)
+//   node scripts/harvest-links-loop.mjs --approved       # only directory artists (directory_status = 'approved')
 //   node scripts/harvest-links-loop.mjs --max-rounds=2   # cap the number of rounds
 //   DRY_RUN=1 node scripts/harvest-links-loop.mjs        # single round, no writes anywhere
+//
+// --approved is forwarded to every child stage (the harvesters and
+// integrate-harvested-links), so the whole convergence loop runs
+// against directory artists only.
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY,
 // plus whatever each harvester needs — e.g. DISCOGS_TOKEN).
@@ -38,7 +43,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// The 2d stage list. Add "harvest-links-linktree.mjs" and
+// The 2c stage list. Add "harvest-links-linktree.mjs" and
 // "harvest-links-bandcamp.mjs" here when they exist.
 const HARVESTERS = ["harvest-links-discogs.mjs"];
 const INTEGRATE = "integrate-harvested-links.mjs";
@@ -49,6 +54,12 @@ const INTEGRATE = "integrate-harvested-links.mjs";
 const args = process.argv.slice(2);
 const maxRoundsArg = args.find((a) => a.startsWith("--max-rounds="));
 const MAX_ROUNDS = maxRoundsArg ? parseInt(maxRoundsArg.split("=")[1], 10) : 4;
+// --approved: restrict every child stage to directory artists
+// (directory_status = 'approved'). Forwarded verbatim to each stage.
+const APPROVED_ONLY = args.includes("--approved");
+// Args forwarded to every child stage. --approved is the only one for
+// now; add more pass-through flags here if the loop grows them.
+const STAGE_ARGS = APPROVED_ONLY ? ["--approved"] : [];
 
 // ------------------------------------------------------------
 // Load .env.local (for the row counts; child scripts load it again
@@ -97,8 +108,9 @@ async function tableCount(table) {
 }
 
 function runStage(script) {
-  console.log(`\n──── running ${script} ${"─".repeat(Math.max(0, 40 - script.length))}`);
-  const result = spawnSync("node", [path.join(__dirname, script)], {
+  const label = [script, ...STAGE_ARGS].join(" ");
+  console.log(`\n──── running ${label} ${"─".repeat(Math.max(0, 40 - label.length))}`);
+  const result = spawnSync("node", [path.join(__dirname, script), ...STAGE_ARGS], {
     stdio: "inherit",
     env: process.env, // DRY_RUN propagates to children
   });
@@ -116,6 +128,9 @@ async function main() {
       ? "DRY RUN — one round only, children write nothing\n"
       : `Link-harvest convergence loop (max ${MAX_ROUNDS} round(s))\n`
   );
+  if (APPROVED_ONLY) {
+    console.log("--approved: every stage restricted to directory artists (directory_status = 'approved')\n");
+  }
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const stagedBefore = await tableCount("artist_harvested_links");

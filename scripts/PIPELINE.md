@@ -32,6 +32,37 @@ orchestration work.
 
 ---
 
+## Orchestration
+
+Phases 1–2 (plus the Bandcamp discography step, Phase 6) can be run end
+to end with a single command via `orchestrate-platform-enrichment.mjs`:
+
+```bash
+npm run orchestrate-platform-enrichment -- --approved
+```
+
+It runs, in dependency order: `clean-artist-names` (Phase 1) →
+`enrich-soundcloud` (2a) → `harvest-soundcloud-links-and-bio` (2b) →
+`harvest-links-loop` (the 2c+2d convergence loop) → `enrich-bandcamp`
+(Phase 6, run last since it depends on Bandcamp links that 2d may have
+just promoted). Each stage tracks its own processed state in the
+database, so the orchestrator holds no state and is safe to re-run — a
+second run only touches artists with new data.
+
+`--approved` restricts every stage to directory artists
+(`directory_status = 'approved'`, excluding deleted). It is forwarded to
+each child stage, and `harvest-links-loop` forwards it again to its own
+children, so one flag governs the whole loop. `clean-artist-names` is a
+global name cleanup, so it is the one stage `--approved` is not passed
+to. `DRY_RUN=1` (no writes anywhere) and an optional `--max-rounds=N`
+(caps the convergence loop) are also honored.
+
+This is the first concrete piece of the "eventual `orchestrate.mjs`"
+referenced throughout this doc; later phases can be folded in as
+additional stages.
+
+---
+
 ## Phase 0 — Initial load *(run once)*
 
 ### `migrate.mjs`
@@ -84,9 +115,8 @@ matching, genres) and shrinks the set of artists that need
 best-match guessing at all.
 
 2a and 2b pull from SoundCloud (and are slated to be merged into a
-single stage — see "Planned changes"); 2c imports Beatport links;
-2d is the planned set of direct-link harvesters; 2e–2f promote and
-clean.
+single stage — see "Planned changes"); 2c is the direct-link
+harvesters; 2d–2e promote and clean.
 
 ### 2a. `enrich-soundcloud.mjs`
 Uses the official SoundCloud API to fetch each artist's profile
@@ -103,8 +133,11 @@ unmarked so the next run retries them.
 
 ```bash
 npm run enrich-soundcloud
-npm run enrich-soundcloud -- --force   # re-process even artists with existing state
+npm run enrich-soundcloud -- --approved   # directory artists only
+npm run enrich-soundcloud -- --force      # re-process even artists with existing state
 ```
+
+`--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted) rather than every artist with a SoundCloud link (mostly unvetted `sc_followee` follow-graph nodes).
 
 Requires `SOUNDCLOUD_CLIENT_ID` and `SOUNDCLOUD_CLIENT_SECRET` in `.env.local`.
 
@@ -125,26 +158,19 @@ definitive dead link (404) from the resolve call.
 
 ```bash
 node scripts/harvest-soundcloud-links-and-bio.mjs
-node scripts/harvest-soundcloud-links-and-bio.mjs --force   # re-process even artists with existing state
+node scripts/harvest-soundcloud-links-and-bio.mjs --approved   # directory artists only
+node scripts/harvest-soundcloud-links-and-bio.mjs --force      # re-process even artists with existing state
 ```
 
-### 2c. `add-beatport-links.mjs`
-One-time import (moved here from the former "Additional platforms"
-phase): reads `beatport-links.json` (generated from the original
-spreadsheet) and upserts Beatport profile links into `artist_links`,
-matching artists by normalized exact name.
+`--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted).
 
-```bash
-npm run add-beatport-links
-```
-
-### 2d. Direct-link harvesters
+### 2c. Direct-link harvesters
 
 #### `harvest-links-discogs.mjs`
 For each artist with a Discogs link, calls the official Discogs API
 (`GET /artists/{id}`) and stages every usable URL from the response's
 `urls` array into `artist_harvested_links` (source_platform =
-`discogs`). Never writes to `artist_links` directly — 2e promotes.
+`discogs`). Never writes to `artist_links` directly — 2d promotes.
 Processed state is tracked in `resolved_artists` (service =
 `discogs-links`), so re-runs only touch artists whose Discogs link
 arrived since the last run. Throttled to ~55 req/min (Discogs allows
@@ -152,10 +178,13 @@ arrived since the last run. Throttled to ~55 req/min (Discogs allows
 
 ```bash
 npm run harvest-links-discogs
+npm run harvest-links-discogs -- --approved    # directory artists only
 npm run harvest-links-discogs -- --limit=20    # test run
 npm run harvest-links-discogs -- --force       # re-process all
 DRY_RUN=1 npm run harvest-links-discogs        # no writes
 ```
+
+`--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted).
 
 Requires `DISCOGS_TOKEN` in `.env.local` (discogs.com → Settings →
 Developers → "Generate new token").
@@ -163,8 +192,8 @@ Developers → "Generate new token").
 Still planned: `harvest-links-linktree.mjs` and
 `harvest-links-bandcamp.mjs` — see "Planned changes".
 
-#### `harvest-links-loop.mjs` — the 2d+2e convergence loop
-Runs all 2d harvesters then 2e in rounds until a round produces no
+#### `harvest-links-loop.mjs` — the 2c+2d convergence loop
+Runs all 2c harvesters then 2d in rounds until a round produces no
 new staged or live links (links beget links: a Discogs page may
 reveal a Linktree, a Linktree a Bandcamp). Convergence is detected
 by row counts of `artist_harvested_links` and `artist_links` before
@@ -174,11 +203,14 @@ skeleton for the eventual `orchestrate.mjs`.
 
 ```bash
 npm run harvest-links-loop
+npm run harvest-links-loop -- --approved       # directory artists only
 npm run harvest-links-loop -- --max-rounds=2
 DRY_RUN=1 npm run harvest-links-loop           # single round, no writes
 ```
 
-### 2e. `integrate-harvested-links.mjs`
+`--approved` restricts the loop to directory artists (`directory_status = 'approved'`, excluding deleted); it is forwarded to every child stage (the 2c harvesters and 2d).
+
+### 2d. `integrate-harvested-links.mjs`
 Promotes rows from the `artist_harvested_links` staging table into
 the live `artist_links` table. One surviving link per
 (artist, platform) pair is inserted if no link exists yet; if one
@@ -194,9 +226,12 @@ valid.
 
 ```bash
 node scripts/integrate-harvested-links.mjs
+node scripts/integrate-harvested-links.mjs --approved   # directory artists only
 ```
 
-### 2f. `fix-http-https-mismatches.mjs`
+`--approved` restricts promotion/flagging to directory artists (`directory_status = 'approved'`, excluding deleted).
+
+### 2e. `fix-http-https-mismatches.mjs`
 One-off cleanup (safe to re-run): rewrites `http://` links to
 `https://` in `artist_harvested_links` and `artist_links`, and
 clears any false mismatch flags caused by scheme differences alone.
@@ -337,8 +372,13 @@ Bandcamp link, scraping the music grid on each artist's page.
 Writes to `artist_bandcamp_albums` (the numeric IDs feed Bandcamp's
 embedded player). Benefits from Phases 2 and 3 running first: more
 Bandcamp links found → more discographies fetched. (The same page
-fetch could also capture sidebar links for 2d — see "Planned
+fetch could also capture sidebar links for 2c — see "Planned
 changes".)
+
+Always directory-only: it processes only artists with
+`directory_status = 'approved'` (excluding deleted), so there is no
+`--approved` flag — the orchestrator forwards one anyway, a harmless
+no-op here.
 
 ```bash
 npm run enrich-bandcamp
@@ -689,7 +729,7 @@ pipeline script or submit form touches it.
 
 - **`artist_harvested_bios`** — Phase 2b stages raw SoundCloud bios
   here, mirroring how 2b stages links in `artist_harvested_links`,
-  but a bio analogue of the 2e "integrate" step was never built —
+  but a bio analogue of the 2d "integrate" step was never built —
   bios reach `artist_enrichment` via Phase 2a instead. Wire it up
   or drop it.
 - **`resolved_artists`** — orphaned resolver state table; see the
@@ -703,7 +743,6 @@ pipeline script or submit form touches it.
 npm run clean-artist-names
 npm run enrich-soundcloud
 node scripts/harvest-soundcloud-links-and-bio.mjs
-npm run add-beatport-links
 node scripts/integrate-harvested-links.mjs
 node scripts/fix-http-https-mismatches.mjs
 npm run resolve-and-load-links
@@ -780,15 +819,15 @@ keep the existing Storage upload path. Once every image is served
 from our own Storage domain, the per-source allowlist in
 `next.config` can be reduced to just that domain.
 
-### Build out Phase 2d: the direct-link harvesters
+### Build out Phase 2c: the direct-link harvesters
 
 The pipeline doc now places all direct link gathering in Phase 2
 (before best-match inference in Phase 3); these are the scripts
 that implement it:
 
 ```
-Phase 2d:
-  harvest-links-discogs.mjs     ✅ BUILT (2026-07-03) — see Phase 2d
+Phase 2c:
+  harvest-links-discogs.mjs     ✅ BUILT (2026-07-03) — see Phase 2c
   harvest-links-linktree.mjs    see below
   harvest-links-bandcamp.mjs    Bandcamp artist pages carry a sidebar
                                 of external links on the same page
@@ -801,7 +840,7 @@ After Phase 3 (needs resolved MusicBrainz IDs):
                                 enrich-musicbrainz.mjs (7b) to write to
                                 artist_harvested_links staging instead
                                 of directly to artist_links, then
-                                promote via 2e
+                                promote via 2d
   harvest-links-wikidata.mjs    possible — MB url-rels often include a
                                 Wikidata item, whose structured claims
                                 (official site, Instagram, Discogs /
@@ -811,12 +850,12 @@ After Phase 3 (needs resolved MusicBrainz IDs):
 ```
 
 All new harvesters write to the `artist_harvested_links` staging
-table — never directly to `artist_links` — so 2e's promotion and
-conflict-flagging applies uniformly. Run 2d + 2e in a loop until no
+table — never directly to `artist_links` — so 2d's promotion and
+conflict-flagging applies uniformly. Run 2c + 2d in a loop until no
 new links appear (links beget links).
 
-**The 2d + 2e convergence loop is BUILT (2026-07-03):
-`harvest-links-loop.mjs`** — see Phase 2d. It is the orchestrator
+**The 2c + 2d convergence loop is BUILT (2026-07-03):
+`harvest-links-loop.mjs`** — see Phase 2c. It is the orchestrator
 in miniature: stage scripts run as child processes, per-artist
 processed state in the database (`resolved_artists` is now adopted —
 service `discogs-links`), convergence detected by before/after row
@@ -844,7 +883,7 @@ Qobuz / Tidal / Apple Music pages (no meaningful outbound links).
 
 ### New harvester: `harvest-links-discogs.mjs` ✅ BUILT (2026-07-03)
 
-The link harvesting described below is implemented (see Phase 2d).
+The link harvesting described below is implemented (see Phase 2c).
 Not yet implemented from this entry: using `namevariations` /
 `aliases` to populate `artist_aliases`, `profile` text as a bio
 fallback, and `members`/`groups` as a collaboration signal — those
@@ -865,7 +904,7 @@ free REST API. `GET https://api.discogs.com/artists/{id}` returns:
 Plan: extract the artist ID from stored `discogs.com/artist/{id}`
 URLs in `artist_links`, fetch each artist, and write links to the
 `artist_harvested_links` staging table so `integrate-harvested-links.mjs`
-(2e) handles promotion and conflict-flagging exactly as it does for
+(2d) handles promotion and conflict-flagging exactly as it does for
 SoundCloud finds. Rate limit is 60 req/min with a free personal
 token — the full directory in ~25 minutes. Before building, run
 `node scripts/qc-links.mjs --platform=discogs` to gauge how many
@@ -911,8 +950,13 @@ follower counts already come from SoundCloud and Spotify.
   matching every other service_role-only table (e.g.
   `artist_enrichment`).
 
-  Still open: the Phase 3 resolver (`resolve-and-load-links-lf-mb-sp.mjs`,
-  currently inferring state from `pending_artist_links`) and the
-  genre harvesters' `.cache/` directories, below.
-- Replace the `.cache/` disk caches used by the Phase 3 resolver and
-  genre harvesters with DB-tracked state at the same time.
+  **The Phase 3 resolver (`resolve-and-load-links-lf-mb-sp.mjs`) is now
+  done (2026-07-05)** — its processed state was already derived from
+  `pending_artist_links` (via `alreadyResolved()`), and its `.cache/`
+  disk-JSON response cache was moved into the `api_response_cache` table
+  (`supabase_migration_api_response_cache.sql`; see MATCHING.md → "Response
+  cache (DB-backed)").
+
+  Still open: the genre harvesters' `.cache/` directories.
+- Replace the `.cache/` disk caches used by the genre harvesters with
+  DB-tracked state.

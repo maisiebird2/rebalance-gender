@@ -31,6 +31,7 @@
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-links-discogs.mjs                 # all unprocessed artists with a discogs link
+//   node scripts/harvest-links-discogs.mjs --approved      # only artists in the directory (directory_status = 'approved')
 //   node scripts/harvest-links-discogs.mjs --limit=20      # only the first 20 (for testing)
 //   node scripts/harvest-links-discogs.mjs --name="Danz"   # artists whose name contains this
 //   node scripts/harvest-links-discogs.mjs --force         # re-process even artists with a state row
@@ -59,6 +60,10 @@ const STATE_SERVICE = "discogs-links"; // resolved_artists.service value
 const args = process.argv.slice(2);
 const DEBUG = args.includes("--debug");
 const FORCE = args.includes("--force");
+// --approved: only process artists in the live directory
+// (directory_status = 'approved'). Lets the convergence loop and the
+// orchestrator restrict every stage to directory artists with one flag.
+const APPROVED_ONLY = args.includes("--approved");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
@@ -331,6 +336,7 @@ async function main() {
     "id, artist_id, url, artists!inner(id, name)",
     (q) => {
       q = q.eq("platform", "discogs");
+      if (APPROVED_ONLY) q = q.eq("artists.directory_status", "approved").eq("artists.deleted", false);
       if (NAME_FILTER) q = q.ilike("artists.name", `%${NAME_FILTER}%`);
       return q;
     }
@@ -366,7 +372,10 @@ async function main() {
   const skippedProcessed = byArtist.size - targets.length;
   if (LIMIT) targets = targets.slice(0, LIMIT);
 
-  console.log(`${byArtist.size} artist(s) have a Discogs link.`);
+  if (APPROVED_ONLY) {
+    console.log("--approved: restricting to directory artists (directory_status = 'approved').");
+  }
+  console.log(`${byArtist.size} ${APPROVED_ONLY ? "approved " : ""}artist(s) have a Discogs link.`);
   if (skippedProcessed > 0 && !FORCE) {
     console.log(`${skippedProcessed} already processed (state in resolved_artists; use --force to redo).`);
   }

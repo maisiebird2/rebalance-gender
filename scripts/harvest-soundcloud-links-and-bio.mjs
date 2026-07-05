@@ -498,7 +498,7 @@ async function fetchAllSoundCloudLinks() {
       .range(from, from + SUPABASE_PAGE_SIZE - 1);
 
     if (APPROVED_ONLY) {
-      query = query.eq("artists.directory_status", "approved");
+      query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
     }
 
     if (NAME_FILTER) {

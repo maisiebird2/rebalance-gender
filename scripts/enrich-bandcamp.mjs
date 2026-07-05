@@ -198,6 +198,7 @@ async function main() {
          bandcamp_albums:artist_bandcamp_albums(bandcamp_id)`
       )
       .eq("directory_status", "approved")
+      .eq("deleted", false)
       .order("id")
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;

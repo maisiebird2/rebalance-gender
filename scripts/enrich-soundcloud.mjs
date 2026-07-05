@@ -34,6 +34,7 @@
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/enrich-soundcloud.mjs                    # all artists with a SoundCloud link
+//   node scripts/enrich-soundcloud.mjs --approved         # only artists in the directory (directory_status = 'approved')
 //   node scripts/enrich-soundcloud.mjs --limit=20         # next 20 unprocessed (for testing)
 //   node scripts/enrich-soundcloud.mjs --force            # re-process even artists with existing state
 //   node scripts/enrich-soundcloud.mjs --name=jeanne      # filter source artists by name
@@ -69,6 +70,12 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const DEBUG = args.includes("--debug");
+// --approved: only process artists in the live directory
+// (directory_status = 'approved'), rather than every artist with a
+// SoundCloud link (which is dominated by unvetted follow-graph nodes).
+// Equivalent to --status=approved; kept as its own flag so the loop and
+// orchestrator can pass one consistent --approved flag to every stage.
+const APPROVED_ONLY = args.includes("--approved");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
@@ -280,6 +287,9 @@ async function fetchAllSoundCloudLinks() {
       .order("id", { ascending: true })
       .range(from, from + SUPABASE_PAGE_SIZE - 1);
 
+    if (APPROVED_ONLY) {
+      query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
+    }
     if (NAME_FILTER) query = query.ilike("artists.name", `%${NAME_FILTER}%`);
     if (STATUS_FILTER) query = query.eq("artists.directory_status", STATUS_FILTER);
 
@@ -301,6 +311,7 @@ async function main() {
   console.log(
     DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running SoundCloud enrichment\n"
   );
+  if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status = 'approved')\n");
   if (STATUS_FILTER) console.log(`Filtering by directory_status: ${STATUS_FILTER}\n`);
 
   await getAccessToken();
