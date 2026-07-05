@@ -14,6 +14,10 @@
  *   LASTFM_API_KEY
  *   SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
  *
+ * Requires the api_response_cache table (external API responses are memoized
+ * in the DB, not on disk). Run supabase_migration_api_response_cache.sql once
+ * before first use.
+ *
  * Usage:
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --artist "Bicep"   # one artist
@@ -26,7 +30,6 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { createHash } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { isBlankArtistName } from './lib/name-utils.mjs'
 // ── Environment ───────────────────────────────────────────────────────────────
@@ -83,22 +86,35 @@ const fmt = (level, msg) =>
 const log  = (msg, ...a) => console.log(fmt('INFO',    msg), ...a)
 const warn = (msg, ...a) => console.warn(fmt('WARNING', msg), ...a)
 const err  = (msg, ...a) => console.error(fmt('ERROR',  msg), ...a)
-// ── Disk cache ────────────────────────────────────────────────────────────────
-const CACHE_DIR = path.resolve(__dirname, '..', '.cache')
-function cacheGet(ns, key) {
-  try {
-    return JSON.parse(fs.readFileSync(
-      path.join(CACHE_DIR, ns, createHash('md5').update(key).digest('hex') + '.json'), 'utf8'
-    ))
-  } catch { return null }
+// ── Response cache (Supabase-backed) ────────────────────────────────────────────
+// External API responses are memoized in the api_response_cache table rather
+// than on disk, so the pipeline keeps all state in the database (see
+// supabase_migration_api_response_cache.sql). This is a fetch cache only —
+// "what has been processed" is still derived from pending_artist_links via
+// alreadyResolved(). Rows older than CACHE_TTL_DAYS count as misses and are
+// refetched. cacheGet returns the stored payload, or null on miss / stale / error.
+const CACHE_TTL_DAYS = 30
+async function cacheGet(ns, key) {
+  const cutoff = new Date(Date.now() - CACHE_TTL_DAYS * 86_400_000).toISOString()
+  const { data, error } = await supabase
+    .from('api_response_cache')
+    .select('payload')
+    .eq('namespace', ns)
+    .eq('cache_key', key)
+    .gte('fetched_at', cutoff)
+    .maybeSingle()
+  if (error) { warn(`Cache read failed (${ns}): ${error.message}`); return null }
+  return data ? data.payload : null
 }
-function cacheSet(ns, key, value) {
-  const dir = path.join(CACHE_DIR, ns)
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(
-    path.join(dir, createHash('md5').update(key).digest('hex') + '.json'),
-    JSON.stringify(value)
-  )
+async function cacheSet(ns, key, value) {
+  if (OPT_DRY_RUN) return   // --dry-run performs no DB writes
+  const { error } = await supabase
+    .from('api_response_cache')
+    .upsert(
+      { namespace: ns, cache_key: key, payload: value, fetched_at: new Date().toISOString() },
+      { onConflict: 'namespace,cache_key' },
+    )
+  if (error) warn(`Cache write failed (${ns}): ${error.message}`)
 }
 // ── Rate limiters ─────────────────────────────────────────────────────────────
 function makeThrottle(ms) {
@@ -270,19 +286,19 @@ async function lfmRequest(params) {
 }
 async function lfmTopTags(artistName) {
   const ck = `tags:${artistName}`
-  const hit = cacheGet('lastfm_tags', ck)
+  const hit = await cacheGet('lastfm_tags', ck)
   if (hit !== null) return hit
   try {
     const data = await lfmRequest({ method: 'artist.getTopTags', artist: artistName, autocorrect: '1' })
-    if (data.error) { cacheSet('lastfm_tags', ck, []); return [] }
+    if (data.error) { await cacheSet('lastfm_tags', ck, []); return [] }
     const tags = (data?.toptags?.tag ?? []).slice(0, 10).map(t => t.name.toLowerCase())
-    cacheSet('lastfm_tags', ck, tags)
+    await cacheSet('lastfm_tags', ck, tags)
     return tags
   } catch { return [] }
 }
 async function searchLastfm(artistName, limit) {
   const ck = `search:${artistName}:${limit}`
-  const hit = cacheGet('lastfm_search', ck)
+  const hit = await cacheGet('lastfm_search', ck)
   if (hit !== null) return hit
   const data = await lfmRequest({ method: 'artist.search', artist: artistName, limit: String(limit) })
   let raw = data?.results?.artistmatches?.artist ?? []
@@ -301,13 +317,13 @@ async function searchLastfm(artistName, limit) {
       api_data:      { name, listeners, mbid: a.mbid ?? null, url: a.url ?? null, tags },
     })
   }
-  cacheSet('lastfm_search', ck, candidates)
+  await cacheSet('lastfm_search', ck, candidates)
   return candidates
 }
 // ── API: MusicBrainz ──────────────────────────────────────────────────────────
 async function searchMusicBrainz(artistName, limit) {
   const ck = `search:${artistName}:${limit}`
-  const hit = cacheGet('mb_search', ck)
+  const hit = await cacheGet('mb_search', ck)
   if (hit !== null) return hit
   await throttleMb()
   const qs  = new URLSearchParams({ query: `artist:"${artistName}"`, limit: String(limit), fmt: 'json' })
@@ -338,7 +354,7 @@ async function searchMusicBrainz(artistName, limit) {
       },
     }
   })
-  cacheSet('mb_search', ck, candidates)
+  await cacheSet('mb_search', ck, candidates)
   return candidates
 }
 // ── API: Spotify ──────────────────────────────────────────────────────────────
@@ -363,7 +379,7 @@ async function spotifyToken() {
 }
 async function searchSpotify(artistName, limit) {
   const ck  = `search:${artistName}:${limit}`
-  const hit = cacheGet('spotify_search', ck)
+  const hit = await cacheGet('spotify_search', ck)
   if (hit !== null) return hit
   await throttleSpotify()
   const token = await spotifyToken()
@@ -390,7 +406,7 @@ async function searchSpotify(artistName, limit) {
       url:        a.external_urls?.spotify ?? null,
     },
   }))
-  cacheSet('spotify_search', ck, candidates)
+  await cacheSet('spotify_search', ck, candidates)
   return candidates
 }
 // ── Per-service resolution ─────────────────────────────────────────────────────
