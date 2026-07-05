@@ -35,17 +35,22 @@
 //
 //   node scripts/enrich-soundcloud.mjs                    # all artists with a SoundCloud link
 //   node scripts/enrich-soundcloud.mjs --limit=20         # next 20 unprocessed (for testing)
-//   node scripts/enrich-soundcloud.mjs --force            # re-fetch even cached artists
+//   node scripts/enrich-soundcloud.mjs --force            # re-process even artists with existing state
 //   node scripts/enrich-soundcloud.mjs --name=jeanne      # filter source artists by name
 //   node scripts/enrich-soundcloud.mjs --status=sc_followee
 //                                                          # only artists with this directory_status
 //   node scripts/enrich-soundcloud.mjs --debug            # log raw API responses
 //   DRY_RUN=1 node scripts/enrich-soundcloud.mjs          # fetch + log, no DB writes
 //
-// Results are cached in enrich-soundcloud-cache.json alongside this
-// script so re-runs skip already-processed artists (pass --force to
-// bypass). --limit counts from the remaining unprocessed artists, not
-// from the full list, so repeated --limit runs make forward progress.
+// Processed state is tracked in the DATABASE (resolved_artists, with
+// service = 'soundcloud-enrich'), not in a cache file — per project
+// convention. An artist is skipped once a state row exists for it;
+// --force bypasses this and re-processes everyone. --limit counts
+// from the remaining unprocessed artists, not from the full list, so
+// repeated --limit runs make forward progress. A resolve failure only
+// marks an artist processed when SoundCloud returns 404 (dead link);
+// other failures (timeouts, rate limits, DB write errors) are left
+// unmarked so the next run retries them automatically.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -71,30 +76,7 @@ const NAME_FILTER = nameArg ? nameArg.slice("--name=".length) : null;
 const statusArg = args.find((a) => a.startsWith("--status="));
 const STATUS_FILTER = statusArg ? statusArg.slice("--status=".length) : null;
 
-// ------------------------------------------------------------
-// Cache — persisted to disk between runs.
-// Structure: { [soundcloudUrl]: { checkedAt: ISO string, ok: boolean } }
-// ------------------------------------------------------------
-const CACHE_PATH = path.join(__dirname, "enrich-soundcloud-cache.json");
-
-function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_PATH)) {
-      return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
-    }
-  } catch (err) {
-    console.warn(`Warning: could not read cache file (${err.message}); starting fresh.`);
-  }
-  return {};
-}
-
-function saveCache(cache) {
-  try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
-  } catch (err) {
-    console.warn(`Warning: could not write cache file (${err.message}).`);
-  }
-}
+const STATE_SERVICE = "soundcloud-enrich"; // resolved_artists.service value
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -151,6 +133,34 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------
+// Processed-state tracking via resolved_artists (DB), not a cache
+// file. Same pattern as harvest-links-discogs.mjs: an artist is
+// skipped once a row exists for (artist_id, service); --force
+// bypasses the skip. markProcessed is only called after a successful
+// upsert, or after a resolve failure that's a definitive dead link
+// (404) — other failures are left unmarked so the next run retries
+// them automatically.
+// ------------------------------------------------------------
+async function loadProcessedArtistIds() {
+  const { data, error } = await supabase
+    .from("resolved_artists")
+    .select("artist_id")
+    .eq("service", STATE_SERVICE);
+  if (error) throw error;
+  return new Set((data ?? []).map((r) => r.artist_id));
+}
+
+async function markProcessed(artistId) {
+  const { error } = await supabase
+    .from("resolved_artists")
+    .upsert(
+      { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
+      { onConflict: "artist_id,service" }
+    );
+  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+}
 
 // ------------------------------------------------------------
 // SoundCloud OAuth (Client Credentials — app-only, public resources).
@@ -283,27 +293,24 @@ async function main() {
   await getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
-  const cache = FORCE ? {} : loadCache();
+  const processed = FORCE ? new Set() : await loadProcessedArtistIds();
   if (FORCE) {
-    console.log("--force: bypassing cache\n");
-  } else {
-    const cachedCount = Object.keys(cache).length;
-    if (cachedCount > 0) {
-      console.log(
-        `Cache loaded: ${cachedCount} URL(s) already processed (pass --force to bypass)\n`
-      );
-    }
+    console.log("--force: bypassing resolved_artists state\n");
+  } else if (processed.size > 0) {
+    console.log(
+      `State loaded: ${processed.size} artist(s) already processed (resolved_artists; pass --force to bypass)\n`
+    );
   }
 
   const links = await fetchAllSoundCloudLinks();
 
   let rows = links;
-  let skippedCached = 0;
+  let skippedProcessed = 0;
   if (!FORCE) {
     const remaining = [];
     for (const row of links) {
-      if (cache[row.url] !== undefined) {
-        skippedCached++;
+      if (processed.has(row.artist_id)) {
+        skippedProcessed++;
       } else {
         remaining.push(row);
       }
@@ -314,11 +321,11 @@ async function main() {
 
   console.log(
     `Found ${links.length} SoundCloud link(s)` +
-      (skippedCached > 0 ? `, ${skippedCached} already cached (skipped)` : "") +
+      (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
 
-  let processed = 0;
+  let processedCount = 0;
   let failed = 0;
   let upserted = 0;
 
@@ -326,15 +333,17 @@ async function main() {
     const name = row.artists?.name ?? row.artist_id;
     const scUrl = row.url;
 
-    processed++;
+    processedCount++;
 
     const res = await soundcloudGet(`/resolve?url=${encodeURIComponent(scUrl)}`);
 
     if (!res.ok || !res.data) {
       failed++;
       console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
-      cache[scUrl] = { checkedAt: new Date().toISOString(), ok: false };
-      if (!DRY_RUN) saveCache(cache);
+      // Only a 404 is a definitive dead link — mark it processed so it
+      // doesn't retry forever. Timeouts, rate limits, and other HTTP
+      // errors are transient, so leave them unmarked for the next run.
+      if (!DRY_RUN && res.status === 404) await markProcessed(row.artist_id);
       await sleep(300);
       continue;
     }
@@ -422,8 +431,7 @@ async function main() {
       if (error) {
         failed++;
         console.log(`✗ ${name}: upsert failed — ${error.message}`);
-        cache[scUrl] = { checkedAt: new Date().toISOString(), ok: false, error: error.message };
-        saveCache(cache);
+        // No state row written — retry next run.
         await sleep(300);
         continue;
       }
@@ -454,17 +462,16 @@ async function main() {
     const playlistsNote = playlists ? `, ${playlists.length} playlist(s) as fallback` : "";
     console.log(`✓ ${name}: ${followers} followers, ${user.track_count ?? "?"} tracks${playlistsNote}`);
 
-    cache[scUrl] = { checkedAt: new Date().toISOString(), ok: true };
-    if (!DRY_RUN) saveCache(cache);
+    if (!DRY_RUN) await markProcessed(row.artist_id);
 
     await sleep(300);
   }
 
   console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  processed:        ${processed}`);
-  console.log(`  skipped (cached): ${skippedCached}`);
-  console.log(`  failed:           ${failed}`);
-  console.log(`  ${DRY_RUN ? "would upsert" : "upserted"}:        ${upserted}`);
+  console.log(`  processed:           ${processedCount}`);
+  console.log(`  skipped (processed): ${skippedProcessed}`);
+  console.log(`  failed:              ${failed}`);
+  console.log(`  ${DRY_RUN ? "would upsert" : "upserted"}:           ${upserted}`);
 }
 
 main().catch((err) => {

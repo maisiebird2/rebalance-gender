@@ -1,0 +1,28 @@
+-- Fixes missing table-level privileges on resolved_artists.
+--
+-- resolved_artists was created directly in the Supabase dashboard
+-- (see scripts/PIPELINE.md), which apparently didn't apply the usual
+-- default privileges: `service_role` currently only has
+-- REFERENCES/TRIGGER/TRUNCATE/MAINTAIN on this table -- no SELECT,
+-- INSERT, UPDATE, or DELETE. That's a plain GRANT-level gap, separate
+-- from row level security (RLS bypass doesn't help if the base table
+-- grant isn't there in the first place), and it's why every script
+-- that reads or writes resolved_artists fails with "permission denied
+-- for table resolved_artists":
+--   - harvest-links-discogs.mjs / harvest-links-loop.mjs (service = discogs-links)
+--   - enrich-soundcloud.mjs (service = soundcloud-enrich)
+--   - harvest-soundcloud-links-and-bio.mjs (service = soundcloud-harvest)
+--   - backfill-resolved-soundcloud-enrich.mjs
+--
+-- This brings it in line with every other service_role-only table in
+-- the schema (e.g. artist_enrichment gets `GRANT ALL ... TO
+-- service_role`). anon/authenticated are left as-is: they keep their
+-- existing REFERENCES/TRIGGER/TRUNCATE/MAINTAIN-only grant, and RLS
+-- is already enabled with no policies defined, so they still can't
+-- read or write any rows -- this table is server-side/internal
+-- state only, and that's intentional.
+--
+-- Run in the Supabase SQL editor. Safe to re-run (GRANT is
+-- idempotent).
+
+GRANT ALL ON TABLE "public"."resolved_artists" TO "service_role";

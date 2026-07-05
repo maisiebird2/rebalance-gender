@@ -58,7 +58,7 @@
 //
 //   node scripts/harvest-soundcloud-links-and-bio.mjs                  # all artists with a SoundCloud link
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --limit=20       # only the first 20 (for testing)
-//   node scripts/harvest-soundcloud-links-and-bio.mjs --force          # re-fetch even pages already harvested (bypasses fetch cache)
+//   node scripts/harvest-soundcloud-links-and-bio.mjs --force          # re-process even artists with existing state
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --debug          # log raw web-profiles + every candidate link found per artist
 //   DRY_RUN=1 node scripts/harvest-soundcloud-links-and-bio.mjs        # fetch + log, don't write to the DB
 //
@@ -69,10 +69,15 @@
 // 30/hr per IP) — this script fetches one token and reuses it for
 // the whole run, refreshing only on a 401.
 //
-// Fetch results are cached in harvest-soundcloud-links-and-bio-cache.json
-// alongside this script (which SoundCloud URLs have already been
-// processed + how many links were found) so re-running without
-// --force skips work that's already done.
+// Processed state is tracked in the DATABASE (resolved_artists, with
+// service = 'soundcloud-harvest'), not in a cache file — per project
+// convention. An artist is skipped once a state row exists for it;
+// --force bypasses this and re-processes everyone. An artist is only
+// marked processed after its staged rows (links + bio) are written
+// successfully, or after a resolve failure that's a definitive dead
+// link (404) — other failures (timeouts, rate limits, DB write
+// errors) are left unmarked so the next run retries them
+// automatically.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -94,33 +99,7 @@ const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
 const NAME_FILTER = nameArg ? nameArg.slice("--name=".length) : null;
 
-// ------------------------------------------------------------
-// Fetch-level cache — persisted to disk between runs.
-// Structure: { [soundcloudUrl]: { checkedAt: ISO string, linkCount: number, hasBio: boolean } }
-// A URL present in the cache is not re-processed unless --force is
-// passed. (The actual harvested data lives in the DB, not the cache
-// — this cache only remembers "have I already handled this artist".)
-// ------------------------------------------------------------
-const CACHE_PATH = path.join(__dirname, "harvest-soundcloud-links-and-bio-cache.json");
-
-function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_PATH)) {
-      return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
-    }
-  } catch (err) {
-    console.warn(`Warning: could not read cache file (${err.message}); starting fresh.`);
-  }
-  return {};
-}
-
-function saveCache(cache) {
-  try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
-  } catch (err) {
-    console.warn(`Warning: could not write cache file (${err.message}).`);
-  }
-}
+const STATE_SERVICE = "soundcloud-harvest"; // resolved_artists.service value
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -177,6 +156,34 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------
+// Processed-state tracking via resolved_artists (DB), not a cache
+// file. Same pattern as harvest-links-discogs.mjs: an artist is
+// skipped once a row exists for (artist_id, service); --force
+// bypasses the skip. markProcessed is only called after the staged
+// rows for an artist are written successfully, or after a resolve
+// failure that's a definitive dead link (404) — other failures are
+// left unmarked so the next run retries them automatically.
+// ------------------------------------------------------------
+async function loadProcessedArtistIds() {
+  const { data, error } = await supabase
+    .from("resolved_artists")
+    .select("artist_id")
+    .eq("service", STATE_SERVICE);
+  if (error) throw error;
+  return new Set((data ?? []).map((r) => r.artist_id));
+}
+
+async function markProcessed(artistId) {
+  const { error } = await supabase
+    .from("resolved_artists")
+    .upsert(
+      { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
+      { onConflict: "artist_id,service" }
+    );
+  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+}
 
 // ------------------------------------------------------------
 // SoundCloud OAuth (Client Credentials flow — app-only, public
@@ -388,7 +395,7 @@ async function harvestFromSoundCloud(scUrl) {
   const userRes = await resolveUser(scUrl);
   if (!userRes.ok || !userRes.data) {
     if (DEBUG) console.log(`  [debug] resolve failed (status ${userRes.status})`);
-    return { ok: false, candidates: [], rawBio: null };
+    return { ok: false, status: userRes.status, candidates: [], rawBio: null };
   }
 
   const user = userRes.data;
@@ -498,14 +505,11 @@ async function main() {
   await getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
-  const cache = FORCE ? {} : loadCache();
+  const processed = FORCE ? new Set() : await loadProcessedArtistIds();
   if (FORCE) {
-    console.log("--force: bypassing fetch cache\n");
-  } else {
-    const cachedCount = Object.keys(cache).length;
-    if (cachedCount > 0) {
-      console.log(`Fetch cache loaded: ${cachedCount} SoundCloud URL(s) already processed (pass --force to bypass)\n`);
-    }
+    console.log("--force: bypassing resolved_artists state\n");
+  } else if (processed.size > 0) {
+    console.log(`State loaded: ${processed.size} artist(s) already processed (resolved_artists; pass --force to bypass)\n`);
   }
 
   // Pull every SoundCloud link directly off artist_links (an artist
@@ -513,18 +517,18 @@ async function main() {
   // Paginated — see fetchAllSoundCloudLinks for why.
   const links = await fetchAllSoundCloudLinks();
 
-  // Exclude already-cached (i.e. already-processed) artists BEFORE
-  // applying --limit, so --limit always means "the next N artists
-  // that haven't been processed yet", not "the first N in the query,
-  // even if most of them are already done". --force bypasses the
-  // cache (it's {} in that case), so nothing is excluded here.
+  // Exclude already-processed artists BEFORE applying --limit, so
+  // --limit always means "the next N artists that haven't been
+  // processed yet", not "the first N in the query, even if most of
+  // them are already done". --force bypasses the state (it's an
+  // empty Set in that case), so nothing is excluded here.
   let rows = links;
-  let skippedCached = 0;
+  let skippedProcessed = 0;
   if (!FORCE) {
     const remaining = [];
     for (const row of links) {
-      if (cache[row.url] !== undefined) {
-        skippedCached++;
+      if (processed.has(row.artist_id)) {
+        skippedProcessed++;
       } else {
         remaining.push(row);
       }
@@ -535,7 +539,7 @@ async function main() {
 
   console.log(
     `Found ${links.length} SoundCloud link(s) on artists` +
-      (skippedCached > 0 ? `, ${skippedCached} already cached (skipped)` : "") +
+      (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
 
@@ -552,11 +556,16 @@ async function main() {
     const scUrl = row.url;
 
     scraped++;
-    const { ok, candidates, rawBio } = await harvestFromSoundCloud(scUrl);
+    const { ok, status, candidates, rawBio } = await harvestFromSoundCloud(scUrl);
+    let writeFailed = false;
 
     if (!ok) {
       fetchFailed++;
       console.log(`✗ ${name}: failed to resolve ${scUrl}`);
+      // Only a 404 is a definitive dead link — mark it processed so
+      // it doesn't retry forever. Timeouts, rate limits, and other
+      // HTTP errors are transient, so leave them unmarked.
+      if (!DRY_RUN && status === 404) await markProcessed(row.artist_id);
     } else {
       totalLinksFound += candidates.length;
       if (rawBio) biosFound++;
@@ -591,6 +600,7 @@ async function main() {
             );
           if (insertError) {
             console.error(`  failed to save links: ${insertError.message}`);
+            writeFailed = true;
           } else {
             totalLinksWritten += candidates.length;
           }
@@ -611,10 +621,16 @@ async function main() {
             );
           if (bioError) {
             console.error(`  failed to save bio: ${bioError.message}`);
+            writeFailed = true;
           } else {
             biosWritten++;
           }
         }
+
+        // Only mark the artist processed once its staged rows are
+        // actually written — a write failure leaves it unmarked so
+        // the next run retries it.
+        if (!writeFailed) await markProcessed(row.artist_id);
       } else {
         totalLinksWritten += candidates.length;
         if (rawBio) biosWritten++;
@@ -625,19 +641,12 @@ async function main() {
       }
     }
 
-    cache[scUrl] = {
-      checkedAt: new Date().toISOString(),
-      linkCount: candidates.length,
-      hasBio: Boolean(rawBio),
-    };
-    if (!DRY_RUN) saveCache(cache);
-
     await sleep(300);
   }
 
   console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
   console.log(`  processed:              ${scraped}`);
-  console.log(`  skipped (cached):       ${skippedCached}`);
+  console.log(`  skipped (processed):    ${skippedProcessed}`);
   console.log(`  resolve failed:         ${fetchFailed}`);
   console.log(`  total links found:      ${totalLinksFound}`);
   console.log(`  total links ${DRY_RUN ? "(would be) written" : "written"}: ${totalLinksWritten}`);

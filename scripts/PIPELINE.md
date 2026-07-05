@@ -93,8 +93,17 @@ Uses the official SoundCloud API to fetch each artist's profile
 data: bio, follower count, track count, profile image URL, and
 numeric user ID. Writes to `artist_enrichment` (platform = `soundcloud`).
 
+Processed state is tracked in the database (`resolved_artists`,
+service = `soundcloud-enrich`), not a cache file — per project
+convention. An artist is skipped once a state row exists; re-runs
+only touch artists that haven't been marked done. A resolve failure
+only marks an artist processed on a definitive dead link (404);
+transient failures (timeouts, rate limits, DB write errors) are left
+unmarked so the next run retries them.
+
 ```bash
 npm run enrich-soundcloud
+npm run enrich-soundcloud -- --force   # re-process even artists with existing state
 ```
 
 Requires `SOUNDCLOUD_CLIENT_ID` and `SOUNDCLOUD_CLIENT_SECRET` in `.env.local`.
@@ -109,8 +118,14 @@ to the `artist_harvested_links` staging table — does not touch
 bios — live bios reach `artist_enrichment` via `enrich-soundcloud.mjs`
 in 2a instead).
 
+Processed state uses the same `resolved_artists` pattern as 2a
+(service = `soundcloud-harvest`): an artist is only marked processed
+once its staged links/bio are written successfully, or on a
+definitive dead link (404) from the resolve call.
+
 ```bash
 node scripts/harvest-soundcloud-links-and-bio.mjs
+node scripts/harvest-soundcloud-links-and-bio.mjs --force   # re-process even artists with existing state
 ```
 
 ### 2c. `add-beatport-links.mjs`
@@ -519,6 +534,59 @@ Not part of the pipeline; run manually when debugging.
 - **`test-xlsx.mjs`** (project root) — throwaway probe of the
   original spreadsheet's Beatport column; safe to delete.
 
+- **`backfill-resolved-soundcloud-enrich.mjs`** — one-off migration
+  helper, written 2026-07-03 when 2a switched from
+  `enrich-soundcloud-cache.json` to `resolved_artists` (service =
+  `soundcloud-enrich`) for processed-state tracking. Without it, the
+  next 2a run would have treated every artist enriched before the
+  switch as unprocessed and re-fetched them all from SoundCloud.
+
+  Reads `artist_enrichment` for rows where `platform = 'soundcloud'`
+  and `external_id` is not null — `external_id` (the SoundCloud
+  numeric user ID) is set on every row `enrich-soundcloud.mjs`
+  successfully upserts, so its presence is a cheap, reliable stand-in
+  for "this artist was already enriched." For each matching
+  `artist_id` not already in `resolved_artists` for this service, it
+  upserts `{ artist_id, service: 'soundcloud-enrich', resolved_at }`
+  — `resolved_at` is stamped with the time the script runs (one
+  timestamp for the whole batch), since the original per-artist
+  enrichment time lives only in `artist_enrichment.last_synced_at`,
+  which this script doesn't need to read.
+
+  Both reads (`artist_enrichment` and `resolved_artists`) use keyset
+  pagination — `WHERE artist_id > cursor ORDER BY artist_id LIMIT n`
+  — instead of `OFFSET`-based paging. This matters in practice: the
+  first version used `.range()` (OFFSET) and hit a Postgres statement
+  timeout even on a single 1000-row page, because an OFFSET page over
+  a filtered condition still has to walk (and often sort) everything
+  before it. Keyset pagination lets Postgres seek straight to the
+  cursor and stop as soon as it has enough matches, so `--limit`
+  directly buys smaller, cheaper round-trips rather than just a
+  smaller final result.
+
+  Requires the `resolved_artists` grants fix
+  (`supabase_migration_resolved_artists_grants.sql`) to be applied
+  first — `service_role` had no SELECT/INSERT/UPDATE/DELETE on that
+  table until then, so both the read and the write fail with
+  "permission denied for table resolved_artists" otherwise.
+
+  Idempotent and safe to re-run (skips already-marked artist_ids);
+  safe to delete once the backfill is confirmed complete.
+
+  ```bash
+  DRY_RUN=1 node scripts/backfill-resolved-soundcloud-enrich.mjs            # preview, no writes
+  node scripts/backfill-resolved-soundcloud-enrich.mjs
+  node scripts/backfill-resolved-soundcloud-enrich.mjs --limit=200          # smaller batches per round-trip, if the full run times out
+  node scripts/backfill-resolved-soundcloud-enrich.mjs --after=<artist_id>  # resume after this artist_id (printed on a --limit run)
+  ```
+
+  No equivalent backfill was written for 2b
+  (`harvest-soundcloud-links-and-bio.mjs`, service =
+  `soundcloud-harvest`) — a fresh run will just re-harvest artists
+  that already have `artist_harvested_links`/`artist_harvested_bios`
+  rows from before the switch, which is wasted API calls but harmless
+  (upserts on `artist_id,parsed_url`).
+
 ---
 
 ## Shared libraries (`scripts/lib/`)
@@ -823,5 +891,28 @@ follower counts already come from SoundCloud and Spotify.
 - Adopt `resolved_artists` (or equivalent DB-tracked state) instead
   of cache-file / inference-based "already processed" checks — see
   the Phase 3 note and the project preference for DB state.
+  **2a (`soundcloud-enrich`) and 2b (`soundcloud-harvest`) are now
+  done (2026-07-03)** — both dropped their `*-cache.json` files for
+  `resolved_artists` rows, matching the 2d convention. Artists
+  enriched before the switch were backfilled via the one-off
+  `backfill-resolved-soundcloud-enrich.mjs` — see "Utility /
+  diagnostic scripts" below for how it works; no equivalent backfill
+  was written for 2b.
+
+  **Found while running that backfill (2026-07-03): `resolved_artists`
+  was missing basic table grants** — `service_role` had no
+  SELECT/INSERT/UPDATE/DELETE on it, only REFERENCES/TRIGGER/TRUNCATE/
+  MAINTAIN, so *every* script touching it (2a, 2b, `harvest-links-discogs.mjs`,
+  `harvest-links-loop.mjs`, the backfill script) failed with
+  "permission denied for table resolved_artists" — meaning the 2d
+  Discogs harvester likely never successfully recorded state in
+  production. Fixed by `supabase_migration_resolved_artists_grants.sql`
+  (run in the Supabase SQL editor) — grants `service_role` full CRUD,
+  matching every other service_role-only table (e.g.
+  `artist_enrichment`).
+
+  Still open: the Phase 3 resolver (`resolve-and-load-links-lf-mb-sp.mjs`,
+  currently inferring state from `pending_artist_links`) and the
+  genre harvesters' `.cache/` directories, below.
 - Replace the `.cache/` disk caches used by the Phase 3 resolver and
   genre harvesters with DB-tracked state at the same time.
