@@ -57,6 +57,7 @@
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/harvest-soundcloud-links-and-bio.mjs                  # all artists with a SoundCloud link
+//   node scripts/harvest-soundcloud-links-and-bio.mjs --approved       # only artists in the directory (directory_status = 'approved')
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --limit=20       # only the first 20 (for testing)
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --force          # re-process even artists with existing state
 //   node scripts/harvest-soundcloud-links-and-bio.mjs --debug          # log raw web-profiles + every candidate link found per artist
@@ -94,6 +95,10 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const DEBUG = args.includes("--debug");
+// --approved: only process artists in the live directory
+// (directory_status = 'approved'), rather than every artist with a
+// SoundCloud link (which is dominated by unvetted follow-graph nodes).
+const APPROVED_ONLY = args.includes("--approved");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
@@ -487,10 +492,14 @@ async function fetchAllSoundCloudLinks() {
   while (true) {
     let query = supabase
       .from("artist_links")
-      .select("id, artist_id, url, artists!inner(name)")
+      .select("id, artist_id, url, artists!inner(name, directory_status)")
       .eq("platform", "soundcloud")
       .order("id", { ascending: true })
       .range(from, from + SUPABASE_PAGE_SIZE - 1);
+
+    if (APPROVED_ONLY) {
+      query = query.eq("artists.directory_status", "approved");
+    }
 
     if (NAME_FILTER) {
       query = query.ilike("artists.name", `%${NAME_FILTER}%`);
@@ -550,8 +559,21 @@ async function main() {
   }
   if (LIMIT) rows = rows.slice(0, LIMIT);
 
+  if (APPROVED_ONLY) {
+    // An artist can hold more than one SoundCloud link row, so count
+    // distinct artists — that's the meaningful "approved artists that
+    // will be processed" figure.
+    const approvedArtistCount = new Set(rows.map((r) => r.artist_id)).size;
+    console.log(
+      `--approved: restricting to directory artists (directory_status = 'approved')`
+    );
+    console.log(
+      `${approvedArtistCount} approved artist(s) will be processed this run.\n`
+    );
+  }
+
   console.log(
-    `Found ${links.length} SoundCloud link(s) on artists` +
+    `Found ${links.length} SoundCloud link(s) on ${APPROVED_ONLY ? "approved " : ""}artists` +
       (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
