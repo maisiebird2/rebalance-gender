@@ -215,6 +215,9 @@ export const GENRE_ALIASES = new Map([
 
   // Avant-garde
   ['avant garde',                 'avant-garde'],
+  ['avant-garde music',           'avant-garde'],
+  ['avant-pop',                   'avant-garde pop'],
+
 
   // Electro
   ['e-l-e-c-t-r-o',              'electro'],
@@ -265,6 +268,7 @@ export const GENRE_ALIASES = new Map([
   ['rnb',                         'r&b'],
   ['rhythm & blues',              'r&b'],
   ['rhythm and blues',            'r&b'],
+  ['contemporary r&b',            'r&b'],
 
   // Afro
   ['afrohouse',                   'afro house'],
@@ -571,13 +575,12 @@ async function findOrCreateGenre(canonicalName) {
 async function deduplicateGenres() {
   console.log('\nDeduplicating genres…')
 
-  // 1. Fetch all genres and artist_genres.
-  const { data: allGenres, error: gErr } = await supabase.from('genres').select('id, name')
-  if (gErr) throw gErr
+  // 1. Fetch all genres and artist_genres (paginated — PostgREST caps at 1000/page).
+  const allGenres = await fetchAllPages((from, to) =>
+    supabase.from('genres').select('id, name').order('id').range(from, to))
 
-  const { data: allLinks, error: lErr } = await supabase
-    .from('artist_genres').select('artist_id, genre_id')
-  if (lErr) throw lErr
+  const allLinks = await fetchAllPages((from, to) =>
+    supabase.from('artist_genres').select('artist_id, genre_id').order('artist_id').range(from, to))
 
   const countByGenre = new Map()
   for (const row of allLinks) {
@@ -708,10 +711,8 @@ async function main() {
   // 2. Pre-load the existing genres table to warm the cache and
   //    avoid redundant inserts for genres we already have.
   console.log('Warming genre cache…')
-  const { data: existingGenres, error: genreErr } = await supabase
-    .from('genres')
-    .select('id, name')
-  if (genreErr) throw genreErr
+  const existingGenres = await fetchAllPages((from, to) =>
+    supabase.from('genres').select('id, name').order('id').range(from, to))
   for (const g of existingGenres) {
     genreCache.set(normalizeForLookup(g.name), g.id)
   }

@@ -29,7 +29,7 @@
 //   node scripts/qc-links.mjs --platform=lastfm      # one platform only
 //   node scripts/qc-links.mjs --name="Danz"          # artists matching name
 //   node scripts/qc-links.mjs --limit=100            # first N artists
-//   node scripts/qc-links.mjs --debug                # show every row checked
+//   node scripts/qc-links.mjs --debug                # show only failing rows
 //   node scripts/qc-links.mjs --csv                  # output issues as CSV
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
@@ -221,27 +221,37 @@ async function main() {
   console.error("Fetching artist_links…");
 
   // Fetch all non-not_found links, joined to artist name.
-  let query = supabase
-    .from("artist_links")
-    .select("id, platform, url, artists(id, name)")
-    .eq("not_found", false)
-    .not("url", "is", null)
-    .order("platform")
-    .order("id");
+  // PostgREST caps a single select at 1000 rows, so page through with
+  // .range() until a short page comes back.
+  const PAGE_SIZE = 1000;
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase
+      .from("artist_links")
+      .select("id, platform, url, artists(id, name)")
+      .eq("not_found", false)
+      .not("url", "is", null)
+      .order("platform")
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
 
-  if (PLATFORM_FILTER) {
-    query = query.eq("platform", PLATFORM_FILTER);
-  }
+    if (PLATFORM_FILTER) {
+      query = query.eq("platform", PLATFORM_FILTER);
+    }
 
-  if (NAME_FILTER) {
-    // Filter via the joined artists table
-    query = query.ilike("artists.name", `%${NAME_FILTER}%`);
-  }
+    if (NAME_FILTER) {
+      // Filter via the joined artists table
+      query = query.ilike("artists.name", `%${NAME_FILTER}%`);
+    }
 
-  const { data: rows, error } = await query;
-  if (error) {
-    console.error("Supabase error:", error.message);
-    process.exit(1);
+    const { data: page, error } = await query;
+    if (error) {
+      console.error("Supabase error:", error.message);
+      process.exit(1);
+    }
+
+    rows.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
   }
 
   // Filter out rows where the artist name join returned null
@@ -277,10 +287,6 @@ async function main() {
     const artistId = row.artists.id;
     const artistName = row.artists.name;
 
-    if (DEBUG) {
-      console.error(`  [${platform}] ${artistName}: ${url}`);
-    }
-
     // ── Format check ────────────────────────────────────────
     const fIssues = formatIssues(url);
     if (fIssues.length > 0) {
@@ -291,12 +297,19 @@ async function main() {
     // Skip unchecked platforms, unknown platforms, and rows where
     // the URL can't be parsed at all (those are already captured as
     // format issues; we can't derive a hostname to compare against).
+    let isWrongField = false;
     const urlIsParseable = getHostname(url) !== null;
     if (!UNCHECKED_PLATFORMS.has(platform) && PLATFORM_DOMAINS[platform] && urlIsParseable) {
       if (!urlMatchesPlatform(platform, url)) {
         const detectedPlatform = detectPlatformFromUrl(url);
         wrongField.push({ id, artistId, artistName, platform, url, detectedPlatform });
+        isWrongField = true;
       }
+    }
+
+    // In debug mode, only log rows that failed a check — not passing URLs.
+    if (DEBUG && (fIssues.length > 0 || isWrongField)) {
+      console.error(`  [${platform}] ${artistName}: ${url}`);
     }
   }
 

@@ -185,18 +185,25 @@ async function main() {
       : `Enriching Bandcamp discographies${FORCE ? " (force re-fetch)" : ""}\n`
   );
 
-  // Fetch artists that have a Bandcamp link
-  let query = supabase
-    .from("artists")
-    .select(
-      `id, name,
-       links:artist_links(platform, url),
-       bandcamp_albums:artist_bandcamp_albums(bandcamp_id)`
-    )
-    .eq("directory_status", "approved");
-
-  const { data: artists, error } = await query;
-  if (error) throw error;
+  // Fetch artists that have a Bandcamp link.
+  // Paginate — PostgREST caps a single select at 1000 rows.
+  const PAGE_SIZE = 1000;
+  const artists = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("artists")
+      .select(
+        `id, name,
+         links:artist_links(platform, url),
+         bandcamp_albums:artist_bandcamp_albums(bandcamp_id)`
+      )
+      .eq("directory_status", "approved")
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    artists.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
+  }
 
   // Filter to artists with a Bandcamp link
   let targets = artists.filter((a) =>

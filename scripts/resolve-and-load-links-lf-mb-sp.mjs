@@ -415,20 +415,33 @@ async function resolveService(artist, service) {
   return assignStatuses(artist.name, scored)
 }
 // ── Database helpers ───────────────────────────────────────────────────────────
+// PostgREST caps a single select at 1000 rows. Any read that can return more
+// than that must page through with .range(). buildQuery receives the (from, to)
+// bounds and must apply .range(from, to) to its query.
+const PAGE_SIZE = 1000
+async function fetchAllPages(buildQuery) {
+  const rows = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await buildQuery(from, from + PAGE_SIZE - 1)
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < PAGE_SIZE) break
+  }
+  return rows
+}
 async function fetchArtists() {
-  const { data: artists, error } = await supabase
-    .from('artists').select('id, name').order('name')
-  if (error) throw error
-  const { data: locs } = await supabase
-    .from('artist_locations').select('artist_id, city, country')
+  const artists = await fetchAllPages((from, to) => supabase
+    .from('artists').select('id, name').order('id').range(from, to))
+  const locs = await fetchAllPages((from, to) => supabase
+    .from('artist_locations').select('artist_id, city, country').order('artist_id').range(from, to))
   const locMap = {}
-  for (const l of locs ?? []) {
+  for (const l of locs) {
     const parts = [l.city, l.country].filter(Boolean).join(', ')
     if (parts) (locMap[l.artist_id] ??= []).push(parts)
   }
-  const { data: bios } = await supabase
-    .from('artist_enrichment').select('artist_id, bio')
-  const bioMap = Object.fromEntries((bios ?? []).filter(e => e.bio).map(e => [e.artist_id, e.bio]))
+  const bios = await fetchAllPages((from, to) => supabase
+    .from('artist_enrichment').select('artist_id, bio').order('artist_id').range(from, to))
+  const bioMap = Object.fromEntries(bios.filter(e => e.bio).map(e => [e.artist_id, e.bio]))
   return artists.map(a => ({
     id:       a.id,
     name:     a.name,
@@ -437,9 +450,10 @@ async function fetchArtists() {
   }))
 }
 async function artistsWithSpotifyLink() {
-  const { data } = await supabase
+  const data = await fetchAllPages((from, to) => supabase
     .from('artist_links').select('artist_id').eq('platform', 'spotify')
-  return new Set((data ?? []).map(r => r.artist_id))
+    .order('artist_id').range(from, to))
+  return new Set(data.map(r => r.artist_id))
 }
 async function alreadyResolved(artistId, service) {
   const { data } = await supabase
@@ -480,23 +494,24 @@ async function upsertCandidates(artistId, service, candidates) {
   if (error) throw error
 }
 async function loadBestMatches(services) {
-  const { data: rows, error } = await supabase
+  const rows = await fetchAllPages((from, to) => supabase
     .from('pending_artist_links')
     .select('id, artist_id, service, url')
     .eq('status', 'best match')
     .in('service', services)
-  if (error) throw error
-  if (!rows?.length) return { loaded: 0, skipped: 0 }
+    .order('id').range(from, to))
+  if (!rows.length) return { loaded: 0, skipped: 0 }
   // Fetch existing artist_links for these artist+platform pairs so we never
   // overwrite a link that came from a different source (e.g. manually added).
   const artistIds = [...new Set(rows.map(r => r.artist_id))]
-  const { data: existingLinks } = await supabase
+  const existingLinks = await fetchAllPages((from, to) => supabase
     .from('artist_links')
     .select('artist_id, platform')
     .in('artist_id', artistIds)
     .in('platform', services)
+    .order('artist_id').range(from, to))
   const alreadyLinked = new Set(
-    (existingLinks ?? []).map(l => `${l.artist_id}:${l.platform}`)
+    existingLinks.map(l => `${l.artist_id}:${l.platform}`)
   )
   let loaded = 0, skipped = 0
   for (const row of rows) {
@@ -524,13 +539,13 @@ async function loadBestMatches(services) {
 }
 // ── CSV export ─────────────────────────────────────────────────────────────────
 async function exportCsv() {
-  const { data: rows, error } = await supabase
+  const rows = await fetchAllPages((from, to) => supabase
     .from('pending_artist_links')
     .select('artist_id, service, candidate_rank, external_name, external_id, url, confidence, score_name, score_location, score_bio, score_popularity, status, api_data')
-    .order('service').order('candidate_rank')
-  if (error) throw error
-  const { data: artists } = await supabase.from('artists').select('id, name')
-  const nameMap = new Map((artists ?? []).map(a => [a.id, a.name]))
+    .order('service').order('candidate_rank').order('artist_id').range(from, to))
+  const artists = await fetchAllPages((from, to) => supabase
+    .from('artists').select('id, name').order('id').range(from, to))
+  const nameMap = new Map(artists.map(a => [a.id, a.name]))
   const FIELDS = [
     'artist_name','service','rank','external_name','external_id','url',
     'confidence','score_name','score_location','score_bio','score_popularity',
