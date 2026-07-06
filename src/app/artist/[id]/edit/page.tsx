@@ -1,14 +1,19 @@
+// "artist edit" page
+// src/app/artist/[id]/edit/page.tsx
+
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
+import { getGenreOptions } from "@/lib/queries";
+
 import type {
   ArtistWithRelations,
   Artist,
   Pronoun,
-  Genre,
+  //Genre,
   ArtistLocation,
   ArtistLabel,
   ArtistAlias,
@@ -69,13 +74,13 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
 
   // ── Load artist (all statuses), all genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, { data: genreRows }, platforms] = await Promise.all([
+  const [{ data, error }, allGenres, platforms] = await Promise.all([
     admin
       .from("artists")
       .select(ARTIST_ADMIN_SELECT)
       .eq("id", id)
       .maybeSingle(),
-    admin.from("genres").select("name").neq("status", "deleted").order("name"),
+    getGenreOptions(),
     getPlatforms(admin),
   ]);
 
@@ -86,8 +91,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
   if (!data) notFound();
 
   const artist = normalizeArtist(data);
-  const allGenres = (genreRows ?? []).map((g: { name: string }) => g.name);
-
+  
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6">

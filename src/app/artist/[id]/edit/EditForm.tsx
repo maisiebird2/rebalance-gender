@@ -10,7 +10,8 @@ import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
 
 interface Props {
   artist: ArtistWithRelations;
-  allGenres: string[];
+  //allGenres: string[];
+  genreOptions: string[];
   platforms: Platform[];
 }
 
@@ -151,6 +152,10 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
   const bio =
     artist.enrichment?.find((e) => e.platform === "soundcloud")?.bio ?? "";
 
+  const genreOptions = Array.from(
+    new Set([...allGenres, ...(artist.genres ?? []).map((g) => g.name)])
+  ).sort((a, b) => a.localeCompare(b));
+
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-8 pb-20">
       <input type="hidden" name="artist_id" value={artist.id} />
@@ -214,7 +219,7 @@ export default function EditForm({ artist, allGenres, platforms }: Props) {
       {/* ── Genres ─────────────────────────────────────────────── */}
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Genres</legend>
-        <GenreList values={genres} onChange={setGenres} options={allGenres} />
+        <GenreList values={genres} onChange={setGenres} options={genreOptions} />
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}
