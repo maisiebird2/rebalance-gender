@@ -39,7 +39,7 @@ function statusLabel(status: ArtistStatus): string {
     .join(" ");
 }
 
-export default function EditForm({ artist, allGenres, platforms }: Props) {
+export default function EditForm({ artist, genreOptions, platforms }: Props) {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
