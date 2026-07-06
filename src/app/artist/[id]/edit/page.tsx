@@ -72,9 +72,9 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
     redirect(`/login?next=/artist/${id}/edit`);
   }
 
-  // ── Load artist (all statuses), all genres, and all platforms ──
+  // ── Load artist (all statuses), selected genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, allGenres, platforms] = await Promise.all([
+  const [{ data, error }, genreOptions, platforms] = await Promise.all([
     admin
       .from("artists")
       .select(ARTIST_ADMIN_SELECT)
@@ -107,7 +107,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         Editing: {artist.name}
       </h1>
 
-      <EditForm artist={artist} allGenres={allGenres} platforms={platforms} />
+      <EditForm artist={artist} genreOptions={genreOptions} platforms={platforms} />
     </div>
   );
 }
