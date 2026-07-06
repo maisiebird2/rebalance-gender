@@ -42,7 +42,7 @@ const ARTIST_ADMIN_SELECT = `
 
 type RawArtistRow = Artist & {
   pronoun: Pronoun | null;
-  artist_genres: { genres: getGenreOptions | null }[];
+  artist_genres: { genres: Genre | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
   aliases: ArtistAlias[];
