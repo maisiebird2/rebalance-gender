@@ -1,9 +1,12 @@
+// "home" page
+// src/app/page.tsx
+
 import Link from "next/link";
 import ArtistCard from "@/components/ArtistCard";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
 import SearchMissResults from "@/components/SearchMissResults";
-import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions } from "@/lib/queries";
+import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions, getApprovedArtistCount } from "@/lib/queries";
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -21,18 +24,26 @@ export default async function Home({ searchParams }: PageProps) {
 
   const isFiltered = Boolean(genre || country || search);
 
-  const [{ artists, hasMore }, genres, countries] = await Promise.all([
+  const [{ artists, hasMore }, genres, countries, artistCount] = await Promise.all([
     isFiltered
       ? getArtists({ genre, country, search, page })
       : getRandomArtists(page),
     getGenreOptions(),
     getCountryOptions(),
+    getApprovedArtistCount(),
   ]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold">Artist Directory</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Artist Directory</h1>
+          {artistCount ? (
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              More than {artistCount.toLocaleString()} artists
+            </p>
+          ) : null}
+        </div>
         <Link
           href="/discover"
           className="text-sm text-violet-600 hover:underline dark:text-violet-400"

@@ -430,6 +430,28 @@ export const getGenreOptions = unstable_cache(
 );
 
 /** All countries with at least one approved artist, for the filter UI. */
+/**
+ * Reads the precomputed, rounded-down count of directory ("approved")
+ * artists from site_stats. This is refreshed daily by the pg_cron job in
+ * supabase_migration_site_stats.sql, so the homepage reads ONE row rather
+ * than counting on every request. Returns null if the row is missing.
+ */
+export async function getApprovedArtistCount(): Promise<number | null> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("site_stats")
+    .select("value_int")
+    .eq("key", "approved_artist_count")
+    .maybeSingle();
+
+  if (error) {
+    console.error("getApprovedArtistCount error:", error);
+    return null;
+  }
+  return data?.value_int ?? null;
+}
+
 export async function getCountryOptions(): Promise<string[]> {
   const supabase = getSupabaseClient();
 
