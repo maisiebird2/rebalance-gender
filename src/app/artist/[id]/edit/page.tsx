@@ -13,7 +13,7 @@ import type {
   ArtistWithRelations,
   Artist,
   Pronoun,
-  //Genre,
+  Genre,
   ArtistLocation,
   ArtistLabel,
   ArtistAlias,
