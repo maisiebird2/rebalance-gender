@@ -1,9 +1,8 @@
 @import "tailwindcss";
 
-/* Dark mode is toggled via a `.dark` class on <html> (see ThemeToggle),
-   not the OS `prefers-color-scheme` setting. "After Dark" — a two-tone
-   club aesthetic (blue-violet brand + hot magenta energy) — is the
-   default theme; "light mode" is the fallback style. */
+/* The site renders in the "After Dark" theme — a two-tone club aesthetic
+   (blue-violet brand + hot magenta energy). The `.dark` class is applied
+   to <html> in layout.tsx; the light styles remain only as a fallback. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
@@ -52,6 +51,14 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Headings use the display font site-wide, so every page (submit, about,
+   admin, artist) matches the homepage typography. Body text stays sans. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), "Space Grotesk", ui-sans-serif, sans-serif;
 }
 
 /* Font helpers driven by next/font variables (see layout.tsx). Named to

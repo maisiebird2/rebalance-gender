@@ -499,6 +499,27 @@ export async function getApprovedArtistCount(): Promise<number | null> {
   return data?.value_int ?? null;
 }
 
+/**
+ * Reads an editable text block from site_content (e.g. the /about page),
+ * managed from the admin panel. Returns null if the row is missing or the
+ * table hasn't been created yet, so callers can fall back to default copy.
+ */
+export async function getSiteContent(key: string): Promise<string | null> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("site_content")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getSiteContent error:", error);
+    return null;
+  }
+  return data?.value ?? null;
+}
+
 export async function getCountryOptions(): Promise<string[]> {
   const supabase = getSupabaseClient();
 

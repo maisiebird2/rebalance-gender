@@ -383,3 +383,25 @@ export async function addPlatform(
   revalidatePath("/submit");
   return { success: true };
 }
+
+// ── Site content (editable pages, e.g. /about) ─────────────────────
+
+export async function saveSiteContent(
+  key: string,
+  value: string,
+): Promise<{ error: string } | { success: true }> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+
+  const { error } = await admin
+    .from("site_content")
+    .upsert(
+      { key, value, updated_at: new Date().toISOString() },
+      { onConflict: "key" },
+    );
+  if (error) return { error: error.message };
+
+  revalidatePath("/about");
+  revalidatePath("/admin/about");
+  return { success: true };
+}

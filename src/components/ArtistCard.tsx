@@ -45,8 +45,8 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
           : "glass-card flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-white/10 dark:bg-[#131120]/60 dark:shadow-none dark:backdrop-blur-xl"
       }
     >
-      <div className="flex items-center gap-3">
-        <div className="avatar-ring h-14 w-14 shrink-0 rounded-full">
+      <div className="flex items-start gap-3">
+        <div className="avatar-ring h-16 w-16 shrink-0 rounded-full">
           <div className="h-full w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
             {profileImage ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -56,25 +56,31 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="ff-display flex h-full w-full items-center justify-center text-lg font-semibold text-violet-400 dark:text-violet-300">
+              <div className="ff-display flex h-full w-full items-center justify-center text-xl font-semibold text-violet-400 dark:text-violet-300">
                 {artist.name.charAt(0).toUpperCase()}
               </div>
             )}
           </div>
         </div>
 
-        <div className="min-w-0">
+        {/* Each field on its own line: name, aliases, pronouns, location. */}
+        <div className="min-w-0 flex-1 space-y-0.5">
           <h3 className="ff-display truncate text-base font-medium">
             {artist.name}
           </h3>
-          <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
-            {[artist.pronoun?.value, locationText]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
           {aliasText && (
             <p className="truncate text-xs text-gray-400 dark:text-gray-500">
               aka {aliasText}
+            </p>
+          )}
+          {artist.pronoun?.value && (
+            <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
+              {artist.pronoun.value}
+            </p>
+          )}
+          {locationText && (
+            <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
+              {locationText}
             </p>
           )}
         </div>

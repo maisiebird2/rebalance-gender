@@ -102,6 +102,9 @@ export default async function AdminPage() {
       <div className="mb-8 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Admin panel</h1>
         <div className="flex items-center gap-4">
+          <Link href="/admin/about" className="text-sm text-violet-600 hover:underline dark:text-violet-400">
+            Edit About page →
+          </Link>
           <Link href="/admin/missing-links" className="text-sm text-violet-600 hover:underline dark:text-violet-400">
             Missing links →
           </Link>

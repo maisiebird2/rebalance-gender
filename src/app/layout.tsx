@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import Link from "next/link";
 import { Space_Grotesk, Space_Mono, Inter } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
-import ThemeToggle from "@/components/ThemeToggle";
 import SmokeBackdrop from "@/components/SmokeBackdrop";
 import "./globals.css";
 
@@ -29,23 +27,6 @@ const body = Inter({
   display: "swap",
 });
 
-// Runs before paint to apply any saved theme preference. Midnight violet
-// (dark) is the default when nothing has been saved yet, so the
-// server-rendered `dark` class on <html> below is left in place unless
-// this finds an explicit "light" choice in localStorage.
-const themeBootstrapScript = `
-(function () {
-  try {
-    var stored = localStorage.getItem("theme");
-    if (stored === "light") {
-      document.documentElement.classList.remove("dark");
-    } else {
-      document.documentElement.classList.add("dark");
-    }
-  } catch (e) {}
-})();
-`;
-
 export const metadata: Metadata = {
   title: "Rebalance Gender",
   description:
@@ -68,11 +49,6 @@ export default async function RootLayout({
       className={`h-full antialiased dark ${display.variable} ${mono.variable} ${body.variable}`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-gray-950">
-        <Script
-          id="theme-bootstrap"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
-        />
         <SmokeBackdrop />
         <header className="sticky top-0 z-20 border-b border-gray-200 bg-white dark:border-white/10 dark:bg-[#0a0910]/70 dark:backdrop-blur-lg">
           <div className="mx-auto max-w-6xl px-4">
@@ -100,7 +76,7 @@ export default async function RootLayout({
             <div className="flex items-center justify-between gap-4 py-4">
               <Link
                 href="/"
-                className="ff-display flex shrink-0 items-center gap-2.5 text-lg font-semibold"
+                className="flex shrink-0 items-center gap-2.5 text-lg font-semibold"
               >
                 <span className="eq" aria-hidden="true">
                   <i></i>
@@ -120,7 +96,9 @@ export default async function RootLayout({
                 <a href="/submit" className="hover:underline">
                   Submit an artist
                 </a>
-                <ThemeToggle />
+                <Link href="/about" className="hover:underline">
+                  About
+                </Link>
               </nav>
             </div>
           </div>
