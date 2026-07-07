@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
-import { getGenreOptions } from "@/lib/queries";
+import { getGenrePickerOptions } from "@/lib/queries";
 
 import type {
   ArtistWithRelations,
@@ -80,7 +80,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
       .select(ARTIST_ADMIN_SELECT)
       .eq("id", id)
       .maybeSingle(),
-    getGenreOptions(),
+    getGenrePickerOptions(),
     getPlatforms(admin),
   ]);
 

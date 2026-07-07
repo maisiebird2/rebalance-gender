@@ -5,7 +5,7 @@ import SubmissionForm from "@/components/SubmissionForm";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 import { getPlatforms } from "@/lib/platforms";
-import { getGenreOptions } from "@/lib/queries"
+import { getGenrePickerOptions } from "@/lib/queries"
 
 export const metadata = {
   title: "Submit an artist — Rebalance Gender",
@@ -15,7 +15,7 @@ export default async function SubmitPage() {
   const admin = getSupabaseAdminClient();
   const supabase = await createClient();
   const [genreOptions, platforms, { data: { user } }] = await Promise.all([
-    getGenreOptions(),
+    getGenrePickerOptions(),
     getPlatforms(admin),
     supabase.auth.getUser(),
   ]);

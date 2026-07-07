@@ -1,8 +1,12 @@
+// "Submit a revision" page
+// src/app/artist/[id]/revise/page.tsx
+
 import { notFound } from "next/navigation";
 import { getArtistById } from "@/lib/queries";
 import { getPlatforms } from "@/lib/platforms";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import RevisionForm from "@/components/RevisionForm";
+import { getGenrePickerOptions } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -23,15 +27,15 @@ export default async function RevisePage({ params }: PageProps) {
   const { id } = await params;
   const admin = getSupabaseAdminClient();
 
-  const [artist, platforms, { data: genreRows }] = await Promise.all([
+  const [artist, platforms, genreOptions] = await Promise.all([
     getArtistById(id),
     getPlatforms(admin),
-    admin.from("genres").select("name").order("name"),
+    getGenrePickerOptions(),
   ]);
 
   if (!artist || artist.directory_status !== "approved") notFound();
 
-  const allGenres = (genreRows ?? []).map((g: { name: string }) => g.name);
+  //const allGenres = (genreRows ?? []).map((g: { name: string }) => g.name);
 
   return (
     <div className="mx-auto max-w-xl px-4 py-8">
@@ -46,7 +50,7 @@ export default async function RevisePage({ params }: PageProps) {
         Spotted something wrong or out of date? Update the fields below and
         we&apos;ll review your suggested changes.
       </p>
-      <RevisionForm artist={artist} allGenres={allGenres} platforms={platforms} />
+      <RevisionForm artist={artist} genreOptions={genreOptions} platforms={platforms} />
     </div>
   );
 }

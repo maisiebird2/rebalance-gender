@@ -429,6 +429,53 @@ export const getGenreOptions = unstable_cache(
   { revalidate: 600 },
 );
 
+async function computeGenrePickerOptions(): Promise<string[]> {
+  const supabase = getSupabaseClient();
+
+  type GenreRow = { name: string };
+
+  // Every approved genre, regardless of how many artists use it. Page
+  // through because PostgREST caps a single response at ~1000 rows.
+  const PAGE = 1000;
+  const names: string[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("genres")
+      .select("name")
+      .eq("status", "approved")
+      .order("name")
+      .range(from, from + PAGE - 1);
+
+    if (error) {
+      console.error("getGenrePickerOptions error:", error);
+      return [];
+    }
+
+    const rows = (data as GenreRow[]) ?? [];
+    for (const row of rows) {
+      if (row.name) names.push(row.name);
+    }
+    if (rows.length < PAGE) break;
+  }
+
+  return names.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Genre list for the submit / edit / revise pickers — ALL approved genres,
+ * with no artist-count gate. Unlike getGenreOptions() (the browse filter,
+ * which hides genres below MIN_APPROVED_ARTISTS_FOR_GENRE to stay tidy), the
+ * pickers must offer every legitimate genre so rare or newly-approved ones
+ * can be tagged at all. A genre appears here the moment it is set to
+ * status='approved', and self-promotes into the browse filter once it
+ * reaches the artist threshold. Cached like the filter list.
+ */
+export const getGenrePickerOptions = unstable_cache(
+  computeGenrePickerOptions,
+  ["genre-picker-options"],
+  { revalidate: 600 },
+);
+
 /** All countries with at least one approved artist, for the filter UI. */
 /**
  * Reads the precomputed, rounded-down count of directory ("approved")
