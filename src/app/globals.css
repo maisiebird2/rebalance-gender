@@ -98,10 +98,10 @@ html:not(.dark) .smoke-layer {
   will-change: transform;
 }
 .smk1 {
-  animation: smoke-drift1 40s ease-in-out infinite alternate;
+  animation: none; /* smoke-drift1 40s ease-in-out infinite alternate; */
 }
 .smk2 {
-  animation: smoke-drift2 55s ease-in-out infinite alternate;
+  animation: none; /* smoke-drift2 55s ease-in-out infinite alternate; */
 }
 @keyframes smoke-drift1 {
   from { transform: translate(0, 0) scale(1.08); }
