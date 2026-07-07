@@ -10,7 +10,7 @@ import LocationList, { type LocationRow } from "./form/LocationList";
 import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
 
 interface Props {
-  allGenres: string[];
+  genreOptions: string[];
   platforms: Platform[];
   isLoggedIn?: boolean;
 }
@@ -22,7 +22,7 @@ interface DuplicateMatch {
   name: string;
 }
 
-export default function SubmissionForm({ allGenres, platforms, isLoggedIn = false }: Props) {
+export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = false }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
@@ -134,7 +134,7 @@ export default function SubmissionForm({ allGenres, platforms, isLoggedIn = fals
       <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
         placeholder="e.g. DJ Name, Former name" />
 
-      <GenreList label="Genres" values={genres} onChange={setGenres} options={allGenres} />
+      <GenreList label="Genres" values={genres} onChange={setGenres} options={genreOptions} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Location</legend>
