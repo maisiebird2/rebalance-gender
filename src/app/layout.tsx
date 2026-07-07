@@ -1,11 +1,33 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import Link from "next/link";
+import { Space_Grotesk, Space_Mono, Inter } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
 import ThemeToggle from "@/components/ThemeToggle";
+import SmokeBackdrop from "@/components/SmokeBackdrop";
 import "./globals.css";
+
+// Self-hosted at build time by next/font — no runtime network request.
+const display = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
+const mono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-mono",
+  display: "swap",
+});
+const body = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-body",
+  display: "swap",
+});
 
 // Runs before paint to apply any saved theme preference. Midnight violet
 // (dark) is the default when nothing has been saved yet, so the
@@ -41,14 +63,18 @@ export default async function RootLayout({
   } = await supabase.auth.getUser();
 
   return (
-    <html lang="en" className="h-full antialiased dark">
+    <html
+      lang="en"
+      className={`h-full antialiased dark ${display.variable} ${mono.variable} ${body.variable}`}
+    >
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-gray-950">
         <Script
           id="theme-bootstrap"
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
         />
-        <header className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <SmokeBackdrop />
+        <header className="sticky top-0 z-20 border-b border-gray-200 bg-white dark:border-white/10 dark:bg-[#0a0910]/70 dark:backdrop-blur-lg">
           <div className="mx-auto max-w-6xl px-4">
             {/* Admin row — only rendered when signed in, takes no space otherwise */}
             {user && (
@@ -72,7 +98,16 @@ export default async function RootLayout({
 
             {/* Main ribbon */}
             <div className="flex items-center justify-between gap-4 py-4">
-              <Link href="/" className="shrink-0 text-lg font-semibold">
+              <Link
+                href="/"
+                className="ff-display flex shrink-0 items-center gap-2.5 text-lg font-semibold"
+              >
+                <span className="eq" aria-hidden="true">
+                  <i></i>
+                  <i></i>
+                  <i></i>
+                  <i></i>
+                </span>
                 Rebalance Gender
               </Link>
               <div className="hidden sm:block">
@@ -90,7 +125,7 @@ export default async function RootLayout({
             </div>
           </div>
         </header>
-        <main className="flex-1">{children}</main>
+        <main className="relative z-10 flex-1">{children}</main>
       </body>
     </html>
   );

@@ -37,10 +37,16 @@ export default async function Home({ searchParams }: PageProps) {
     <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-baseline justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Artist Directory</h1>
+          <h1 className="ff-display text-3xl font-bold tracking-tight">
+            Artist <span className="grad-text">Directory</span>
+          </h1>
           {artistCount ? (
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              More than {artistCount.toLocaleString()} artists
+            <p className="ff-mono mt-1.5 text-sm text-gray-500 dark:text-gray-400">
+              More than{" "}
+              <b className="font-bold text-[#7c5cff] dark:text-[#ff2d9b]">
+                {artistCount.toLocaleString()}
+              </b>{" "}
+              artists
             </p>
           ) : null}
         </div>

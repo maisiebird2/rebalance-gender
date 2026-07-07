@@ -23,11 +23,11 @@ export default function HeaderSearch() {
         ref={inputRef}
         type="search"
         placeholder="Search artists…"
-        className="w-40 rounded-l-md border border-gray-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 sm:w-56"
+        className="ff-mono w-40 rounded-l-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#ff2d9b] dark:border-white/10 dark:bg-white/5 dark:text-gray-100 dark:backdrop-blur sm:w-56"
       />
       <button
         type="submit"
-        className="rounded-r-md border border-l-0 border-gray-300 bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-gray-700"
+        className="rounded-r-lg border border-l-0 border-gray-300 bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700 focus:outline-none focus:ring-1 focus:ring-[#ff2d9b] dark:border-transparent dark:bg-[linear-gradient(92deg,#7c5cff,#ff2d9b)] dark:hover:opacity-90"
       >
         Search
       </button>
