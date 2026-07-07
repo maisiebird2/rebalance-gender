@@ -78,15 +78,68 @@ export default async function RootLayout({
               <Link
                 href="/"
                 aria-label="Rebalance Gender — home"
-                className="flex shrink-0 items-center gap-2.5 text-lg font-semibold"
+                className="logo-link flex shrink-0 items-center gap-2.5"
               >
-                <span className="eq" aria-hidden="true">
-                  <i></i>
-                  <i></i>
-                  <i></i>
-                  <i></i>
+                <svg
+                  className="fader-mark shrink-0"
+                  viewBox="0 0 30 34"
+                  width="27"
+                  height="31"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient
+                      id="fader-grad"
+                      x1="0"
+                      y1="1"
+                      x2="0"
+                      y2="0"
+                    >
+                      <stop offset="0" stopColor="#6a4dff" />
+                      <stop offset="1" stopColor="#ff2d9b" />
+                    </linearGradient>
+                  </defs>
+                  <line
+                    x1="7"
+                    y1="2"
+                    x2="7"
+                    y2="32"
+                    stroke="#453d5e"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1="23"
+                    y1="2"
+                    x2="23"
+                    y2="32"
+                    stroke="#453d5e"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <rect
+                    className="knob-hi"
+                    x="1.5"
+                    y="9"
+                    width="11"
+                    height="6"
+                    rx="3"
+                    fill="url(#fader-grad)"
+                  />
+                  <rect
+                    className="knob-lo"
+                    x="17.5"
+                    y="19"
+                    width="11"
+                    height="6"
+                    rx="3"
+                    fill="url(#fader-grad)"
+                  />
+                </svg>
+                <span className="flex flex-col text-[19px] font-bold leading-[0.96] tracking-tight">
+                  <span>Rebalance</span>
+                  <span className="grad-text">Gender</span>
                 </span>
-                Rebalance Gender
               </Link>
               {/* The two "find" tools, grouped: name-search + discover. */}
               <div className="hidden items-center gap-2 sm:flex">
