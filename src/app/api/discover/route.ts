@@ -8,7 +8,8 @@ const LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/";
 // ---------------------------------------------------------------------------
 
 /** Normalize a Last.fm URL so it can be compared against artist_links.url */
-function normalizeLfmUrl(url: string): string {
+function normalizeLfmUrl(url: string | null | undefined): string {
+  if (!url) return "";
   return url
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
@@ -210,11 +211,14 @@ export async function POST(request: NextRequest) {
     const { data: lfmLinks } = await supabase
       .from("artist_links")
       .select("artist_id, url")
-      .eq("platform", "lastfm");
+      .eq("platform", "lastfm")
+      .eq("not_found", false);
 
     const lfmScores = new Map<string, number>(); // artist_id → score
     for (const link of lfmLinks ?? []) {
-      const score = lfmByUrl.get(normalizeLfmUrl(link.url));
+      const normalized = normalizeLfmUrl(link.url);
+      if (!normalized) continue;
+      const score = lfmByUrl.get(normalized);
       if (score !== undefined) lfmScores.set(link.artist_id, score);
     }
 
