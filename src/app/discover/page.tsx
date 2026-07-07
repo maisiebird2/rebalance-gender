@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import type { DiscoverResponse, DiscoverResult } from "@/app/api/discover/route";
 import DiscoverResultsGrid from "@/components/DiscoverResultsGrid";
@@ -16,9 +16,8 @@ export default function DiscoverPage() {
   const [state, setState] = useState<State>({ status: "idle" });
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
+  const runSearch = useCallback(async (raw: string) => {
+    const q = raw.trim();
     if (!q) return;
 
     setState({ status: "loading" });
@@ -41,6 +40,21 @@ export default function DiscoverPage() {
     } catch {
       setState({ status: "error", message: "Network error — please try again" });
     }
+  }, []);
+
+  // If arriving from the header's "Find similar" panel (/discover?q=…),
+  // prefill the field and run the search automatically.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q")?.trim();
+    if (q) {
+      setQuery(q);
+      runSearch(q);
+    }
+  }, [runSearch]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    runSearch(query);
   }
 
   return (
@@ -54,8 +68,8 @@ export default function DiscoverPage() {
 
       <h1 className="mt-6 text-2xl font-bold">Discover artists</h1>
       <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-        Enter an artist name or a Last.fm / SoundCloud URL to find similar
-        artists in the directory.
+        Enter a name or a link (SoundCloud / Last.fm) to find similar artists
+        in the directory.
       </p>
 
       {/* Search form */}

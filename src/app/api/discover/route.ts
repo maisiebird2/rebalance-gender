@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       `)
       .eq("source_artist_id", dbArtist.id)
       .order("rank")
-      .limit(10);
+      .limit(20);
 
     if (scoreRows && scoreRows.length > 0) {
       type ScoreRow = {
@@ -297,7 +297,7 @@ export async function POST(request: NextRequest) {
         enrichmentImageById.set(row.artist_id, row.profile_image_url);
     }
 
-    // 7. Score, rank, and return top 10
+    // 7. Score, rank, and return top 20
     // Weights: LFM similar score is primary (80%), genre overlap secondary (20%)
     const results: DiscoverResult[] = candidateIds
       .map((id) => {
@@ -318,7 +318,7 @@ export async function POST(request: NextRequest) {
       })
       .filter((r): r is DiscoverResult => r !== null && r.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
+      .slice(0, 20);
 
     return NextResponse.json({ resolvedName, results } satisfies DiscoverResponse);
   } catch (err) {
