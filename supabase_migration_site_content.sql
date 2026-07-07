@@ -30,12 +30,19 @@ create policy "Public can read site content"
 -- without it the RLS policy above returns no rows for the anon key).
 grant select on table public.site_content to anon, authenticated;
 
+-- The admin panel writes through the secret key (service_role). Tables
+-- created in the SQL editor don't always grant write privileges to
+-- service_role automatically, so grant them explicitly (idempotent).
+-- Without this, saving from /admin/about fails with
+-- "permission denied for table site_content".
+grant select, insert, update, delete on table public.site_content to service_role;
+
 -- ────────────────────────────────────────────────────────────
 -- 2. Seed the About page with starter copy (only if absent)
 -- ────────────────────────────────────────────────────────────
 insert into public.site_content (key, value)
 values (
   'about',
-  E'Rebalance Gender is a directory of women and gender-expansive producers and DJs in electronic music.\n\nOur goal is to make it easier to discover, book, and celebrate artists who have historically been under-represented on lineups and in studios.\n\nEdit this text anytime from the admin panel.'
+  E'<p>Rebalance Gender is a directory of women and gender-expansive producers and DJs in electronic music.</p>\n<p>Our goal is to make it easier to discover, book, and celebrate artists who have historically been under-represented on lineups and in studios.</p>\n<p>Edit this text anytime from the admin panel — you can use HTML.</p>'
 )
 on conflict (key) do nothing;

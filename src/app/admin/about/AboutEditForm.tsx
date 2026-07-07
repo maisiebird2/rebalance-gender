@@ -32,7 +32,10 @@ export default function AboutEditForm({ initialValue }: { initialValue: string }
         <a href="/about" className="text-violet-600 hover:underline dark:text-violet-400">
           About page
         </a>
-        . Leave a blank line between paragraphs.
+        . You can use HTML — e.g. <code>&lt;p&gt;</code> for paragraphs,{" "}
+        <code>&lt;a href=&quot;…&quot;&gt;</code> for links,{" "}
+        <code>&lt;strong&gt;</code>, and <code>&lt;ul&gt;/&lt;li&gt;</code> for
+        lists.
       </p>
 
       <textarea

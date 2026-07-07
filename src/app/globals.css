@@ -70,6 +70,40 @@ h3 {
   font-family: var(--font-mono), ui-monospace, "Space Mono", monospace;
 }
 
+/* Styling for admin-authored HTML on the /about page (rendered via
+   dangerouslySetInnerHTML). These elements carry no Tailwind classes, so
+   plain CSS applies cleanly. */
+.about-content p {
+  margin-bottom: 1rem;
+}
+.about-content a {
+  color: var(--violet-brand);
+  text-decoration: underline;
+}
+.about-content a:hover {
+  color: var(--magenta);
+}
+.about-content h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 1.75rem 0 0.5rem;
+}
+.about-content h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 1.35rem 0 0.5rem;
+}
+.about-content ul,
+.about-content ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+.about-content ul { list-style: disc; }
+.about-content ol { list-style: decimal; }
+.about-content li { margin-bottom: 0.25rem; }
+.about-content strong { font-weight: 600; }
+.about-content em { font-style: italic; }
+
 /* Gradient text (headings, brand word). */
 .grad-text {
   background: linear-gradient(92deg, var(--violet-brand), var(--magenta));
