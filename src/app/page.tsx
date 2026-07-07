@@ -1,7 +1,6 @@
 // "home" page
 // src/app/page.tsx
 
-import Link from "next/link";
 import ArtistCard from "@/components/ArtistCard";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
@@ -35,27 +34,19 @@ export default async function Home({ searchParams }: PageProps) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6 flex items-baseline justify-between">
-        <div>
-          <h1 className="ff-display text-3xl font-bold tracking-tight">
-            Artist <span className="grad-text">Directory</span>
-          </h1>
-          {artistCount ? (
-            <p className="ff-mono mt-1.5 text-sm text-gray-500 dark:text-gray-400">
-              More than{" "}
-              <b className="font-bold text-[#7c5cff] dark:text-[#ff2d9b]">
-                {artistCount.toLocaleString()}
-              </b>{" "}
-              artists
-            </p>
-          ) : null}
-        </div>
-        <Link
-          href="/discover"
-          className="text-sm text-violet-600 hover:underline dark:text-violet-400"
-        >
-          Find artists similar to one you love →
-        </Link>
+      <div className="mb-6">
+        <h1 className="ff-display text-3xl font-bold tracking-tight">
+          Artist <span className="grad-text">Directory</span>
+        </h1>
+        {artistCount ? (
+          <p className="ff-mono mt-1.5 text-sm text-gray-500 dark:text-gray-400">
+            More than{" "}
+            <b className="font-bold text-[#7c5cff] dark:text-[#ff2d9b]">
+              {artistCount.toLocaleString()}
+            </b>{" "}
+            artists
+          </p>
+        ) : null}
       </div>
       <FilterBar genres={genres} countries={countries} />
 

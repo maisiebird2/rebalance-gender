@@ -94,6 +94,10 @@ export default async function RootLayout({
                 <DiscoverMenu />
               </div>
               <nav className="flex items-center gap-4 text-sm">
+                {/* Mobile-only: desktop reaches Discover via the pill above. */}
+                <Link href="/discover" className="hover:underline sm:hidden">
+                  Discover
+                </Link>
                 <a href="/submit" className="hover:underline">
                   Submit an artist
                 </a>

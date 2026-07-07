@@ -10,12 +10,65 @@ import { useRouter } from "next/navigation";
  * input, and a hint. Submitting routes to /discover with the query
  * prefilled, where the results render.
  */
+
+// Sample artist names for the input placeholder — one is picked at random
+// each time the page loads. Edit this list to change the suggestions.
+const SAMPLE_ARTISTS = [
+  "Peggy Gou",
+  "David Guetta",
+  "Martin Garrix",
+  "Alok",
+  "Armin Van Buuren",
+  "Timmy Trumpet",
+  "FISHER",
+  "Skrillex",
+  "Afrojack",
+  "Anyma",
+  "Vintage Culture",
+  "Don Diablo",
+  "Steve Aoki",
+  "Tiësto",
+  "Indira Paganotto",
+  "Amelie Lens",
+  "Lilly Palmer",
+  "Nora En Pure ",
+  "Deborah De Luca",
+  "Chris Lake",
+  "Zeds Dead",
+  "Boys Noize",
+  "Subtronics",
+  "Crankdat",
+  "Knock2",
+  "Kaytranada",
+  "A. G. Cook",
+  "Brutalismus 3000",
+  "DJ Anderson do Paraíso",
+  "REZZ",
+  "Ninajirachi",
+  "Alison Wonderland",
+  "Charlotte de Witte",
+  "Vintage Culture",
+  "Fred again...",
+  "Sara Landry",
+  "Miss Monique",
+  "Honey Dijon",
+];
+
 export default function DiscoverMenu() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [placeholder, setPlaceholder] = useState(`e.g. ${SAMPLE_ARTISTS[0]}`);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Pick a random sample name for the placeholder on each page load. Done in
+  // an effect (not during render) so server and client markup match.
+  useEffect(() => {
+    const pick =
+      SAMPLE_ARTISTS[Math.floor(Math.random() * SAMPLE_ARTISTS.length)];
+    setPlaceholder(`e.g. ${pick}`);
+  }, []);
 
   // Focus the field when the panel opens.
   useEffect(() => {
@@ -63,17 +116,17 @@ export default function DiscoverMenu() {
           <i></i>
           <i></i>
         </span>
-        Find similar
+        Discover similar
       </button>
 
       {open && (
         <div
           role="dialog"
-          aria-label="Find similar artists"
+          aria-label="Discover similar artists"
           className="absolute right-0 top-[calc(100%+12px)] z-50 w-80 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl dark:border-white/10 dark:bg-[#12101b]/95 dark:shadow-2xl dark:backdrop-blur-xl"
         >
           <h2 className="ff-display text-[15px] font-semibold">
-            Find artists similar to one you love
+            Discover artists similar to one you love
           </h2>
           <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
             Enter an artist you love and we&rsquo;ll surface others in the
@@ -84,14 +137,14 @@ export default function DiscoverMenu() {
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. Objekt"
+              placeholder={placeholder}
               className="ff-mono h-9 flex-1 rounded-lg border border-gray-300 px-3 text-sm focus:border-[#ff2d9b] focus:outline-none focus:ring-2 focus:ring-[#ff2d9b]/20 dark:border-white/10 dark:bg-white/5 dark:text-gray-100"
             />
             <button
               type="submit"
               className="h-9 shrink-0 rounded-lg bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-700 dark:border-transparent dark:bg-[linear-gradient(92deg,#7c5cff,#ff2d9b)] dark:hover:opacity-90"
             >
-              Find
+              Discover
             </button>
           </form>
           <p className="ff-mono mt-2 text-[11px] text-gray-400 dark:text-gray-500">
