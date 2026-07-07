@@ -7,6 +7,9 @@ import TextList from "@/components/form/TextList";
 import GenreList from "@/components/form/GenreList";
 import LocationList, { type LocationRow } from "@/components/form/LocationList";
 import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
+import Field from "@/components/form/Field";
+import TextArea from "@/components/form/TextArea";
+import { mergeGenreOptions } from "@/lib/genre-options";
 
 interface Props {
   artist: ArtistWithRelations;
@@ -151,9 +154,7 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
   const bio =
     artist.enrichment?.find((e) => e.platform === "soundcloud")?.bio ?? "";
 
-  const mergedGenreOptions = Array.from(
-    new Set([...genreOptions, ...(artist.genres ?? []).map((g) => g.name)])
-  ).sort((a, b) => a.localeCompare(b));
+  const mergedGenreOptions = mergeGenreOptions(genreOptions, artist);
 
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-8 pb-20">
@@ -350,66 +351,5 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
         </div>
       </div>
     </form>
-  );
-}
-
-// ── Small helpers ─────────────────────────────────────────────────
-
-function Field({
-  label,
-  name,
-  defaultValue,
-  placeholder,
-  required,
-}: {
-  label: string;
-  name: string;
-  defaultValue?: string;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={name} className="text-sm font-medium">
-        {label}
-        {required && <span className="ml-1 text-red-500">*</span>}
-      </label>
-      <input
-        id={name}
-        name={name}
-        type="text"
-        defaultValue={defaultValue}
-        placeholder={placeholder}
-        required={required}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-      />
-    </div>
-  );
-}
-
-function TextArea({
-  label,
-  name,
-  defaultValue,
-  rows = 4,
-}: {
-  label: string;
-  name: string;
-  defaultValue?: string;
-  rows?: number;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={name} className="text-sm font-medium">
-        {label}
-      </label>
-      <textarea
-        id={name}
-        name={name}
-        defaultValue={defaultValue}
-        rows={rows}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
-      />
-    </div>
   );
 }

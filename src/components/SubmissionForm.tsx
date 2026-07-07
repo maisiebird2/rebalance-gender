@@ -8,6 +8,7 @@ import TextList from "./form/TextList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
 import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
+import Field from "./form/Field";
 
 interface Props {
   genreOptions: string[];
@@ -128,7 +129,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
         <input id="_hp" name="_hp" type="text" tabIndex={-1} autoComplete="off" />
       </div>
 
-      <Field label="Name *" name="name" required />
+      <Field label="Name" name="name" required />
       <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her" />
 
       <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
@@ -223,19 +224,5 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
         </div>
       </div>
     </form>
-  );
-}
-
-function Field({
-  label, name, placeholder, required, type = "text",
-}: {
-  label: string; name: string; placeholder?: string; required?: boolean; type?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={name} className="text-sm font-medium">{label}</label>
-      <input id={name} name={name} type={type} placeholder={placeholder} required={required}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-    </div>
   );
 }

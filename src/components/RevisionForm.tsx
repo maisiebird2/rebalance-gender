@@ -7,16 +7,19 @@ import TextList from "./form/TextList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
 import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
+import Field from "./form/Field";
+import TextArea from "./form/TextArea";
+import { mergeGenreOptions } from "@/lib/genre-options";
 
 interface Props {
   artist: ArtistWithRelations;
-  allGenres: string[];
+  genreOptions: string[];
   platforms: Platform[];
 }
 
 type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
 
-export default function RevisionForm({ artist, allGenres, platforms }: Props) {
+export default function RevisionForm({ artist, genreOptions, platforms }: Props) {
   // Pre-populate with existing artist data
   const [genres, setGenres] = useState<string[]>(
     artist.genres?.length ? artist.genres.map((g) => g.name) : [""]
@@ -130,6 +133,8 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
     );
   }
 
+  const mergedGenreOptions = mergeGenreOptions(genreOptions, artist);
+
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   return (
@@ -145,14 +150,14 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
         All fields are pre-filled with the current data. Update anything that&apos;s wrong or out of date.
       </p>
 
-      <Field label="Name *" name="name" required defaultValue={artist.name} />
+      <Field label="Name" name="name" required defaultValue={artist.name} />
       <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her"
         defaultValue={artist.pronoun?.value ?? ""} />
 
       <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
         placeholder="e.g. DJ Name, Former name" />
 
-      <GenreList label="Genres" values={genres} onChange={setGenres} options={allGenres} />
+      <GenreList label="Genres" values={genres} onChange={setGenres} options={mergedGenreOptions} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Location</legend>
@@ -167,18 +172,12 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
         <ProfileLinksFieldset platforms={platforms} values={linkUrls} onChange={updateLinkUrl} />
       </fieldset>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="submitterNotes" className="text-sm font-medium">
-          What changed and why? (optional)
-        </label>
-        <textarea
-          id="submitterNotes"
-          name="submitterNotes"
-          placeholder="e.g. She moved from Berlin to London last year. New Instagram handle."
-          rows={3}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-        />
-      </div>
+      <TextArea
+        label="What changed and why? (optional)"
+        name="submitterNotes"
+        placeholder="e.g. She moved from Berlin to London last year. New Instagram handle."
+        rows={3}
+      />
 
       <Field
         label="Your email (required — we'll send a confirmation link)"
@@ -219,21 +218,5 @@ export default function RevisionForm({ artist, allGenres, platforms }: Props) {
         </div>
       </div>
     </form>
-  );
-}
-
-function Field({
-  label, name, placeholder, required, type = "text", defaultValue,
-}: {
-  label: string; name: string; placeholder?: string;
-  required?: boolean; type?: string; defaultValue?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={name} className="text-sm font-medium">{label}</label>
-      <input id={name} name={name} type={type} placeholder={placeholder}
-        required={required} defaultValue={defaultValue}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-    </div>
   );
 }
