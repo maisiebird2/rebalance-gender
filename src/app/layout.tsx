@@ -50,8 +50,8 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-gray-950">
         <SmokeBackdrop />
-        <header className="sticky top-0 z-20 border-b border-gray-200 bg-white dark:border-white/10 dark:bg-[#0a0910]/70 dark:backdrop-blur-lg">
-          <div className="mx-auto max-w-6xl px-4">
+        <header className="club-header sticky top-0 z-20 border-b border-gray-200 bg-white dark:border-white/10 dark:bg-[#0a0910]/70 dark:backdrop-blur-lg">
+          <div className="relative z-10 mx-auto max-w-6xl px-4">
             {/* Admin row — only rendered when signed in, takes no space otherwise */}
             {user && (
               <div className="flex items-center justify-end gap-4 border-b border-gray-100 py-1.5 text-sm dark:border-gray-800">

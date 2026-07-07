@@ -154,6 +154,41 @@ html:not(.dark) .smoke-layer {
   border-color: rgba(255, 255, 255, 0.06);
 }
 
+/* --- Header texture: CRT scanlines + accent underglow (dark only) -------
+   `::before` is the scanline overlay (a repeating 1px line every 3px);
+   `::after` is the underglow — a violet→magenta hairline with a soft glow
+   on the bottom edge. Header content is lifted above both with `z-10`. */
+.dark .club-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.06) 0 1px,
+    transparent 1px 3px
+  );
+}
+.dark .club-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 4%,
+    var(--violet-brand) 30%,
+    var(--magenta) 70%,
+    transparent 96%
+  );
+  box-shadow: 0 0 12px 1px rgba(255, 45, 155, 0.45);
+}
+
 /* --- Glass artist card -------------------------------------------------
    The translucent background + blur + border are applied as Tailwind
    `dark:` utilities on the element itself (reliable ordering); here we
