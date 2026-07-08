@@ -10,14 +10,19 @@
 //
 // Any lines about booking, management, or contact info are split out
 // of the bio and stored separately on the artists table
-// (booking_info, management_info, contact_info columns). Any Linktree
-// URL is likewise split out and stored in linktree_url.
+// (booking_info, management_info, contact_info columns).
+//
+// Any Linktree URL is likewise split out of the bio, but — since a
+// Linktree page is just another profile link — it's added to
+// artist_links (platform = 'linktree') instead of being stored on the
+// artists table, same as the other harvested links below. It's only
+// added if the artist doesn't already have a linktree link.
 //
 // The same page's hydration data also lists the artist's other
 // profile links (Instagram, Bandcamp, etc., from SoundCloud's
 // "Links" section). Any of these for platforms we don't already
-// have a link for are added to artist_links. Twitter/X links are
-// always skipped.
+// have a link for are added to artist_links the same way. Twitter/X
+// links are always skipped.
 //
 // No API keys required.
 //
@@ -392,6 +397,14 @@ async function main() {
         existingLinks.push({ platform: link.platform, url: link.url });
       }
 
+      // A Linktree URL found in the bio is treated the same way — added
+      // to artist_links (platform = 'linktree') unless the artist
+      // already has one.
+      if (linktreeUrl && !existingLinks.some((l) => l.platform === "linktree")) {
+        newLinks.push({ platform: "linktree", url: linktreeUrl, handle: null });
+        existingLinks.push({ platform: "linktree", url: linktreeUrl });
+      }
+
       const summary = bio
         ? `"${bio.slice(0, 80)}${bio.length > 80 ? "…" : ""}"`
         : "(no bio text)";
@@ -399,7 +412,6 @@ async function main() {
         booking && "booking",
         management && "management",
         contact && "contact",
-        linktreeUrl && "linktree",
         newLinks.length > 0 &&
           `${newLinks.length} link${newLinks.length === 1 ? "" : "s"} (${newLinks
             .map((l) => l.platform)
@@ -427,19 +439,18 @@ async function main() {
           }
         }
 
-        if (booking || management || contact || linktreeUrl) {
+        if (booking || management || contact) {
           const update = {};
           if (booking) update.booking_info = booking;
           if (management) update.management_info = management;
           if (contact) update.contact_info = contact;
-          if (linktreeUrl) update.linktree_url = linktreeUrl;
 
           const { error: updateError } = await supabase
             .from("artists")
             .update(update)
             .eq("id", artist.id);
           if (updateError) {
-            console.error(`  failed to save booking/management/contact/linktree: ${updateError.message}`);
+            console.error(`  failed to save booking/management/contact: ${updateError.message}`);
           }
         }
 

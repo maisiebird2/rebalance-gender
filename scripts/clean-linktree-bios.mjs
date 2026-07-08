@@ -2,7 +2,8 @@
 // ============================================================
 // One-time cleanup: strip Linktree URLs (and any leftover "Linktree"
 // label text) out of bios already stored in artist_enrichment, and
-// move the URL into artists.linktree_url.
+// add the URL to artist_links (platform = 'linktree') — unless the
+// artist already has a linktree link, in which case it's left alone.
 //
 // Usage (from the rebalance-gender/ folder):
 //
@@ -13,9 +14,14 @@
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
 //
 // After this has been run once, enrich-bios.mjs already strips
-// Linktree links out of any newly-fetched bios going forward, so this
-// script shouldn't need to be run again unless old bios are
-// reintroduced.
+// Linktree links out of any newly-fetched bios going forward (adding
+// them to artist_links the same way), so this script shouldn't need
+// to be run again unless old bios are reintroduced.
+//
+// NOTE: this script used to write the extracted URL to the now-retired
+// artists.linktree_url column. If you're looking at existing data in
+// that column, see scripts/migrate-linktree-to-links.ts, which moves
+// it into artist_links (and flags any conflicts for manual review).
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -100,8 +106,31 @@ async function main() {
   const { data: rows, error } = await query;
   if (error) throw error;
 
+  // Artists that already have a Linktree link (artist_links, platform =
+  // 'linktree'), preloaded once so a URL found in a bio only gets added
+  // when the artist doesn't already have one. Paginated — PostgREST
+  // caps unpaginated selects at 1000 rows.
+  const artistIdsWithLinktree = new Set();
+  {
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error: linktreeIdsError } = await supabase
+        .from("artist_links")
+        .select("artist_id")
+        .eq("platform", "linktree")
+        .order("artist_id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (linktreeIdsError) throw linktreeIdsError;
+      for (const r of data ?? []) artistIdsWithLinktree.add(r.artist_id);
+      if ((data?.length ?? 0) < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+
   let changed = 0;
   let unchanged = 0;
+  let skippedExisting = 0;
 
   for (const row of rows) {
     const name = row.artists?.name ?? row.artist_id;
@@ -112,9 +141,15 @@ async function main() {
       continue;
     }
 
+    const alreadyHasLinktree = artistIdsWithLinktree.has(row.artist_id);
+
     changed++;
     const newBio = cleanedBio || null;
-    console.log(`✓ ${name}: linktree -> ${linktreeUrl}`);
+    console.log(
+      `✓ ${name}: linktree -> ${linktreeUrl}${
+        alreadyHasLinktree ? " (artist already has a linktree link — not added again)" : ""
+      }`
+    );
     if (newBio !== row.bio) {
       console.log(
         `  bio: "${row.bio.slice(0, 60)}${row.bio.length > 60 ? "…" : ""}" -> ${
@@ -122,6 +157,7 @@ async function main() {
         }`
       );
     }
+    if (alreadyHasLinktree) skippedExisting++;
 
     if (!DRY_RUN) {
       const { error: bioError } = await supabase
@@ -132,19 +168,24 @@ async function main() {
         console.error(`  failed to update bio: ${bioError.message}`);
       }
 
-      const { error: linkError } = await supabase
-        .from("artists")
-        .update({ linktree_url: linktreeUrl })
-        .eq("id", row.artist_id);
-      if (linkError) {
-        console.error(`  failed to update linktree_url: ${linkError.message}`);
+      if (!alreadyHasLinktree) {
+        const { error: linkError } = await supabase.from("artist_links").upsert(
+          { artist_id: row.artist_id, platform: "linktree", url: linktreeUrl },
+          { onConflict: "artist_id,platform", ignoreDuplicates: true }
+        );
+        if (linkError) {
+          console.error(`  failed to save linktree link: ${linkError.message}`);
+        } else {
+          artistIdsWithLinktree.add(row.artist_id);
+        }
       }
     }
   }
 
   console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  cleaned:   ${changed}`);
-  console.log(`  unchanged: ${unchanged}`);
+  console.log(`  cleaned:                    ${changed}`);
+  console.log(`  unchanged:                  ${unchanged}`);
+  console.log(`  (artist already had a link): ${skippedExisting}`);
 }
 
 main().catch((err) => {

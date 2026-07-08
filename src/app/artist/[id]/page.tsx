@@ -159,7 +159,7 @@ export default async function ArtistPage({ params }: PageProps) {
           )}
 
           {/* Profile links */}
-          {(artist.links?.some((l) => !l.not_found) || artist.linktree_url) && (
+          {artist.links?.some((l) => !l.not_found) && (
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
               {artist.links?.filter((l) => !l.not_found && l.url).map((link) => (
                 <a
@@ -172,17 +172,6 @@ export default async function ArtistPage({ params }: PageProps) {
                   {platformLabel(platforms, link.platform)}
                 </a>
               ))}
-
-              {artist.linktree_url && (
-                <a
-                  href={artist.linktree_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-violet-600 hover:underline dark:text-violet-400"
-                >
-                  Linktree
-                </a>
-              )}
             </div>
           )}
 

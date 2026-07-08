@@ -539,8 +539,8 @@ in the automated pipeline:
   Manual CSV-based review is no longer the intended workflow.
 
 - **`clean-linktree-bios.mjs`** — one-time backfill that extracted
-  Linktree URLs embedded in bios and moved them to
-  `artists.linktree_url`. `enrich-soundcloud.mjs` (Phase 2a) now
+  Linktree URLs embedded in bios and added them to `artist_links`
+  (platform = `linktree`). `enrich-soundcloud.mjs` (Phase 2a) now
   handles Linktree extraction as part of its bio processing, so new
   bios never need this pass. Safe to re-run, but no longer part of
   the pipeline.
@@ -875,6 +875,36 @@ next to a correct direct link). Extend the existing Spotify-style
 skip to all three services, so Phase 2's direct links suppress
 Phase 3 work entirely for those (artist, service) pairs.
 
+### Persist harvest failures as queryable data
+
+Today a fetch/resolve failure in the Phase 2 scripts exists only as
+a console line and a `fetchFailed` tally — once the terminal
+scrolls, the information is gone. The only durable trace is
+indirect: transient failures leave no `resolved_artists` row (so
+they retry next run), and 404s mark the artist processed without
+recording *why*. Plan: record failures somewhere queryable — either
+add `status` / `detail` columns to `resolved_artists` (e.g.
+`status = 'failed'`, `detail = 'resolve 404'`) or a small
+`harvest_failures` table — so dead links and wrong-field URLs
+become reviewable data. This matters more as the orchestrator runs
+phases unattended: a scheduled run's failures need to surface
+somewhere other than scrollback. (Found via a real case: an artist
+whose `soundcloud` link field contained a Spotify URL failed
+`/resolve`, was 404-marked processed, and left no record of the
+underlying bad link.)
+
+### Guard harvesters against wrong-field URLs
+
+Cheap pre-check in each Phase 2 fetcher: before spending an API
+call, verify the stored URL's domain actually matches the platform
+being processed (e.g. `soundcloud.com` for the SoundCloud scripts,
+`discogs.com/artist/` for the Discogs harvester — the latter
+already effectively does this via its artist-ID regex). On
+mismatch, skip and flag (see "Persist harvest failures" above)
+instead of calling the API. Wrong-field rows are exactly what
+`qc-links.mjs` (Phase 8) detects after the fact; this catches them
+at point of use too.
+
 Considered and set aside: Spotify (API exposes no external links),
 Last.fm (none structured; page links mostly mirror MB's), Resident
 Advisor (links exist on ra.co artist pages but only via an
@@ -913,17 +943,24 @@ best-effort).
 
 ### New harvester: `harvest-links-linktree.mjs`
 
-`artists.linktree_url` is already populated (extracted from
-SoundCloud bios by 2a), and Linktree pages exist precisely to list
-an artist's other platforms. Harvesting the links from each artist's
-Linktree page and staging them in `artist_harvested_links` (same
-promotion path as above) would recover much of what Instagram bios
-contain — without scraping Instagram, which was considered and
-rejected: Meta's ToS prohibits automated collection, logged-out
-requests hit login walls, the official APIs expose no third-party
-profile data, and any scraper would break constantly. Pronouns
-should instead come from the site's own submit/revise forms, and
-follower counts already come from SoundCloud and Spotify.
+Artists with an `artist_links` row for `linktree` (extracted from
+SoundCloud bios by 2a, or submitted/edited directly) already have a
+seed URL, and Linktree pages exist precisely to list an artist's
+other platforms. Harvesting the links from each artist's Linktree
+page and staging them in `artist_harvested_links` (same promotion
+path as above) would recover much of what Instagram bios contain —
+without scraping Instagram, which was considered and rejected: Meta's
+ToS prohibits automated collection, logged-out requests hit login
+walls, the official APIs expose no third-party profile data, and any
+scraper would break constantly. Pronouns should instead come from the
+site's own submit/revise forms, and follower counts already come from
+SoundCloud and Spotify.
+
+(Note: Linktree URLs used to also live in a separate
+`artists.linktree_url` column; that's been retired in favor of
+`artist_links` only — see `scripts/migrate-linktree-to-links.ts` for
+the one-time migration. This harvester should read its seed URLs from
+`artist_links` (platform = `linktree`), not from `artists`.)
 
 ### Related cleanups to fold in
 

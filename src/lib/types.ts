@@ -172,7 +172,6 @@ export interface Artist {
   booking_info: string | null;
   management_info: string | null;
   contact_info: string | null;
-  linktree_url: string | null;
   deleted: boolean;
   created_at: string;
   updated_at: string;

@@ -34,6 +34,7 @@
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
     "linkify-bios": "tsx scripts/linkify-bios.ts",
     "update-artist-count": "node scripts/update-artist-count.mjs",
+    "migrate-linktree-to-links": "tsx scripts/migrate-linktree-to-links.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

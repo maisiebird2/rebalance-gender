@@ -183,6 +183,31 @@ async function markProcessed(artistId) {
 }
 
 // ------------------------------------------------------------
+// Artists that already have a Linktree link (artist_links, platform =
+// 'linktree'), preloaded once so a Linktree URL found in a bio only
+// gets written when the artist doesn't already have one. Paginated —
+// same reasoning as loadProcessedArtistIds.
+// ------------------------------------------------------------
+async function loadArtistIdsWithLinktreeLink() {
+  const PAGE_SIZE = 1000;
+  const ids = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("artist_links")
+      .select("artist_id")
+      .eq("platform", "linktree")
+      .order("artist_id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) ids.add(r.artist_id);
+    if ((data?.length ?? 0) < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return ids;
+}
+
+// ------------------------------------------------------------
 // SoundCloud OAuth (Client Credentials — app-only, public resources).
 // One token is fetched and reused for the whole run; refreshed on 401.
 // ------------------------------------------------------------
@@ -326,6 +351,8 @@ async function main() {
     );
   }
 
+  const artistIdsWithLinktree = await loadArtistIdsWithLinktreeLink();
+
   const links = await fetchAllSoundCloudLinks();
 
   let rows = links;
@@ -410,8 +437,10 @@ async function main() {
     // -- Process the bio through the same pipeline as enrich-bios.mjs --
     // decodeEntities → boilerplate check → decodeGateSc → extractLinktree
     // → parseDescription. This splits the raw description into a clean bio
-    // plus any booking/management/contact info and Linktree URL, which are
-    // stored separately on the artists table (same as enrich-bios does).
+    // plus any booking/management/contact info and Linktree URL. Booking/
+    // management/contact are stored on the artists table (same as
+    // enrich-bios does); the Linktree URL is added to artist_links
+    // (platform = 'linktree') instead, unless the artist already has one.
     let bio = null;
     let booking = null;
     let management = null;
@@ -460,20 +489,36 @@ async function main() {
         continue;
       }
 
-      // Write booking/management/contact/linktree to the artists table,
-      // same as enrich-bios does — only updating fields that were found.
-      if (booking || management || contact || linktreeUrl) {
+      // Write booking/management/contact to the artists table, same as
+      // enrich-bios does — only updating fields that were found.
+      if (booking || management || contact) {
         const update = {};
         if (booking) update.booking_info = booking;
         if (management) update.management_info = management;
         if (contact) update.contact_info = contact;
-        if (linktreeUrl) update.linktree_url = linktreeUrl;
         const { error: artistUpdateError } = await supabase
           .from("artists")
           .update(update)
           .eq("id", row.artist_id);
         if (artistUpdateError) {
-          console.error(`  failed to save booking/management/contact/linktree: ${artistUpdateError.message}`);
+          console.error(`  failed to save booking/management/contact: ${artistUpdateError.message}`);
+        }
+      }
+
+      // A Linktree URL found in the description is added to artist_links
+      // (platform = 'linktree') instead — same as a harvested link —
+      // unless the artist already has one.
+      if (linktreeUrl && !artistIdsWithLinktree.has(row.artist_id)) {
+        const { error: linktreeError } = await supabase
+          .from("artist_links")
+          .upsert(
+            { artist_id: row.artist_id, platform: "linktree", url: linktreeUrl },
+            { onConflict: "artist_id,platform", ignoreDuplicates: true }
+          );
+        if (linktreeError) {
+          console.error(`  failed to save linktree link: ${linktreeError.message}`);
+        } else {
+          artistIdsWithLinktree.add(row.artist_id);
         }
       }
 
