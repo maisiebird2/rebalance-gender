@@ -130,17 +130,18 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
       </div>
 
       <Field label="Name" name="name" required />
-      <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her" />
 
       <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
         placeholder="e.g. DJ Name, Former name" />
 
-      <GenreList label="Genres" values={genres} onChange={setGenres} options={genreOptions} />
+      <Field label="Pronouns" name="pronouns" placeholder="e.g. she/her" />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Location</legend>
         <LocationList values={locations} onChange={setLocations} />
       </fieldset>
+
+      <GenreList label="Genres" values={genres} onChange={setGenres} options={genreOptions} />
 
       <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
         placeholder="e.g. Ostgut Ton" />

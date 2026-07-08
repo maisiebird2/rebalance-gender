@@ -178,18 +178,15 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
 
         <Field label="Name" name="name" defaultValue={artist.name} required />
 
+        <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
+          placeholder="e.g. DJ Name, Former name" />
+
         <Field
           label="Pronouns"
           name="pronouns"
           defaultValue={artist.pronoun?.value ?? ""}
           placeholder="she/her"
         />
-
-        <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
-          placeholder="e.g. DJ Name, Former name" />
-
-        <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
-          placeholder="e.g. Ostgut Ton" />
 
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium" htmlFor="directory_status">
@@ -220,6 +217,13 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Genres</legend>
         <GenreList values={genres} onChange={setGenres} options={mergedGenreOptions} />
+      </fieldset>
+
+      {/* ── Labels / crews ─────────────────────────────────────── */}
+      <fieldset className="space-y-3">
+        <legend className="text-base font-semibold">Labels / crews</legend>
+        <TextList itemNoun="label" values={labelList} onChange={setLabelList}
+          placeholder="e.g. Ostgut Ton" />
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}
