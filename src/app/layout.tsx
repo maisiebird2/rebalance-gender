@@ -28,10 +28,28 @@ const body = Inter({
   display: "swap",
 });
 
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://rebalance-gender.app";
+const DESCRIPTION =
+  "A directory of women and gender-expansive producers and DJs in electronic music.";
+
 export const metadata: Metadata = {
+  // Makes the file-based opengraph-image / twitter-image / icon URLs absolute.
+  metadataBase: new URL(SITE_URL),
   title: "Rebalance Gender",
-  description:
-    "A directory of women and gender-expansive producers and DJs in electronic music.",
+  description: DESCRIPTION,
+  openGraph: {
+    type: "website",
+    siteName: "Rebalance Gender",
+    title: "Rebalance Gender",
+    description: DESCRIPTION,
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Rebalance Gender",
+    description: DESCRIPTION,
+  },
 };
 
 export default async function RootLayout({
