@@ -137,7 +137,7 @@ export const GENRE_ALIASES = new Map([
   ['dnb',                         'drum & bass'],
   ['drum n bass',                 'drum & bass'],
   ["drum 'n' bass",               'drum & bass'],
-  ['drum n\' bass',               'drum & bass'],
+  ["drum n' bass",                'drum & bass'],
   ["drum'n'bass",                 'drum & bass'],
   ['drumandbass',                 'drum & bass'],
   ['drum u bass',                 'drum & bass'],
@@ -145,6 +145,8 @@ export const GENRE_ALIASES = new Map([
   ['liquid d&b',                  'liquid drum & bass'],
   ['liquid dnb',                  'liquid drum & bass'],
   ['liquid drum n bass',          'liquid drum & bass'],
+  ['atmospheric dnb',             'atmospheric d&b'],
+  ['atmospheric drum and bass',   'atmospheric d&b'],
 
   // Dubstep
   ['dub step',                    'dubstep'],
@@ -165,18 +167,29 @@ export const GENRE_ALIASES = new Map([
   ['ebm',                         'EBM'],
   ['industrial electronic',       'industrial'],
   ['industrial music',            'industrial'],
+  ['industrialtechno',            'industrial techno'],
 
   // Techno variants (keep as distinct genres)
+  ['technoese',                   'techno'], // German
+  ['technöse',                    'techno'], // German
   ['minimal',                     'minimal techno'],
   ['micro techno',                'minimal techno'],
-  ['hard tekno',                  'hard techno'],
+  ['tecno',                       'techno'],
+  ['fast-paced techno',           'fast techno'],
+
+  // Tekno
+  ['freetekno',                   'tekno'],
+  ['hardtek',                     'tekno'],
+  ['hard tekno',                  'tekno'],
 
   // Trance
+  ['prog trance',                 'progressive trance'],
+
+  // Psychedelic
   ['psy trance',                  'psytrance'],
   ['psy-trance',                  'psytrance'],
   ['psychedelic trance',          'psytrance'],
-  ['progressive psy',             'psytrance'],
-  ['prog trance',                 'progressive trance'],
+  ['psycadelic techno',           'psy techno'],
 
   // Breakbeat
   ['breaks',                      'breakbeat'],
@@ -220,8 +233,9 @@ export const GENRE_ALIASES = new Map([
 
 
   // Electro
-  ['e-l-e-c-t-r-o',              'electro'],
+  ['e-l-e-c-t-r-o',               'electro'],
   ['eletrohouse',                 'electro house'],
+  ['eletro',                      'electro'],
 
   // Acid
   ['acidtechno',                  'acid techno'],
@@ -257,6 +271,12 @@ export const GENRE_ALIASES = new Map([
   ['hard trance',                 'hard trance'],
   ['hardstyle music',             'hardstyle'],
 
+  // Noise
+  ['noise-jazz',                  'noise jazz'],
+
+  // Pop
+  ['pop and chart',               'pop'],
+
   // Bass music
   ['bass music',                  'bass'],
   ['uk bass',                     'UK bass'],
@@ -265,21 +285,25 @@ export const GENRE_ALIASES = new Map([
   ['uk drill',                    'UK drill'],
 
   // R&B
-  ['rnb',                         'r&b'],
-  ['rhythm & blues',              'r&b'],
-  ['rhythm and blues',            'r&b'],
-  ['contemporary r&b',            'r&b'],
+  ['rnb',                         'R&B'],
+  ['rhythm & blues',              'R&B'],
+  ['rhythm and blues',            'R&B'],
+  ['contemporary r&b',            'R&B'],
+  ['alternative rnb',             'alternative R&B'],
 
   // Afro
-  ['afrohouse',                   'afro house'],
+  ['afrohouse',                   'Afro house'],
   ['afro tech',                   'afro tech'],
-  ['afrobeats',                   'Afrobeats'],
-  ['afro beats',                  'Afrobeats'],
+  ['afrobeats',                   'Afrobeat'],
+  ['afro beats',                  'Afrobeat'],
 
   // Electronic variants that map to something more specific
   ['left field electronic',       'leftfield'],
   ['leftfield electronic',        'leftfield'],
   ['left-field',                  'leftfield'],
+
+  // Punk
+  ['youth crew',                  'hardcore punk'],
 ])
 
 // ============================================================
