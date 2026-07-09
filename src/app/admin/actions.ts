@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -84,6 +84,7 @@ export async function addGenre(
       revalidatePath("/admin");
       revalidatePath("/submit");
       revalidatePath("/");
+      revalidateTag("genres", "max");
       return { success: true };
     }
     return { error: `"${name}" already exists` };
@@ -96,6 +97,7 @@ export async function addGenre(
   revalidatePath("/admin");
   revalidatePath("/submit");
   revalidatePath("/");
+  revalidateTag("genres", "max");
   return { success: true };
 }
 
@@ -111,6 +113,7 @@ export async function approveGenre(
   if (error) return { error: error.message };
   revalidatePath("/admin");
   revalidatePath("/");
+  revalidateTag("genres", "max");
 }
 
 export async function deleteGenre(
@@ -125,6 +128,7 @@ export async function deleteGenre(
   if (error) return { error: error.message };
   revalidatePath("/admin");
   revalidatePath("/");
+  revalidateTag("genres", "max");
 }
 
 export async function restoreGenre(
@@ -139,6 +143,7 @@ export async function restoreGenre(
   if (error) return { error: error.message };
   revalidatePath("/admin");
   revalidatePath("/");
+  revalidateTag("genres", "max");
 }
 
 // ── Revision moderation ────────────────────────────────────────────────

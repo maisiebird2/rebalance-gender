@@ -426,7 +426,7 @@ async function computeGenreOptions(): Promise<string[]> {
 export const getGenreOptions = unstable_cache(
   computeGenreOptions,
   ["genre-options"],
-  { revalidate: 600 },
+  { revalidate: 600, tags: ["genres"] },
 );
 
 async function computeGenrePickerOptions(): Promise<string[]> {
@@ -473,7 +473,7 @@ async function computeGenrePickerOptions(): Promise<string[]> {
 export const getGenrePickerOptions = unstable_cache(
   computeGenrePickerOptions,
   ["genre-picker-options"],
-  { revalidate: 600 },
+  { revalidate: 600, tags: ["genres"] },
 );
 
 /** All countries with at least one approved artist, for the filter UI. */
