@@ -3,7 +3,7 @@
 // Bio sanitization script.
 //
 // Reads every row in artist_enrichment that has a bio, runs the
-// bio through DOMPurify (server-side via isomorphic-dompurify),
+// bio through sanitize-html (pure Node.js, no DOM required),
 // and writes the sanitized HTML to bio_sanitized.
 //
 // Why a separate column rather than overwriting bio:
@@ -33,11 +33,11 @@
 //   DRY_RUN=1 npm run sanitize-bios           # log what would be written, but don't update the DB
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
-// Run `npm install` first to ensure isomorphic-dompurify is installed.
+// Uses sanitize-html, which is already a project dependency (npm install).
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
-import DOMPurify from "isomorphic-dompurify";
+import sanitizeHtml from "sanitize-html";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,27 +97,11 @@ if (!SUPABASE_URL || !SECRET_KEY) {
 const supabase = createClient(SUPABASE_URL, SECRET_KEY);
 
 // ------------------------------------------------------------
-// DOMPurify config
+// sanitize-html config
 // NOTE: keep this logic in sync with src/lib/sanitize-bio.ts,
 // which is the version used by the saveArtist server action.
+// (Both use sanitize-html — pure Node.js, no DOM required.)
 // ------------------------------------------------------------
-
-// Tags we want to preserve from the source HTML.
-const ALLOWED_TAGS = ["a", "br", "p", "strong", "em", "b", "i", "ul", "ol", "li"];
-
-// Attributes we allow on those tags.
-// `target` is not in DOMPurify's default set so we add it explicitly.
-const ALLOWED_ATTR = ["href", "target", "rel"];
-
-// After sanitization, add rel="noopener noreferrer" to every <a> tag.
-// This prevents tab-napping (window.opener access) and stops the
-// referrer header from leaking to external sites.
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
 
 /**
  * Convert a raw bio string to safe, renderable HTML.
@@ -126,20 +110,32 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
  *  1. Detect whether the bio already contains HTML markup. If not,
  *     convert bare newlines to <br> so line breaks are preserved
  *     when rendered as HTML.
- *  2. Run through DOMPurify to strip any unsafe tags/attributes.
+ *  2. Run through sanitize-html to strip any unsafe tags/attributes.
+ *  3. Add target="_blank" + rel="noopener noreferrer" to every <a>
+ *     tag (prevents tab-napping and referrer leakage to external sites).
  */
 function sanitizeBio(raw) {
   // Simple heuristic: if the string contains any HTML tag, treat it
   // as HTML and sanitize directly. Otherwise convert newlines first.
-  const hasHtml = /<[a-z][\s\S]*?>/i.test(raw);
+  const trimmed = raw.trim();
+  const hasHtml = /<[a-z][\s\S]*?>/i.test(trimmed);
+  const html = hasHtml ? trimmed : trimmed.replace(/\n/g, "<br>");
 
-  const html = hasHtml
-    ? raw
-    : raw.replace(/\n/g, "<br>");
-
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR,
+  return sanitizeHtml(html, {
+    allowedTags: ["a", "br", "p", "strong", "em", "b", "i", "ul", "ol", "li"],
+    allowedAttributes: {
+      a: ["href", "target", "rel"],
+    },
+    transformTags: {
+      a: (tagName, attribs) => ({
+        tagName,
+        attribs: {
+          ...attribs,
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+      }),
+    },
   });
 }
 
@@ -154,17 +150,26 @@ async function main() {
       `${LIMIT ? `, --limit=${LIMIT}` : ""}`
   );
 
-  // Fetch all matching enrichment rows, paginating past Supabase's 1000-row limit.
+  // Fetch matching enrichment rows using keyset pagination on the `id`
+  // primary key. This is much faster than OFFSET-style .range() (which
+  // re-scans skipped rows on every page and eventually hits Supabase's
+  // statement timeout), and it lets --limit cap the query itself instead
+  // of fetching the whole table and trimming afterward.
   const PAGE_SIZE = 1000;
   const rows = [];
-  let from = 0;
+  let lastId = 0;
   while (true) {
+    // When --limit is set, never request more than we still need.
+    const pageSize = LIMIT ? Math.min(PAGE_SIZE, LIMIT - rows.length) : PAGE_SIZE;
+    if (pageSize <= 0) break;
+
     let q = supabase
       .from("artist_enrichment")
       .select("id, artist_id, platform, bio, bio_sanitized")
       .not("bio", "is", null)
+      .gt("id", lastId)
       .order("id")
-      .range(from, from + PAGE_SIZE - 1);
+      .limit(pageSize);
 
     if (!FORCE) q = q.is("bio_sanitized", null);
     if (PLATFORM_FILTER) q = q.eq("platform", PLATFORM_FILTER);
@@ -175,11 +180,9 @@ async function main() {
       process.exit(1);
     }
     rows.push(...data);
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    if (data.length < pageSize) break;
+    lastId = data[data.length - 1].id;
   }
-
-  if (LIMIT) rows.splice(LIMIT);
 
   if (!rows.length) {
     console.log("No rows to process.");

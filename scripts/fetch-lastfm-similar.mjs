@@ -236,6 +236,25 @@ async function fetchAllPages(buildQuery) {
   return rows
 }
 
+// Keyset-paginated variant of fetchAllPages, for large or unindexed-filter
+// sweeps where OFFSET .range() re-scans everything before each page and can
+// hit a statement timeout. buildQuery receives the cursor (the last-seen value
+// of `cursorCol`, or null on the first page) and must order by cursorCol
+// ascending and apply .limit(PAGE_SIZE). Requires cursorCol to be selected and
+// strictly increasing (a primary key is ideal).
+async function fetchAllPagesKeyset(buildQuery, cursorCol = 'id') {
+  const rows = []
+  let cursor = null
+  while (true) {
+    const { data, error } = await buildQuery(cursor)
+    if (error) throw error
+    rows.push(...data)
+    if (data.length < PAGE_SIZE) break
+    cursor = data[data.length - 1][cursorCol]
+  }
+  return rows
+}
+
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
@@ -319,14 +338,20 @@ async function main() {
       } catch { /* ignore corrupt cache */ }
     }
 
-    const allUnmatched = await fetchAllPages(from =>
-      supabase
+    // Keyset pagination: there is no index for `similar_artist_id IS NULL`
+    // (idx_lastfm_similar_in_dir only covers IS NOT NULL), so an OFFSET sweep
+    // walks the whole PK index and heap-filters every page — a timeout risk as
+    // the table grows and unresolved rows get sparser.
+    const allUnmatched = await fetchAllPagesKeyset(cursor => {
+      let q = supabase
         .from('lastfm_similar_artists')
         .select('id, similar_artist_name, similar_artist_lfm_url, similar_artist_mbid')
         .is('similar_artist_id', null)
         .order('id')
-        .range(from, from + PAGE_SIZE - 1)
-    )
+        .limit(PAGE_SIZE)
+      if (cursor !== null) q = q.gt('id', cursor)
+      return q
+    })
     const unmatched = allUnmatched.filter(r => !triedIds.has(r.id))
     console.log(`  Found ${allUnmatched.length} row(s) without similar_artist_id; ${unmatched.length} not yet tried.`)
 

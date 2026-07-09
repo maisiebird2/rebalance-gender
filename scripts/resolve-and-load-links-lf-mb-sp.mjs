@@ -445,6 +445,25 @@ async function fetchAllPages(buildQuery) {
   }
   return rows
 }
+// Keyset-paginated variant, for sweeps whose ORDER BY isn't index-backed (an
+// OFFSET .range() would force a full sort on every page — a statement-timeout
+// risk). Pages by a strictly-increasing column (a primary key is ideal).
+// buildQuery receives the cursor (last-seen value of cursorCol, or null on the
+// first page) and must order by cursorCol ascending and apply .limit(PAGE_SIZE).
+// Any human-facing ordering should be applied in JS after the fetch.
+async function fetchAllPagesKeyset(buildQuery, cursorCol = 'id') {
+  const rows = []
+  let cursor = null
+  for (;;) {
+    const { data, error } = await buildQuery(cursor)
+    if (error) throw error
+    const batch = data ?? []
+    rows.push(...batch)
+    if (batch.length < PAGE_SIZE) break
+    cursor = batch[batch.length - 1][cursorCol]
+  }
+  return rows
+}
 async function fetchArtists() {
   const artists = await fetchAllPages((from, to) => supabase
     .from('artists').select('id, name').order('id').range(from, to))
@@ -555,10 +574,25 @@ async function loadBestMatches(services) {
 }
 // ── CSV export ─────────────────────────────────────────────────────────────────
 async function exportCsv() {
-  const rows = await fetchAllPages((from, to) => supabase
-    .from('pending_artist_links')
-    .select('artist_id, service, candidate_rank, external_name, external_id, url, confidence, score_name, score_location, score_bio, score_popularity, status, api_data')
-    .order('service').order('candidate_rank').order('artist_id').range(from, to))
+  // Keyset pagination on the PK: ordering by (service, candidate_rank,
+  // artist_id) isn't index-backed, so an OFFSET sweep re-sorts the whole table
+  // on every page (timeout risk). Page by `id`, then re-apply the human-facing
+  // ordering in JS below.
+  const rows = await fetchAllPagesKeyset(cursor => {
+    let q = supabase
+      .from('pending_artist_links')
+      .select('id, artist_id, service, candidate_rank, external_name, external_id, url, confidence, score_name, score_location, score_bio, score_popularity, status, api_data')
+      .order('id')
+      .limit(PAGE_SIZE)
+    if (cursor !== null) q = q.gt('id', cursor)
+    return q
+  })
+  // artist_id is a UUID (string) and candidate_rank an integer — compare
+  // accordingly. Mirrors the previous ORDER BY service, candidate_rank, artist_id.
+  rows.sort((a, b) =>
+    a.service.localeCompare(b.service) ||
+    a.candidate_rank - b.candidate_rank ||
+    a.artist_id.localeCompare(b.artist_id))
   const artists = await fetchAllPages((from, to) => supabase
     .from('artists').select('id, name').order('id').range(from, to))
   const nameMap = new Map(artists.map(a => [a.id, a.name]))
