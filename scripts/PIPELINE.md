@@ -26,7 +26,7 @@ flowchart TD
     P0["Phase 0 · Initial load (once)<br/>migrate.mjs"] --> P1
     WEB["Website entry (ongoing)<br/>submit / revise / edit"] -. "gap: not yet automatic" .-> P2
     P1["Phase 1 · Data quality<br/>clean-artist-names.mjs"] --> P2
-    P2["Phase 2 · Link &amp; profile harvesting<br/>2a/2b SoundCloud, 2c direct harvesters,<br/>2d promote (looped via harvest-links-loop.mjs),<br/>2e/2f cleanup"] --> P3
+    P2["Phase 2 · Link &amp; profile harvesting<br/>2a SoundCloud sync, 2c direct harvesters,<br/>2d promote (looped via harvest-links-loop.mjs),<br/>2e/2f cleanup"] --> P3
     P2 -.-> P6
     P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify"] --> P4
     P3 --> P5
@@ -65,7 +65,7 @@ npm run orchestrate-platform-enrichment -- --approved
 ```
 
 It runs, in dependency order: `clean-artist-names` (Phase 1) →
-`enrich-soundcloud` (2a) → `harvest-soundcloud-links-and-bio` (2b) →
+`sync-soundcloud` (2a — the merged SoundCloud sync stage) →
 `harvest-links-loop` (the 2c+2d convergence loop) → `enrich-bandcamp`
 (Phase 6, run last since it depends on Bandcamp links that 2d may have
 just promoted). Each stage tracks its own processed state in the
@@ -137,55 +137,126 @@ artist's platform picture for everything downstream (images, bios,
 matching, genres) and shrinks the set of artists that need
 best-match guessing at all.
 
-2a and 2b pull from SoundCloud (and are slated to be merged into a
-single stage — see "Planned changes"); 2c is the direct-link
-harvesters; 2d–2e promote and clean.
+2a pulls from SoundCloud in a single merged stage; 2c is the
+direct-link harvesters; 2d–2e promote and clean. (2b is retired —
+its functionality is now part of 2a; see below.)
 
-### 2a. `enrich-soundcloud.mjs`
-Uses the official SoundCloud API to fetch each artist's profile
-data: bio, follower count, track count, profile image URL, and
-numeric user ID. Writes to `artist_enrichment` (platform = `soundcloud`).
+### 2a. `sync-soundcloud.mjs`
+The merged SoundCloud stage (as of 2026-07-09; replaces the former
+`enrich-soundcloud.mjs` + `harvest-soundcloud-links-and-bio.mjs`
+pair, which each called `GET /resolve?url=<profile-url>` separately
+for the same artist — the same call returning the same user
+resource). This stage calls it once and fans the result out:
+
+- **Profile data** — bio, follower count, track count, profile image
+  URL, numeric user ID, and a playlists fallback for zero-track
+  accounts (`GET /users/{id}/playlists`, only called when
+  `track_count` is 0) — upserted into `artist_enrichment` (platform =
+  `soundcloud`). Same behavior as the old 2a.
+- **Other-platform links** — fetched via `GET
+  /users/{urn}/web-profiles` (the "Links" section) plus a scan of the
+  raw bio text for plain URLs and gate.sc-wrapped links — staged into
+  `artist_harvested_links` (never written directly to `artist_links`;
+  `integrate-harvested-links.mjs`, 2d, promotes it). Same behavior as
+  the old 2b.
+- **Raw bio** — the full, unparsed bio text is kept in
+  `artist_harvested_bios` as a raw-bio audit trail, alongside the
+  parsed/cleaned bio that reaches the live `artist_enrichment.bio`.
+
+Two API calls per artist (`/resolve` + `/users/{urn}/web-profiles`)
+is the floor — SoundCloud has no endpoint that returns the user
+resource and web-profiles together — down from three under the old
+two-script version.
+
+**Wrong-field URL guard:** before calling `/resolve`, the stored
+`artist_links.url` is checked against the `soundcloud.com` domain. A
+mismatch (e.g. a Spotify URL saved in the SoundCloud field) is
+skipped without spending an API call, logged to `harvest_failures`
+(below), and — same as a 404 — marked processed in `resolved_artists`:
+a domain mismatch doesn't fix itself on retry, so leaving it unmarked
+would just re-write the same failure row and re-run the same guard
+check every future run forever, for no benefit. The link-change
+cross-check described below still picks it back up automatically once
+a human corrects the link — no `--force` needed.
+
+**Failure persistence:** every resolve/write failure — wrong-field
+skips, 404s, transient resolve failures, and DB write failures — is
+recorded in the `harvest_failures` table (service = `soundcloud-sync`,
+via `scripts/lib/harvest-failures.mjs`: a short machine-readable
+`status`, a human-readable `detail`, and the offending `url`), so a
+scheduled/unattended run's failures are queryable afterward instead
+of living only in console scrollback. A later successful sync clears
+the row for that artist. Of the four failure statuses
+(`wrong_field_url`, `resolve_404`, `resolve_failed`, `write_failed`),
+`wrong_field_url` and `resolve_404` mark the artist processed
+(permanent until a human fixes something); `resolve_failed` and
+`write_failed` are presumed possibly-transient and retry on every run
+regardless. A single local `fail()` helper inside `syncArtist()` is
+the one place that decides which statuses mark the artist done (a
+`markDone` flag), rather than that decision being repeated inline at
+each failure site.
 
 Processed state is tracked in the database (`resolved_artists`,
-service = `soundcloud-enrich`), not a cache file — per project
+service = `soundcloud-sync`), not a cache file — per project
 convention. An artist is skipped once a state row exists; re-runs
-only touch artists that haven't been marked done. A resolve failure
-only marks an artist processed on a definitive dead link (404);
-transient failures (timeouts, rate limits, DB write errors) are left
-unmarked so the next run retries them.
+only touch artists that haven't been marked done. An artist is marked
+processed once every write for it succeeds, or on a resolve HTTP 404
+(definitive dead link) or a wrong-field URL (definitively not a
+SoundCloud link); transient resolve/write failures are left unmarked
+so the next run retries them.
+
+A 404- or wrong-field-marked artist isn't stuck forever: `resolved_artists`
+only records "done for this artist_id", not which URL was checked, so
+a link fix wouldn't otherwise be picked up without `--force` (which
+reprocesses everyone). Each run cross-references the URL
+`harvest_failures` recorded at failure time against the artist's
+current `artist_links` row (via `loadFailureUrls()` in
+`scripts/lib/harvest-failures.mjs`); if they differ — a human
+corrected the link since — that one artist is retried automatically.
+(Found 2026-07-09: Maisie fixed a 404'd artist's link through the
+admin UI and a re-run didn't pick it up — the cross-check was built to
+fix that, then generalized to also cover `wrong_field_url` once it
+became clear that status should mark the artist processed too, for
+the same "doesn't fix itself on retry" reason as a 404.)
+
+**Failures CSV:** every run (`DRY_RUN` or not) also writes a snapshot
+of every current `soundcloud-sync` row in `harvest_failures` to a CSV
+— `artist_name`, `rebalance_gender_url` (the artist's live page on the
+site, `NEXT_PUBLIC_SITE_URL` + `/artist/{id}`, so a reviewer can click
+straight through), `status`, `url` (the SoundCloud link that failed),
+and `occurred_at`, sorted by status then most-recent-first. Written to
+`sync-soundcloud-failures-<YYYY-MM-DD_HHMMSS>.csv` one level up from
+this repo — the "Rebalance Gender" folder, not inside
+`rebalance-gender-repo` — same convention as
+`other-links-domain-counts.mjs`; the timestamped filename means
+re-running never overwrites a previous run's report. See
+`writeFailuresCsv()`.
 
 ```bash
-npm run enrich-soundcloud
-npm run enrich-soundcloud -- --approved   # directory artists only
-npm run enrich-soundcloud -- --force      # re-process even artists with existing state
+npm run sync-soundcloud
+npm run sync-soundcloud -- --approved   # directory artists only
+npm run sync-soundcloud -- --force      # re-process even artists with existing state
+npm run sync-soundcloud -- --debug      # log raw API responses + every candidate link found
+DRY_RUN=1 npm run sync-soundcloud       # fetch + log, no DB writes
 ```
 
 `--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted) rather than every artist with a SoundCloud link (mostly unvetted `sc_followee` follow-graph nodes).
 
 Requires `SOUNDCLOUD_CLIENT_ID` and `SOUNDCLOUD_CLIENT_SECRET` in `.env.local`.
 
-### 2b. `harvest-soundcloud-links-and-bio.mjs`
-Uses the official SoundCloud API (`/users/{urn}/web-profiles`) to
-fetch each artist's platform links (Instagram, Spotify, Bandcamp,
-etc.) from the "Links" section of their SoundCloud profile. Writes
-to the `artist_harvested_links` staging table — does not touch
-`artist_links` directly. Also fetches bios, which are staged in
-`artist_harvested_bios` (note: no script currently promotes staged
-bios — live bios reach `artist_enrichment` via `enrich-soundcloud.mjs`
-in 2a instead).
+The per-artist sync is an exported `syncArtist()` function; the CLI
+loop in `main()` is a thin driver over it — the same shape a future
+event-triggered call (e.g. "sync this one artist from SoundCloud on
+admin approval," the pattern `src/lib/enrich-images.ts` already uses
+for images) can call directly for a single artist instead of a bulk
+run.
 
-Processed state uses the same `resolved_artists` pattern as 2a
-(service = `soundcloud-harvest`): an artist is only marked processed
-once its staged links/bio are written successfully, or on a
-definitive dead link (404) from the resolve call.
-
-```bash
-node scripts/harvest-soundcloud-links-and-bio.mjs
-node scripts/harvest-soundcloud-links-and-bio.mjs --approved   # directory artists only
-node scripts/harvest-soundcloud-links-and-bio.mjs --force      # re-process even artists with existing state
-```
-
-`--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted).
+Artists already synced under the old two-script system have
+`resolved_artists` rows for `soundcloud-enrich` and
+`soundcloud-harvest`, not `soundcloud-sync` — run
+`backfill-resolved-soundcloud-sync.mjs` first (see "Utility /
+diagnostic scripts") so the first bulk run of this stage doesn't
+re-fetch everyone from scratch.
 
 ### 2c. Direct-link harvesters
 
@@ -608,8 +679,16 @@ The following scripts have been superseded and should not be included
 in the automated pipeline:
 
 - **`enrich-bios.mjs`** — early SoundCloud bio scraper that parsed
-  SoundCloud's page HTML. Replaced by `enrich-soundcloud.mjs`, which
-  uses the official API and is more reliable.
+  SoundCloud's page HTML. Replaced by `sync-soundcloud.mjs` (Phase
+  2a), which uses the official API and is more reliable.
+
+- **`enrich-soundcloud.mjs`** (former 2a) and
+  **`harvest-soundcloud-links-and-bio.mjs`** (former 2b) — merged
+  2026-07-09 into `sync-soundcloud.mjs` (Phase 2a). Both called
+  `GET /resolve?url=<profile-url>` separately for the same artist;
+  the merged stage makes that call once and writes everything both
+  scripts used to write. See Phase 2a above and "Planned changes" →
+  "Merge the two SoundCloud scripts" for the full writeup.
 
 - **`apply-review-csv.mjs`** — applies manual review decisions from
   a CSV file (setting `directory_status`, deleting duplicates, etc.).
@@ -617,7 +696,7 @@ in the automated pipeline:
 
 - **`clean-linktree-bios.mjs`** — one-time backfill that extracted
   Linktree URLs embedded in bios and added them to `artist_links`
-  (platform = `linktree`). `enrich-soundcloud.mjs` (Phase 2a) now
+  (platform = `linktree`). `sync-soundcloud.mjs` (Phase 2a) now
   handles Linktree extraction as part of its bio processing, so new
   bios never need this pass. Safe to re-run, but no longer part of
   the pipeline.
@@ -661,12 +740,41 @@ Not part of the pipeline; run manually when debugging.
 - **`test-xlsx.mjs`** (project root) — throwaway probe of the
   original spreadsheet's Beatport column; safe to delete.
 
+- **`backfill-resolved-soundcloud-sync.mjs`** — one-off migration
+  helper, written 2026-07-09 when the old 2a (`enrich-soundcloud.mjs`)
+  + 2b (`harvest-soundcloud-links-and-bio.mjs`) pair merged into
+  `sync-soundcloud.mjs` under a new state service,
+  `soundcloud-sync`. For every artist with `resolved_artists` rows
+  under BOTH old services (`soundcloud-enrich` AND
+  `soundcloud-harvest` — i.e. fully synced under the old two-script
+  system), seeds a `soundcloud-sync` row so the merged stage's first
+  bulk run doesn't re-fetch everyone from SoundCloud. An artist with
+  only one of the two old rows is left alone; `sync-soundcloud.mjs`
+  picks it up on its own next run and does a full (cheap, 2-call)
+  resync, which is correct since the old partial state doesn't cover
+  everything the merged stage now writes (`harvest_failures` clears,
+  the `artist_harvested_bios` audit trail, etc.).
+
+  Same keyset-pagination approach and `--limit`/`--after` flags as
+  `backfill-resolved-soundcloud-enrich.mjs` below. Idempotent — skips
+  artist_ids that already have `soundcloud-sync` state.
+
+  ```bash
+  DRY_RUN=1 node scripts/backfill-resolved-soundcloud-sync.mjs            # preview, no writes
+  node scripts/backfill-resolved-soundcloud-sync.mjs
+  node scripts/backfill-resolved-soundcloud-sync.mjs --limit=200          # smaller batches per round-trip
+  node scripts/backfill-resolved-soundcloud-sync.mjs --after=<artist_id>  # resume after this artist_id
+  ```
+
 - **`backfill-resolved-soundcloud-enrich.mjs`** — one-off migration
-  helper, written 2026-07-03 when 2a switched from
+  helper, written 2026-07-03 when the old 2a switched from
   `enrich-soundcloud-cache.json` to `resolved_artists` (service =
   `soundcloud-enrich`) for processed-state tracking. Without it, the
   next 2a run would have treated every artist enriched before the
-  switch as unprocessed and re-fetched them all from SoundCloud.
+  switch as unprocessed and re-fetched them all from SoundCloud. Now
+  superseded by `backfill-resolved-soundcloud-sync.mjs` above (the
+  `soundcloud-enrich` service it targets is no longer written by any
+  active script) — kept for the historical record, safe to delete.
 
   Reads `artist_enrichment` for rows where `platform = 'soundcloud'`
   and `external_id` is not null — `external_id` (the SoundCloud
@@ -707,13 +815,6 @@ Not part of the pipeline; run manually when debugging.
   node scripts/backfill-resolved-soundcloud-enrich.mjs --after=<artist_id>  # resume after this artist_id (printed on a --limit run)
   ```
 
-  No equivalent backfill was written for 2b
-  (`harvest-soundcloud-links-and-bio.mjs`, service =
-  `soundcloud-harvest`) — a fresh run will just re-harvest artists
-  that already have `artist_harvested_links`/`artist_harvested_bios`
-  rows from before the switch, which is wasted API calls but harmless
-  (upserts on `artist_id,parsed_url`).
-
 ---
 
 ## Shared libraries (`scripts/lib/`)
@@ -724,7 +825,13 @@ Not part of the pipeline; run manually when debugging.
 - **`linktree.mjs`** — finds/removes Linktree URLs in bio text. Used
   by `enrich-bios.mjs` and `clean-linktree-bios.mjs`.
 - **`soundcloud-bio.mjs`** — SoundCloud bio parsing shared by
-  `enrich-bios.mjs` (legacy) and `enrich-soundcloud.mjs`.
+  `enrich-bios.mjs` (legacy) and `sync-soundcloud.mjs`.
+- **`harvest-failures.mjs`** — `recordFailure()` / `clearFailure()`
+  helpers against the `harvest_failures` table (one row per
+  `artist_id`/`service`, holding the *current* failure — a later
+  success clears it). Used by `sync-soundcloud.mjs`; intended to be
+  reused by future Phase 2 harvesters instead of each one inventing
+  its own failure-tracking shape.
 - **`non-genre-hints.mjs`** — heuristics (places, decades, roles,
   library junk) flagging `genres` rows that probably aren't musical
   genres. Used by `genre-report.mjs` for its `suspected_non_genre`
@@ -818,13 +925,22 @@ pipeline script or submit form touches it.
 
 ### Loose ends
 
-- **`artist_harvested_bios`** — Phase 2b stages raw SoundCloud bios
-  here, mirroring how 2b stages links in `artist_harvested_links`,
-  but a bio analogue of the 2d "integrate" step was never built —
-  bios reach `artist_enrichment` via Phase 2a instead. Wire it up
-  or drop it.
+- **`artist_harvested_bios`** — resolved 2026-07-09: `sync-soundcloud.mjs`
+  (Phase 2a) writes the full, unparsed SoundCloud bio here as a
+  deliberate raw-bio audit trail, alongside the parsed/cleaned bio it
+  writes to the live `artist_enrichment.bio`. No promotion step was
+  built (and none is planned) — this table is intentionally an audit
+  record of what SoundCloud actually returned, not a staging table
+  awaiting an "integrate" step.
 - **`resolved_artists`** — orphaned resolver state table; see the
   note under Phase 3.
+- **`harvest_failures`** — new 2026-07-09 (see Phase 2a and
+  `scripts/lib/harvest-failures.mjs`): one row per (`artist_id`,
+  `service`) holding the *current* failure for that pair, cleared on
+  the next success. Currently only written by `sync-soundcloud.mjs`
+  (service = `soundcloud-sync`); adopting it in the other Phase 2
+  harvesters (Discogs, and whatever Linktree/Bandcamp harvesters get
+  built) is still open.
 
 ---
 
@@ -832,8 +948,7 @@ pipeline script or submit form touches it.
 
 ```bash
 npm run clean-artist-names
-npm run enrich-soundcloud
-node scripts/harvest-soundcloud-links-and-bio.mjs
+npm run sync-soundcloud
 node scripts/integrate-harvested-links.mjs
 node scripts/fix-http-https-mismatches.mjs
 node scripts/clean-bandcamp-urls.mjs
@@ -856,37 +971,44 @@ npm run integrate-harvested-genres
 
 ## Planned changes
 
-Agreed optimizations and cleanups, not yet implemented:
+Agreed optimizations and cleanups. Items marked ✅ DONE are
+implemented; the rest are still open.
 
-### Merge the two SoundCloud scripts into one "SoundCloud sync" stage
+### Merge the two SoundCloud scripts into one "SoundCloud sync" stage — ✅ DONE (2026-07-09)
 
 `enrich-soundcloud.mjs` (2a) and `harvest-soundcloud-links-and-bio.mjs`
-(2b) each call `GET /resolve?url=<profile-url>` for the same artists —
-the same call returning the same user resource. Merging them into a
-single stage would:
+(2b) each called `GET /resolve?url=<profile-url>` for the same artists —
+the same call returning the same user resource. Merged into
+`sync-soundcloud.mjs` (Phase 2a — see above), which:
 
-- **Cut API calls from 3 to 2 per artist.** One `/resolve` (profile
+- **Cuts API calls from 3 to 2 per artist.** One `/resolve` (profile
   data + bio + urn) followed by one `/users/{urn}/web-profiles`
   (links). Two is the floor — SoundCloud has no endpoint that returns
   the user resource and web-profiles together. (The conditional
   `/users/{id}/playlists` call for zero-track artists is unaffected.)
-- **Unify the bio path.** Today 2a writes bios to
-  `artist_enrichment.bio` (the live path) while 2b stages them in
-  `artist_harvested_bios`, which nothing consumes. The merged stage
-  writes bios one way; decide then whether `artist_harvested_bios`
-  is wired up as a raw-bio audit trail or dropped.
-- **Give orchestration a single per-artist-callable unit.** One
-  "sync this artist from SoundCloud" function fits the
-  event-triggered flow (run on approval) as well as the bulk run.
+- **Unifies the bio path.** The parsed/cleaned bio still goes to the
+  live `artist_enrichment.bio`; the full raw bio is additionally kept
+  in `artist_harvested_bios`, now wired up on purpose as a raw-bio
+  audit trail (decided: keep, not drop — see "Loose ends").
+- **Gives orchestration a single per-artist-callable unit.** The
+  exported `syncArtist()` function is the "sync this artist from
+  SoundCloud" unit — usable for a future event-triggered flow (run on
+  approval) as well as the bulk CLI loop that calls it today.
+
+Artists synced under the old two-script system need
+`backfill-resolved-soundcloud-sync.mjs` run once to carry their
+processed state over to the new `soundcloud-sync` service (see
+"Utility / diagnostic scripts") before a bulk `sync-soundcloud.mjs`
+run, otherwise it re-fetches everyone from scratch.
 
 ### Skip `/resolve` on re-runs using the stored user ID
 
-`enrich-soundcloud.mjs` already stores each artist's numeric
-SoundCloud user ID in `artist_enrichment`. Re-runs (or a links-only
-refresh) can call `/users/{urn}/web-profiles` and `/users/{id}`
-directly from the stored ID instead of re-resolving the profile URL:
-1 call per artist for a links refresh, and immune to resolve
-failures when an artist renames their profile URL.
+`sync-soundcloud.mjs` already stores each artist's numeric SoundCloud
+user ID in `artist_enrichment`. Re-runs (or a links-only refresh) can
+call `/users/{urn}/web-profiles` and `/users/{id}` directly from the
+stored ID instead of re-resolving the profile URL: 1 call per artist
+for a links refresh, and immune to resolve failures when an artist
+renames their profile URL.
 
 ### Generalize `store-images.mjs` (5b) to all image sources
 
@@ -967,41 +1089,51 @@ next to a correct direct link). Extend the existing Spotify-style
 skip to all three services, so Phase 2's direct links suppress
 Phase 3 work entirely for those (artist, service) pairs.
 
-### Persist harvest failures as queryable data
+### Persist harvest failures as queryable data — ✅ DONE for SoundCloud (2026-07-09)
 
-Today a fetch/resolve failure in the Phase 2 scripts exists only as
-a console line and a `fetchFailed` tally — once the terminal
-scrolls, the information is gone. The only durable trace is
-indirect: transient failures leave no `resolved_artists` row (so
-they retry next run), and 404s mark the artist processed without
-recording *why*. Plan: record failures somewhere queryable — either
-add `status` / `detail` columns to `resolved_artists` (e.g.
-`status = 'failed'`, `detail = 'resolve 404'`) or a small
-`harvest_failures` table — so dead links and wrong-field URLs
-become reviewable data. This matters more as the orchestrator runs
-phases unattended: a scheduled run's failures need to surface
-somewhere other than scrollback. (Found via a real case: an artist
-whose `soundcloud` link field contained a Spotify URL failed
-`/resolve`, was 404-marked processed, and left no record of the
-underlying bad link.)
+Previously a fetch/resolve failure in the Phase 2 scripts existed only
+as a console line and an in-memory tally — once the terminal
+scrolled, the information was gone. The only durable trace was
+indirect: transient failures left no `resolved_artists` row (so they
+retried next run), and 404s marked the artist processed without
+recording *why*. Built: a `harvest_failures` table
+(`supabase_migration_harvest_failures.sql`) — one row per
+(`artist_id`, `service`) holding the *current* failure, cleared on the
+next success, with a machine-readable `status`, human-readable
+`detail`, and the offending `url`. Chosen over adding `status`/`detail`
+columns to `resolved_artists` so that table's simple skip-set
+semantics (used by every stage's "is this artist already done" check)
+stay untouched. `sync-soundcloud.mjs` writes to it via the shared
+`scripts/lib/harvest-failures.mjs` helper (`recordFailure()` /
+`clearFailure()`); wiring the other Phase 2 harvesters (Discogs, and
+whatever Linktree/Bandcamp harvesters get built) onto the same table
+is still open. (Built after a real case: an artist whose `soundcloud`
+link field contained a Spotify URL failed `/resolve`, was 404-marked
+processed, and left no record of the underlying bad link — see the
+guard below, which now catches that case before it burns an API call.)
 
-### Guard harvesters against wrong-field URLs
+### Guard harvesters against wrong-field URLs — ✅ DONE for SoundCloud (2026-07-09)
 
 Cheap pre-check in each Phase 2 fetcher: before spending an API
 call, verify the stored URL's domain actually matches the platform
-being processed (e.g. `soundcloud.com` for the SoundCloud scripts,
-`discogs.com/artist/` for the Discogs harvester — the latter
-already effectively does this via its artist-ID regex). On
-mismatch, skip and flag (see "Persist harvest failures" above)
-instead of calling the API. Wrong-field rows are exactly what
-`qc-links.mjs` (Phase 8) detects after the fact; this catches them
-at point of use too.
+being processed. Built into `sync-soundcloud.mjs`: the stored
+`artist_links.url` is checked against `soundcloud.com` before
+`/resolve` is called; on mismatch it's skipped and flagged (via
+`harvest_failures` above) instead of calling the API, and — unlike a
+404 — left unmarked in `resolved_artists` so a later link correction
+is retried automatically. The Discogs harvester
+(`harvest-links-discogs.mjs`) already effectively does this via its
+artist-ID regex (`discogs.com/artist/`). Wrong-field rows are exactly
+what `qc-links.mjs` (Phase 8) detects after the fact; this catches
+them at point of use too.
 
 Considered and set aside: Spotify (API exposes no external links),
 Last.fm (none structured; page links mostly mirror MB's), Resident
 Advisor (links exist on ra.co artist pages but only via an
 unofficial GraphQL endpoint — fragile; revisit later), Beatport /
-Qobuz / Tidal / Apple Music pages (no meaningful outbound links).
+Qobuz / Tidal / Apple Music pages (no meaningful outbound links). Any
+future Linktree/Bandcamp harvester should adopt the same guard when
+it's built.
 
 ### New harvester: `harvest-links-discogs.mjs` ✅ BUILT (2026-07-03)
 
@@ -1012,7 +1144,7 @@ fallback, and `members`/`groups` as a collaboration signal — those
 remain future enhancements.
 
 Discogs is currently only a link *destination* (CSV slugs via
-`migrate.mjs`, SoundCloud web-profiles via 2b, MusicBrainz url-rels
+`migrate.mjs`, SoundCloud web-profiles via 2a, MusicBrainz url-rels
 via 7b) — nothing reads *from* it, even though it has an official,
 free REST API. `GET https://api.discogs.com/artists/{id}` returns:
 
@@ -1059,13 +1191,32 @@ the one-time migration. This harvester should read its seed URLs from
 - Adopt `resolved_artists` (or equivalent DB-tracked state) instead
   of cache-file / inference-based "already processed" checks — see
   the Phase 3 note and the project preference for DB state.
-  **2a (`soundcloud-enrich`) and 2b (`soundcloud-harvest`) are now
+  **2a (`soundcloud-enrich`) and 2b (`soundcloud-harvest`) were both
   done (2026-07-03)** — both dropped their `*-cache.json` files for
   `resolved_artists` rows, matching the 2d convention. Artists
   enriched before the switch were backfilled via the one-off
   `backfill-resolved-soundcloud-enrich.mjs` — see "Utility /
-  diagnostic scripts" below for how it works; no equivalent backfill
-  was written for 2b.
+  diagnostic scripts" below for how it works.
+
+  **2026-07-09: 2a and 2b merged into `sync-soundcloud.mjs`, service
+  `soundcloud-sync`.** The merge carried the DB-state convention
+  forward unchanged — no cache file was reintroduced anywhere in the
+  new stage, confirmed by inspection of `sync-soundcloud.mjs` (its
+  only persistence calls are to `resolved_artists`,
+  `harvest_failures`, `artist_enrichment`, `artist_harvested_links`,
+  `artist_harvested_bios`, and `artist_links`). A new backfill,
+  `backfill-resolved-soundcloud-sync.mjs`, carries state from the two
+  old services over to the new one for artists that had both — see
+  "Utility / diagnostic scripts".
+
+  **✅ Fully resolved for SoundCloud — re-confirmed 2026-07-09** after
+  the failures-CSV addition below introduced the script's one
+  `fs.writeFileSync` call: that write is a timestamped, human-readable
+  *report* (`sync-soundcloud-failures-<timestamp>.csv`, one level up
+  from the repo — see Phase 2a), not a processed-state cache. It's
+  never read back by the script and plays no role in the "already
+  processed" skip logic, so it doesn't reintroduce the pattern this
+  cleanup removed.
 
   **Found while running that backfill (2026-07-03): `resolved_artists`
   was missing basic table grants** — `service_role` had no

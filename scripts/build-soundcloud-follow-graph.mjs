@@ -30,7 +30,7 @@
 // here; a dedicated enrichment pipeline handles those.
 //
 // Uses the OFFICIAL SoundCloud API (api.soundcloud.com), same OAuth
-// Client Credentials flow as harvest-soundcloud-links-and-bio.mjs.
+// Client Credentials flow as sync-soundcloud.mjs.
 // Requires SoundCloud API credentials (Client ID + Secret), which
 // requires a SoundCloud account on the Artist Pro plan:
 //   1. https://soundcloud.com/you/apps/new (while signed in)
@@ -185,7 +185,7 @@ async function supabaseWithRetry(fn) {
 // SoundCloud OAuth (Client Credentials flow — app-only, public
 // resources). One token is fetched and reused for the whole run;
 // it's refreshed if a request comes back 401. Mirrors
-// harvest-soundcloud-links-and-bio.mjs.
+// sync-soundcloud.mjs.
 // ------------------------------------------------------------
 let cachedToken = null; // { accessToken, expiresAt }
 
@@ -227,7 +227,7 @@ async function getAccessToken(forceRefresh = false) {
 // for `next_href` pagination cursors, which SoundCloud returns as
 // complete URLs already pointing at api.soundcloud.com). Retries
 // once on 401 (refreshes the token) and once on 429 (backs off, then
-// retries) — same behavior as harvest-soundcloud-links-and-bio.mjs.
+// retries) — same behavior as sync-soundcloud.mjs.
 // ------------------------------------------------------------
 async function soundcloudGet(pathQueryOrUrl, { retry = true } = {}) {
   const token = await getAccessToken();
@@ -312,7 +312,7 @@ async function getFollowings(urn, cap) {
 // ------------------------------------------------------------
 // Supabase's REST API (PostgREST) caps any single unpaginated query
 // at 1000 rows by default — paginate via .range() in pages of 1000,
-// same pattern as harvest-soundcloud-links-and-bio.mjs.
+// same pattern as sync-soundcloud.mjs.
 // ------------------------------------------------------------
 const SUPABASE_PAGE_SIZE = 1000;
 

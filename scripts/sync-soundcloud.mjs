@@ -1,0 +1,1022 @@
+#!/usr/bin/env node
+// ============================================================
+// SoundCloud sync: the merged Phase 2 SoundCloud stage.
+//
+// Replaces the former two-script pair — enrich-soundcloud.mjs (2a) and
+// harvest-soundcloud-links-and-bio.mjs (2b) — which each called
+// GET /resolve?url=<profile-url> separately for the same artist, the
+// same call returning the same user resource. This stage makes that
+// call once per artist and fans the result out to both concerns:
+//
+//   GET /resolve?url=<profile url>
+//     -> the user's resource: follower/track counts, avatar, numeric
+//        id, urn, and the full, untruncated `description` (bio) text.
+//        Written to artist_enrichment (platform = 'soundcloud').
+//   GET /users/{urn}/web-profiles
+//     -> the "Links" section: an array of { service, url, title, ... }
+//        pointing at the artist's other platforms. Staged into
+//        artist_harvested_links (never written directly to
+//        artist_links — integrate-harvested-links.mjs, Phase 2d,
+//        promotes it).
+//   GET /users/{id}/playlists   (conditional)
+//     -> only fetched when track_count is 0 (no uploads of their own,
+//        often a repost/podcast account). There's no public API
+//        endpoint for a user's reposts, so playlists are the best
+//        available fallback content for the artist page's widget.
+//
+// Two API calls per artist is the floor — SoundCloud has no endpoint
+// that returns the user resource and web-profiles together — down
+// from three under the old two-script version. The bio path is also
+// unified: the parsed/cleaned bio goes to the live
+// artist_enrichment.bio (same as old 2a), while the full raw bio text
+// is additionally kept in artist_harvested_bios as a raw-bio audit
+// trail (old 2b staged it there too, but nothing consumed it — this
+// keeps that behavior, now as a deliberate audit record rather than a
+// dead end).
+//
+// Wrong-field URL guard: before spending an API call, the stored
+// artist_links.url is checked against soundcloud.com. A stored link
+// that's actually a Spotify/Instagram/whatever URL (a data-entry or
+// form-submission mistake, not a dead SoundCloud profile) is skipped
+// without calling /resolve, and logged to harvest_failures instead —
+// see scripts/PIPELINE.md, "Guard harvesters against wrong-field
+// URLs" (found via a real case: a wrong-field URL burned a /resolve
+// call, got 404-marked processed, and left no record of why). Like a
+// 404, a wrong-field mismatch DOES mark the artist processed — the
+// mismatch doesn't fix itself on retry, so leaving it unmarked would
+// just re-write the same harvest_failures row and re-run the same
+// guard check on every future run forever, for no benefit. See "A
+// 404-marked artist isn't stuck forever" below for how a later fix
+// still gets picked up without --force.
+//
+// Failure persistence: every resolve/write failure — wrong-field
+// skips, 404s, transient resolve failures, and DB write failures — is
+// recorded in the harvest_failures table (service = 'soundcloud-sync')
+// via scripts/lib/harvest-failures.mjs, so a scheduled/unattended run's
+// failures are queryable afterward instead of living only in
+// scrollback. A later successful sync clears the row.
+//
+// Failures CSV: every run (DRY_RUN or not) also writes a snapshot of
+// every current soundcloud-sync row in harvest_failures to a
+// timestamped CSV — artist name, the artist's Rebalance Gender page
+// URL, status, the failed url, and occurred_at — one level up from
+// this repo (the "Rebalance Gender" folder), so re-running never
+// overwrites a previous run's report. See writeFailuresCsv().
+//
+// Single per-artist unit: the actual sync logic lives in the exported
+// syncArtist() function below. The CLI loop in main() is a thin driver
+// over it — the same shape a future event-triggered call (e.g. "sync
+// this one artist from SoundCloud on admin approval", the same pattern
+// src/lib/enrich-images.ts already uses for images) can call directly
+// for a single artist instead of a bulk run.
+//
+// Uses upserts throughout, so re-running refreshes existing rows
+// rather than creating duplicates.
+//
+// Requires SoundCloud API credentials (Artist Pro + registered app):
+//   SOUNDCLOUD_CLIENT_ID / SOUNDCLOUD_CLIENT_SECRET in .env.local
+//   (also NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY)
+//
+// Usage (from the rebalance-gender/ folder):
+//
+//   node scripts/sync-soundcloud.mjs                    # all artists with a SoundCloud link
+//   node scripts/sync-soundcloud.mjs --approved         # only artists in the directory (directory_status = 'approved')
+//   node scripts/sync-soundcloud.mjs --limit=20         # next 20 unprocessed (for testing)
+//   node scripts/sync-soundcloud.mjs --force            # re-process even artists with existing state
+//   node scripts/sync-soundcloud.mjs --name=jeanne      # filter source artists by name
+//   node scripts/sync-soundcloud.mjs --status=sc_followee
+//                                                        # only artists with this directory_status
+//   node scripts/sync-soundcloud.mjs --debug            # log raw API responses + every candidate link found
+//   DRY_RUN=1 node scripts/sync-soundcloud.mjs          # fetch + log, no DB writes
+//
+// Processed state is tracked in the DATABASE (resolved_artists, with
+// service = 'soundcloud-sync'), not a cache file — per project
+// convention. An artist is skipped once a state row exists; --force
+// bypasses this and re-processes everyone. --limit counts from the
+// remaining unprocessed artists, not the full list, so repeated
+// --limit runs make forward progress. An artist is marked processed
+// after every write for it succeeds, or on either of the two failure
+// statuses that syncArtist() treats as permanent-until-a-human-fixes-
+// it: a resolve HTTP 404 (definitive dead link) and a wrong-field URL
+// (definitively not a SoundCloud link). Transient failures (timeouts,
+// rate limits, DB write errors) are presumed possibly-temporary and
+// left unmarked, so the next run retries them automatically without
+// needing any of the machinery below.
+//
+// A 404- or wrong-field-marked artist isn't stuck forever, though:
+// resolved_artists only records "done for this artist_id", not which
+// URL was checked, so on its own a fixed link would stay skipped
+// indefinitely. Each run cross-references the URL harvest_failures
+// recorded at failure time against the artist's current artist_links
+// row; if they differ (a human corrected the link since), that one
+// artist is retried this run instead of requiring --force, which
+// would reprocess everyone.
+//
+// Artists already synced under the old two-script system have
+// resolved_artists rows for 'soundcloud-enrich' and
+// 'soundcloud-harvest', not 'soundcloud-sync' — see
+// backfill-resolved-soundcloud-sync.mjs to seed the new service's
+// state from those before running this in bulk, so the first run
+// doesn't re-fetch everyone from scratch.
+// ============================================================
+
+import { createClient } from "@supabase/supabase-js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { extractLinktree } from "./lib/linktree.mjs";
+import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
+import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DRY_RUN = process.env.DRY_RUN === "1";
+
+// ------------------------------------------------------------
+// CLI args
+// ------------------------------------------------------------
+const args = process.argv.slice(2);
+const FORCE = args.includes("--force");
+const DEBUG = args.includes("--debug");
+// --approved: only process artists in the live directory
+// (directory_status = 'approved'), rather than every artist with a
+// SoundCloud link (mostly unvetted sc_followee follow-graph nodes).
+// Forwarded verbatim by the orchestrator/loop scripts.
+const APPROVED_ONLY = args.includes("--approved");
+const limitArg = args.find((a) => a.startsWith("--limit="));
+const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
+const nameArg = args.find((a) => a.startsWith("--name="));
+const NAME_FILTER = nameArg ? nameArg.slice("--name=".length) : null;
+const statusArg = args.find((a) => a.startsWith("--status="));
+const STATUS_FILTER = statusArg ? statusArg.slice("--status=".length) : null;
+
+const STATE_SERVICE = "soundcloud-sync"; // resolved_artists.service / harvest_failures.service value
+
+// ------------------------------------------------------------
+// Load .env.local
+// ------------------------------------------------------------
+function loadEnvLocal() {
+  const envPath = path.join(__dirname, "..", ".env.local");
+  if (!fs.existsSync(envPath)) return;
+
+  const content = fs.readFileSync(envPath, "utf-8");
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+loadEnvLocal();
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+const SOUNDCLOUD_CLIENT_ID = process.env.SOUNDCLOUD_CLIENT_ID;
+const SOUNDCLOUD_CLIENT_SECRET = process.env.SOUNDCLOUD_CLIENT_SECRET;
+// Used only to build the artist-page URL in the failures CSV (see
+// writeFailuresCsv) — same env var and fallback the site itself uses
+// (src/lib/email.ts, src/app/layout.tsx).
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+
+if (!SUPABASE_URL || !SECRET_KEY) {
+  console.error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY.\n" +
+      "Fill these in in .env.local before running."
+  );
+  process.exit(1);
+}
+
+if (!SOUNDCLOUD_CLIENT_ID || !SOUNDCLOUD_CLIENT_SECRET) {
+  console.error(
+    "Missing SOUNDCLOUD_CLIENT_ID or SOUNDCLOUD_CLIENT_SECRET.\n" +
+      "Register an app at https://soundcloud.com/you/apps/new (requires an\n" +
+      "Artist Pro account) and fill in the credentials in .env.local before running."
+  );
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
+  auth: { persistSession: false },
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------
+// Processed-state tracking via resolved_artists (DB), not a cache
+// file — same pattern as every other Phase 2 stage. An artist is
+// skipped once a row exists for (artist_id, service); --force bypasses
+// the skip. markProcessed is only called after every write for an
+// artist succeeds, or after a resolve failure that's a definitive dead
+// link (404) — other failures, and wrong-field-URL skips, are left
+// unmarked so the next run retries them automatically.
+// ------------------------------------------------------------
+async function loadProcessedArtistIds() {
+  const STATE_PAGE_SIZE = 1000;
+  const ids = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("resolved_artists")
+      .select("artist_id")
+      .eq("service", STATE_SERVICE)
+      .order("artist_id", { ascending: true })
+      .range(from, from + STATE_PAGE_SIZE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) ids.add(r.artist_id);
+    if ((data?.length ?? 0) < STATE_PAGE_SIZE) break;
+    from += STATE_PAGE_SIZE;
+  }
+  return ids;
+}
+
+async function markProcessed(artistId) {
+  const { error } = await supabase
+    .from("resolved_artists")
+    .upsert(
+      { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
+      { onConflict: "artist_id,service" }
+    );
+  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+}
+
+// ------------------------------------------------------------
+// Artists that already have a Linktree link (artist_links, platform =
+// 'linktree'), preloaded once so a Linktree URL found in a bio only
+// gets written when the artist doesn't already have one.
+// ------------------------------------------------------------
+async function loadArtistIdsWithLinktreeLink() {
+  const PAGE_SIZE = 1000;
+  const ids = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("artist_links")
+      .select("artist_id")
+      .eq("platform", "linktree")
+      .order("artist_id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) ids.add(r.artist_id);
+    if ((data?.length ?? 0) < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return ids;
+}
+
+// ------------------------------------------------------------
+// Wrong-field URL guard — cheap pre-check before spending an API call.
+// A stored `soundcloud` link whose domain isn't actually soundcloud.com
+// (e.g. a Spotify/Instagram URL saved in the wrong field) can never
+// resolve; skip it and flag it instead of calling /resolve. See
+// scripts/PIPELINE.md, "Guard harvesters against wrong-field URLs".
+// ------------------------------------------------------------
+const SOUNDCLOUD_HOST_REGEX = /(^|\.)soundcloud\.com$/i;
+
+function isSoundCloudUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return SOUNDCLOUD_HOST_REGEX.test(url.hostname.toLowerCase());
+  } catch {
+    return false; // unparseable — also treated as a mismatch
+  }
+}
+
+// ------------------------------------------------------------
+// SoundCloud OAuth (Client Credentials — app-only, public resources).
+// One token is fetched and reused for the whole run; refreshed on 401.
+// ------------------------------------------------------------
+let cachedToken = null;
+
+async function getAccessToken(forceRefresh = false) {
+  if (!forceRefresh && cachedToken && Date.now() < cachedToken.expiresAt - 30_000) {
+    return cachedToken.accessToken;
+  }
+
+  const basic = Buffer.from(`${SOUNDCLOUD_CLIENT_ID}:${SOUNDCLOUD_CLIENT_SECRET}`).toString(
+    "base64"
+  );
+
+  const res = await fetch("https://secure.soundcloud.com/oauth/token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json; charset=utf-8",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basic}`,
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to get SoundCloud access token (HTTP ${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  cachedToken = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  };
+  return cachedToken.accessToken;
+}
+
+async function soundcloudGet(pathAndQuery, { retry = true } = {}) {
+  const token = await getAccessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch(`https://api.soundcloud.com${pathAndQuery}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json; charset=utf-8",
+        Authorization: `OAuth ${token}`,
+      },
+    });
+
+    if (res.status === 401 && retry) {
+      await getAccessToken(true);
+      return soundcloudGet(pathAndQuery, { retry: false });
+    }
+
+    if (res.status === 429) {
+      if (DEBUG) console.log("  [debug] 429 rate limited, backing off 5s");
+      await sleep(5000);
+      if (retry) return soundcloudGet(pathAndQuery, { retry: false });
+      return { ok: false, status: 429, data: null };
+    }
+
+    if (!res.ok) {
+      return { ok: false, status: res.status, data: null };
+    }
+
+    const data = await res.json();
+    return { ok: true, status: res.status, data };
+  } catch (err) {
+    if (DEBUG) console.log(`  [debug] request failed: ${err?.message ?? err}`);
+    return { ok: false, status: null, data: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ------------------------------------------------------------
+// SoundCloud CDN avatar URLs default to a 100×100 "-large" variant.
+// Replacing the suffix with "-t500x500" gets the 500×500 version.
+// ------------------------------------------------------------
+function upgradeAvatarUrl(url) {
+  if (typeof url !== "string" || !url) return null;
+  return url.replace(/-large(\.\w+)$/, "-t500x500$1").replace(/-large$/, "-t500x500");
+}
+
+// ------------------------------------------------------------
+// gate.sc is a link-click tracker the SoundCloud *web client* wraps
+// outbound bio URLs in when rendering them as clickable. That
+// rewriting happens in the browser, not in the API's stored data, so
+// this should normally be a no-op against API responses — kept as a
+// defensive fallback in case it ever shows up.
+// ------------------------------------------------------------
+const GATE_SC_REGEX = /https?:\/\/gate\.sc\/?\?url=([^&\s"'<>]+)(?:&[^\s"'<>]*)*/gi;
+
+function extractGateScTargets(text) {
+  const out = [];
+  for (const match of text.matchAll(GATE_SC_REGEX)) {
+    try {
+      out.push(decodeURIComponent(match[1]));
+    } catch {
+      // malformed encoding — skip it
+    }
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// Plain URLs to known platforms mentioned directly in bio text,
+// e.g. "more music: https://open.spotify.com/artist/..."
+// ------------------------------------------------------------
+const PLAIN_URL_REGEX = /https?:\/\/[^\s"'<>)]+/gi;
+
+function extractPlainUrls(text) {
+  const matches = text.match(PLAIN_URL_REGEX) ?? [];
+  return matches.map((u) => u.replace(/[.,;:!?)]+$/, ""));
+}
+
+// ------------------------------------------------------------
+// Platform classification for harvested links (web-profiles + bio
+// URLs). Same per-script-copy convention as every other harvester in
+// this folder (integrate-harvested-links.mjs, harvest-links-discogs.mjs)
+// rather than a shared import.
+// ------------------------------------------------------------
+const DOMAIN_PLATFORM_MAP = [
+  [/(^|\.)instagram\.com$/i, "instagram"],
+  [/(^|\.)open\.spotify\.com$/i, "spotify"],
+  [/(^|\.)spotify\.link$/i, "spotify"],
+  [/(^|\.)youtube\.com$/i, "youtube"],
+  [/(^|\.)youtu\.be$/i, "youtube"],
+  [/(^|\.)music\.youtube\.com$/i, "youtube"],
+  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
+  [/(^|\.)ra\.co$/i, "resident_advisor"],
+  [/(^|\.)bandcamp\.com$/i, "bandcamp"],
+  [/(^|\.)facebook\.com$/i, "facebook"],
+  [/(^|\.)fb\.me$/i, "facebook"],
+  [/(^|\.)tiktok\.com$/i, "tiktok"],
+  [/(^|\.)linktr\.ee$/i, "linktree"],
+  [/(^|\.)beatport\.com$/i, "beatport"],
+  [/(^|\.)discogs\.com$/i, "discogs"],
+];
+
+const TWITTER_HOST_REGEX = /(^|\.)(twitter\.com|x\.com)$/i;
+
+function classify(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname.toLowerCase();
+
+  if (TWITTER_HOST_REGEX.test(host)) return null; // excluded per project policy
+  if (SOUNDCLOUD_HOST_REGEX.test(host)) return null; // self-link, not useful
+
+  for (const [hostRegex, platform] of DOMAIN_PLATFORM_MAP) {
+    if (hostRegex.test(host)) return platform;
+  }
+
+  // Unrecognized external domain — still worth keeping as a generic
+  // candidate (e.g. a personal site). Classified as "other" to match
+  // the existing "other" key in the platforms table.
+  return "other";
+}
+
+function normalizeUrl(rawUrl, platform) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  if (platform === "instagram") {
+    url.search = "";
+    url.hash = "";
+  }
+  if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+    url.pathname = url.pathname.slice(0, -1);
+  }
+  return url.toString();
+}
+
+// ------------------------------------------------------------
+// Supabase pagination — PostgREST caps unpaginated queries at 1000
+// rows; fetch in pages until a short page signals the end.
+// ------------------------------------------------------------
+const SUPABASE_PAGE_SIZE = 1000;
+
+async function fetchAllSoundCloudLinks() {
+  const allRows = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from("artist_links")
+      .select("id, artist_id, url, artists!inner(name, directory_status)")
+      .eq("platform", "soundcloud")
+      .order("id", { ascending: true })
+      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+
+    if (APPROVED_ONLY) {
+      query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
+    }
+    if (NAME_FILTER) query = query.ilike("artists.name", `%${NAME_FILTER}%`);
+    if (STATUS_FILTER) query = query.eq("artists.directory_status", STATUS_FILTER);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    allRows.push(...data);
+    if (data.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+
+  return allRows;
+}
+
+// ------------------------------------------------------------
+// syncArtist — the single per-artist unit. Resolves one artist from
+// SoundCloud and fans the result out to artist_enrichment (profile
+// data + bio) and artist_harvested_links/artist_harvested_bios
+// (staged links + raw bio). Returns a status object the CLI loop uses
+// for its summary tallies; a future event-triggered caller (single
+// artist, on approval) can call this directly and ignore the tallying.
+//
+// opts.artistIdsWithLinktree — a mutable Set<artist_id> the caller
+// preloads once (see loadArtistIdsWithLinktreeLink) and passes in, so
+// a run processing many artists doesn't re-query it per artist.
+// ------------------------------------------------------------
+export async function syncArtist(artist, opts = {}) {
+  const { debug = false, dryRun = false, artistIdsWithLinktree = new Set() } = opts;
+  const { artistId, name, scUrl } = artist;
+
+  // Records a failure and, only for statuses that should stop being
+  // retried automatically (today: just a definitive 404 — see the
+  // module header for why wrong-field/transient/write failures are
+  // deliberately NOT marked done), marks the artist processed. Every
+  // failure branch below funnels through here instead of repeating
+  // "recordFailure(...) [+ maybe markProcessed(...)]" at each call
+  // site, so "which failures are permanent" is a single, visible
+  // decision (the markDone flag) rather than five inline copies of
+  // the same conditional.
+  async function fail(status, { detail, markDone = false } = {}) {
+    if (dryRun) return;
+    if (markDone) await markProcessed(artistId);
+    await recordFailure(supabase, { artistId, service: STATE_SERVICE, status, detail, url: scUrl });
+  }
+
+  // -- Wrong-field URL guard: skip before spending an API call --
+  if (!isSoundCloudUrl(scUrl)) {
+    console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
+    // Marked processed, same reasoning as a 404: a domain mismatch
+    // doesn't fix itself on retry, so recording a fresh harvest_failures
+    // row for it every single run forever is pure waste. main()'s
+    // loadFailureUrls cross-check un-sticks this artist automatically
+    // once a human corrects the link.
+    await fail("wrong_field_url", {
+      detail: "stored soundcloud link does not resolve to a soundcloud.com domain",
+      markDone: true,
+    });
+    return { status: "skipped_wrong_field" };
+  }
+
+  // -- 1. Resolve the profile (feeds both artist_enrichment and the
+  // web-profiles/bio harvest below) --
+  const res = await soundcloudGet(`/resolve?url=${encodeURIComponent(scUrl)}`);
+
+  if (!res.ok || !res.data) {
+    console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
+    if (res.status === 404) {
+      // Definitive dead link — mark processed so it doesn't retry
+      // forever; main()'s loadFailureUrls cross-check un-sticks it
+      // again if the link is later corrected.
+      await fail("resolve_404", { detail: "resolve returned 404 (dead link)", markDone: true });
+    } else {
+      // Transient — timeouts, rate limits, other HTTP errors. Left
+      // unmarked so the next run retries automatically (no link-change
+      // detection needed, since it was never marked done in the first
+      // place).
+      await fail("resolve_failed", { detail: `resolve failed (HTTP ${res.status ?? "timeout"})` });
+    }
+    await sleep(300);
+    return { status: "failed_resolve", httpStatus: res.status };
+  }
+
+  const user = res.data;
+  const urn = user.urn ?? (user.id != null ? `soundcloud:users:${user.id}` : null);
+
+  if (debug) {
+    console.log(
+      `  [debug] ${name}: followers=${user.followers_count} tracks=${user.track_count} ` +
+        `avatar=${user.avatar_url ?? "(none)"}`
+    );
+  }
+
+  // -- 2. Zero uploads: fall back to the account's playlists (sets) --
+  // No public API endpoint for a user's reposts, so this is the best
+  // available substitute for "what can we embed for them."
+  let playlists = null;
+  if (user.track_count === 0 && user.id != null) {
+    const playlistsRes = await soundcloudGet(
+      `/users/${user.id}/playlists?limit=200&linked_partitioning=1`
+    );
+    if (playlistsRes.ok && Array.isArray(playlistsRes.data?.collection ?? playlistsRes.data)) {
+      const raw = playlistsRes.data.collection ?? playlistsRes.data;
+      playlists = raw
+        .filter((p) => p?.permalink_url)
+        .map((p) => ({
+          title: p.title ?? "Untitled playlist",
+          url: p.permalink_url,
+          track_count: p.track_count ?? 0,
+        }));
+      if (debug) console.log(`  [debug] ${name}: 0 tracks, found ${playlists.length} playlist(s)`);
+    } else if (debug) {
+      console.log(`  [debug] ${name}: playlists fetch failed (HTTP ${playlistsRes.status ?? "timeout"})`);
+    }
+    await sleep(300);
+  }
+
+  // -- 3. web-profiles (the "Links" section) --
+  const candidatesRaw = [];
+  if (urn) {
+    const profilesRes = await soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
+    if (profilesRes.ok && Array.isArray(profilesRes.data)) {
+      if (debug) console.log("  [debug] web-profiles raw:", JSON.stringify(profilesRes.data));
+      for (const p of profilesRes.data) {
+        if (typeof p?.url === "string" && p.url.trim()) {
+          candidatesRaw.push({ rawUrl: p.url.trim(), source: `web-profiles:${p.service ?? "?"}` });
+        }
+      }
+    } else if (debug) {
+      console.log(`  [debug] web-profiles fetch failed (status ${profilesRes.status})`);
+    }
+  } else if (debug) {
+    console.log("  [debug] no urn on resolved user, skipping web-profiles");
+  }
+
+  // -- 4. Raw bio text — kept unconditionally (audit trail) and also
+  // scanned for gate.sc / plain URLs to known platforms --
+  const rawBio =
+    typeof user.description === "string" && user.description.trim()
+      ? user.description.trim()
+      : null;
+
+  if (rawBio) {
+    for (const target of extractGateScTargets(rawBio)) {
+      candidatesRaw.push({ rawUrl: target, source: "bio:gate.sc" });
+    }
+    for (const plain of extractPlainUrls(rawBio)) {
+      if (/gate\.sc/i.test(plain)) continue;
+      candidatesRaw.push({ rawUrl: plain, source: "bio:plain" });
+    }
+  }
+
+  const seen = new Set();
+  const candidates = [];
+  for (const { rawUrl, source } of candidatesRaw) {
+    const platform = classify(rawUrl);
+    if (!platform) continue;
+    const parsedUrl = normalizeUrl(rawUrl, platform);
+    const dedupeKey = `${platform}|${parsedUrl}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    candidates.push({ rawUrl, source, platform, parsedUrl });
+  }
+
+  // -- 5. Parse the bio through the cleanup pipeline for the LIVE
+  // artist_enrichment.bio field (booking/management/contact/linktree
+  // extraction) — same pipeline as the old enrich-soundcloud.mjs.
+  // Generic/boilerplate descriptions are skipped for this cleaned
+  // path, but still preserved as-is in rawBio above. --
+  let bio = null;
+  let booking = null;
+  let management = null;
+  let contact = null;
+  let linktreeUrl = null;
+
+  if (rawBio && !isGenericDescription(rawBio)) {
+    const decoded = decodeEntities(rawBio);
+    const decodedGateSc = decodeGateSc(decoded);
+    const { text: withoutLinktree, linktreeUrl: lt } = extractLinktree(decodedGateSc);
+    linktreeUrl = lt;
+    const parsed = parseDescription(withoutLinktree);
+    bio = parsed.bio;
+    booking = parsed.booking;
+    management = parsed.management;
+    contact = parsed.contact;
+  }
+
+  // -- 6. Writes --
+  let writeFailed = false;
+  let writeFailDetail = null;
+
+  if (!dryRun) {
+    const { error: enrichError } = await supabase.from("artist_enrichment").upsert(
+      {
+        artist_id: artistId,
+        platform: "soundcloud",
+        external_id: user.id != null ? String(user.id) : null,
+        profile_image_url: upgradeAvatarUrl(user.avatar_url),
+        bio: bio ? `SoundCloud bio: ${bio}` : bio,
+        follower_count: user.followers_count ?? null,
+        track_count: user.track_count ?? null,
+        recent_tracks: null,
+        playlists,
+        raw_data: user,
+        last_synced_at: new Date().toISOString(),
+        sync_error: null,
+      },
+      { onConflict: "artist_id,platform" }
+    );
+
+    if (enrichError) {
+      console.log(`✗ ${name}: artist_enrichment upsert failed — ${enrichError.message}`);
+      // Not marked processed — same reasoning as resolve_failed: a DB
+      // write error is presumed transient, so retry every run.
+      await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
+      await sleep(300);
+      return { status: "failed_write" };
+    }
+
+    // Booking/management/contact — best-effort, doesn't fail the sync.
+    if (booking || management || contact) {
+      const update = {};
+      if (booking) update.booking_info = booking;
+      if (management) update.management_info = management;
+      if (contact) update.contact_info = contact;
+      const { error: artistUpdateError } = await supabase.from("artists").update(update).eq("id", artistId);
+      if (artistUpdateError) {
+        console.error(`  failed to save booking/management/contact: ${artistUpdateError.message}`);
+      }
+    }
+
+    // Linktree URL found in the bio — added to artist_links (same as a
+    // harvested link) unless the artist already has one.
+    if (linktreeUrl && !artistIdsWithLinktree.has(artistId)) {
+      const { error: linktreeError } = await supabase
+        .from("artist_links")
+        .upsert(
+          { artist_id: artistId, platform: "linktree", url: linktreeUrl },
+          { onConflict: "artist_id,platform", ignoreDuplicates: true }
+        );
+      if (linktreeError) {
+        console.error(`  failed to save linktree link: ${linktreeError.message}`);
+      } else {
+        artistIdsWithLinktree.add(artistId);
+      }
+    }
+
+    // Staged links (web-profiles + bio URLs).
+    if (candidates.length > 0) {
+      const { error: insertError } = await supabase
+        .from("artist_harvested_links")
+        .upsert(
+          candidates.map((c) => ({
+            artist_id: artistId,
+            source_platform: "soundcloud",
+            source_url: scUrl,
+            raw_url: c.rawUrl,
+            parsed_platform: c.platform,
+            parsed_url: c.parsedUrl,
+          })),
+          { onConflict: "artist_id,parsed_url", ignoreDuplicates: true }
+        );
+      if (insertError) {
+        console.error(`  failed to save harvested links: ${insertError.message}`);
+        writeFailed = true;
+        writeFailDetail = `artist_harvested_links upsert failed: ${insertError.message}`;
+      }
+    }
+
+    // Raw bio audit trail.
+    if (rawBio) {
+      const { error: bioError } = await supabase.from("artist_harvested_bios").upsert(
+        {
+          artist_id: artistId,
+          source_platform: "soundcloud",
+          source_url: scUrl,
+          raw_bio: rawBio,
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: "artist_id,source_platform" }
+      );
+      if (bioError) {
+        console.error(`  failed to save raw bio: ${bioError.message}`);
+        writeFailed = true;
+        writeFailDetail = writeFailDetail
+          ? `${writeFailDetail}; artist_harvested_bios upsert failed: ${bioError.message}`
+          : `artist_harvested_bios upsert failed: ${bioError.message}`;
+      }
+    }
+
+    if (writeFailed) {
+      // Not marked processed — retry every run, same as above.
+      await fail("write_failed", { detail: writeFailDetail });
+    } else {
+      await markProcessed(artistId);
+      await clearFailure(supabase, { artistId, service: STATE_SERVICE });
+    }
+  }
+
+  const followers = user.followers_count != null ? user.followers_count.toLocaleString() : "?";
+  const playlistsNote = playlists ? `, ${playlists.length} playlist(s) as fallback` : "";
+  const linksNote =
+    candidates.length > 0 ? `, ${candidates.length} link(s) — ${candidates.map((c) => c.platform).join(", ")}` : "";
+  const bioPreview = rawBio ? `"${rawBio.slice(0, 60)}${rawBio.length > 60 ? "…" : ""}"` : "(no bio)";
+  console.log(
+    `✓ ${name}: ${followers} followers, ${user.track_count ?? "?"} tracks${playlistsNote}${linksNote}, ${bioPreview}`
+  );
+
+  await sleep(300);
+
+  return {
+    status: writeFailed ? "failed_write" : "synced",
+    linksFound: candidates.length,
+    linksByPlatform: candidates.reduce((acc, c) => {
+      acc[c.platform] = (acc[c.platform] ?? 0) + 1;
+      return acc;
+    }, {}),
+    hasBio: Boolean(rawBio),
+  };
+}
+
+// ------------------------------------------------------------
+// Failures CSV — written at the end of every run (see writeFailuresCsv
+// below). csvCell()/timestamp() match the convention already used by
+// other-links-domain-counts.mjs for exactly this kind of report.
+// ------------------------------------------------------------
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function timestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
+// ------------------------------------------------------------
+// Writes a CSV snapshot of every current soundcloud-sync row in
+// harvest_failures — one per artist still unresolved as of this run
+// (cleared rows, from artists that have since succeeded, don't
+// appear). Written every run, DRY_RUN or not, since it reflects
+// whatever's actually in the table rather than what this run did.
+//
+// Columns: artist_name, rebalance_gender_url (the artist's live page
+// on the site, so a reviewer can click straight through), status, url
+// (the SoundCloud link that failed), occurred_at.
+//
+// Saved one level up from this repo (the "Rebalance Gender" folder,
+// not inside rebalance-gender-repo — same convention as
+// other-links-domain-counts.mjs) with a datetime in the filename, so
+// re-running never overwrites a previous run's report.
+// ------------------------------------------------------------
+async function writeFailuresCsv() {
+  const PAGE_SIZE = 1000;
+  const rows = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("harvest_failures")
+      .select("artist_id, status, url, occurred_at, artists(name)")
+      .eq("service", STATE_SERVICE)
+      .order("status", { ascending: true })
+      .order("occurred_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  const header = ["artist_name", "rebalance_gender_url", "status", "url", "occurred_at"];
+  const csv =
+    [header.join(",")]
+      .concat(
+        rows.map((r) =>
+          [
+            csvCell(r.artists?.name ?? r.artist_id),
+            csvCell(`${SITE_URL}/artist/${r.artist_id}`),
+            csvCell(r.status),
+            csvCell(r.url),
+            csvCell(r.occurred_at),
+          ].join(",")
+        )
+      )
+      .join("\n") + "\n";
+
+  const outDir = path.resolve(__dirname, "..", "..");
+  const outPath = path.join(outDir, `sync-soundcloud-failures-${timestamp()}.csv`);
+  fs.writeFileSync(outPath, csv);
+  console.log(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
+}
+
+// ------------------------------------------------------------
+// Main (CLI entry) — a thin loop over syncArtist().
+// ------------------------------------------------------------
+async function main() {
+  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running SoundCloud sync\n");
+  if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status = 'approved')\n");
+  if (STATUS_FILTER) console.log(`Filtering by directory_status: ${STATUS_FILTER}\n`);
+
+  await getAccessToken();
+  console.log("SoundCloud API token acquired.\n");
+
+  const processed = FORCE ? new Set() : await loadProcessedArtistIds();
+  if (FORCE) {
+    console.log("--force: bypassing resolved_artists state\n");
+  } else if (processed.size > 0) {
+    console.log(
+      `State loaded: ${processed.size} artist(s) already processed (resolved_artists; pass --force to bypass)\n`
+    );
+  }
+
+  const artistIdsWithLinktree = await loadArtistIdsWithLinktreeLink();
+
+  const links = await fetchAllSoundCloudLinks();
+
+  let rows = links;
+  let skippedProcessed = 0;
+  let retriedLinkChanged = 0;
+  if (!FORCE) {
+    // Two failure statuses mark an artist processed (see syncArtist's
+    // fail() helper, markDone): resolve_404 and wrong_field_url. Both
+    // would otherwise skip the artist forever even after a human fixes
+    // the stored link — resolved_artists only knows "done for this
+    // artist_id", not which URL was checked. Cross-reference the URL
+    // harvest_failures recorded at failure time against the current
+    // artist_links row: if they differ, the link was fixed since, so
+    // retry it instead of requiring --force (which would reprocess
+    // every artist). No status filter here — any status that reaches
+    // this map is one syncArtist chose to mark done, so all of them
+    // get the same treatment automatically as new ones are added.
+    const failedUrls = await loadFailureUrls(supabase, { service: STATE_SERVICE });
+
+    const remaining = [];
+    for (const row of links) {
+      if (processed.has(row.artist_id)) {
+        const failedUrl = failedUrls.get(row.artist_id);
+        if (failedUrl && failedUrl !== row.url) {
+          remaining.push(row);
+          retriedLinkChanged++;
+        } else {
+          skippedProcessed++;
+        }
+      } else {
+        remaining.push(row);
+      }
+    }
+    rows = remaining;
+  }
+  if (LIMIT) rows = rows.slice(0, LIMIT);
+
+  console.log(
+    `Found ${links.length} SoundCloud link(s)` +
+      (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
+      (retriedLinkChanged > 0 ? `, ${retriedLinkChanged} retried (link changed since a prior failure)` : "") +
+      `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
+  );
+
+  let attempted = 0;
+  let synced = 0;
+  let skippedWrongField = 0;
+  let failedResolve = 0;
+  let failedWrite = 0;
+  let totalLinksFound = 0;
+  let biosFound = 0;
+  const byPlatform = {};
+
+  for (const row of rows) {
+    const name = row.artists?.name ?? row.artist_id;
+    attempted++;
+
+    const result = await syncArtist(
+      { artistId: row.artist_id, name, scUrl: row.url },
+      { debug: DEBUG, dryRun: DRY_RUN, artistIdsWithLinktree }
+    );
+
+    switch (result.status) {
+      case "synced":
+        synced++;
+        totalLinksFound += result.linksFound ?? 0;
+        if (result.hasBio) biosFound++;
+        for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
+          byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
+        }
+        break;
+      case "skipped_wrong_field":
+        skippedWrongField++;
+        break;
+      case "failed_resolve":
+        failedResolve++;
+        break;
+      case "failed_write":
+        failedWrite++;
+        break;
+    }
+  }
+
+  console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  console.log(`  attempted:              ${attempted}`);
+  console.log(`  skipped (processed):    ${skippedProcessed}`);
+  if (retriedLinkChanged > 0) {
+    console.log(`  retried (link changed): ${retriedLinkChanged}`);
+  }
+  console.log(`  skipped (wrong field):  ${skippedWrongField}`);
+  console.log(`  resolve failed:         ${failedResolve}`);
+  console.log(`  write failed:           ${failedWrite}`);
+  console.log(`  ${DRY_RUN ? "would sync" : "synced"}:                ${synced}`);
+  console.log(`  total links found:      ${totalLinksFound}`);
+  for (const [platform, count] of Object.entries(byPlatform).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${platform}: ${count}`);
+  }
+  console.log(`  bios found:             ${biosFound}`);
+
+  await writeFailuresCsv();
+}
+
+main().catch((err) => {
+  console.error("\nSync failed:", err?.message ?? err);
+  process.exit(1);
+});

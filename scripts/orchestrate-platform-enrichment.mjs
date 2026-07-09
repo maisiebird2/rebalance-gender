@@ -13,24 +13,31 @@
 //                                           design (not restricted to
 //                                           approved), so --approved is
 //                                           NOT forwarded to it.
-//   2. enrich-soundcloud.mjs              — profile data (followers,
-//                                           tracks, bio, image) for
-//                                           every SoundCloud link.
-//   3. harvest-soundcloud-links-and-bio.mjs — stages the other-platform
-//                                           links + bios from each
-//                                           SoundCloud "Links" section.
-//   4. harvest-links-loop.mjs             — the convergence loop:
+//   2. sync-soundcloud.mjs                — the merged SoundCloud
+//                                           stage: profile data
+//                                           (followers, tracks, bio,
+//                                           image) for every
+//                                           SoundCloud link, plus
+//                                           staged other-platform
+//                                           links + raw bio from each
+//                                           SoundCloud "Links" section
+//                                           (one /resolve call feeds
+//                                           both). Replaces the former
+//                                           enrich-soundcloud.mjs (2a)
+//                                           + harvest-soundcloud-links-
+//                                           and-bio.mjs (2b) pair.
+//   3. harvest-links-loop.mjs             — the convergence loop:
 //                                           runs the direct-link
 //                                           harvesters (Discogs, …) +
 //                                           integrate-harvested-links
 //                                           in rounds until no new
 //                                           links appear, promoting the
-//                                           staged links from step 3
+//                                           staged links from step 2
 //                                           into artist_links.
-//   5. enrich-bandcamp.mjs                — scrapes each artist's
+//   4. enrich-bandcamp.mjs                — scrapes each artist's
 //                                           Bandcamp discography. Runs
 //                                           LAST because it depends on
-//                                           Bandcamp links that step 4
+//                                           Bandcamp links that step 3
 //                                           may have just promoted into
 //                                           artist_links. Already
 //                                           directory-only (it always
@@ -130,8 +137,7 @@ export function orchestratePlatformEnrichment(opts = {}) {
     // artist's name regardless of directory_status, so --approved is not
     // forwarded to it.
     { script: "clean-artist-names.mjs", args: [] },
-    { script: "enrich-soundcloud.mjs", args: [...common] },
-    { script: "harvest-soundcloud-links-and-bio.mjs", args: [...common] },
+    { script: "sync-soundcloud.mjs", args: [...common] },
     {
       script: "harvest-links-loop.mjs",
       args: [...common, ...(maxRounds != null ? [`--max-rounds=${maxRounds}`] : [])],

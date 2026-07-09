@@ -3,7 +3,7 @@
 // One-time migration: move artists.linktree_url values into
 // artist_links (platform = 'linktree'), so a Linktree link lives in
 // exactly one place going forward — same as every other platform.
-// (enrich-bios.mjs and enrich-soundcloud.mjs already write new finds
+// (enrich-bios.mjs and sync-soundcloud.mjs already write new finds
 // there instead of linktree_url; this script cleans up what's left
 // over from before that change.)
 //

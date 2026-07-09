@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ============================================================
 // Promotes rows from the artist_harvested_links staging table
-// (populated by harvest-soundcloud-links-and-bio.mjs) into the live
+// (populated by sync-soundcloud.mjs) into the live
 // artist_links table.
 //
 // Note: this script never edits or removes rows in artist_links, but it
@@ -58,7 +58,7 @@
 // URL replaces both parsed_url and raw_url — the original bit.ly link
 // is discarded, since only the real target is worth keeping — and is
 // reclassified by domain (same platform list as
-// harvest-soundcloud-links-and-bio.mjs), both in-memory for this run's
+// sync-soundcloud.mjs), both in-memory for this run's
 // decisions and persisted back to artist_harvested_links so future
 // runs don't need to re-resolve it. This is the one place this script
 // makes outbound HTTP calls; everything else is pure DB-to-DB.
@@ -221,9 +221,30 @@ async function writeIsolatingFailures(rows, doWrite, describe) {
 //   - a "www." prefix on either side ("https://instagram.com/a" vs
 //     "https://www.instagram.com/a")
 //   - hostname case ("Instagram.com" vs "instagram.com")
+//   - known tracking/share query params (see TRACKING_PARAMS below),
+//     e.g. Spotify's "?si=...&nd=1" that gets stripped during normal
+//     link cleanup — a harvested URL with these params still counts
+//     as matching a live URL without them.
 // Falls back to a plain string comparison if either value isn't a
 // parseable URL.
 // ------------------------------------------------------------
+const TRACKING_PARAMS = new Set([
+  "si", // spotify share id
+  "nd", // spotify "new design" flag, seen tacked onto shared links
+  "context", // spotify share context
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+  "igsh", // instagram share id
+  "igshid", // instagram share id (older format)
+  "fbclid",
+  "gclid",
+  "feature", // youtube share source
+  "pp", // youtube share tracking
+]);
+
 function normalizeForComparison(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -232,6 +253,11 @@ function normalizeForComparison(rawUrl) {
     if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
       url.pathname = url.pathname.slice(0, -1);
     }
+    for (const param of TRACKING_PARAMS) {
+      url.searchParams.delete(param);
+    }
+    const query = url.searchParams.toString();
+    url.search = query ? `?${query}` : "";
     return url.toString();
   } catch {
     return rawUrl;
@@ -309,7 +335,7 @@ async function resolveShortLink(rawUrl) {
 
 // ------------------------------------------------------------
 // Reclassifies a resolved URL by domain. Mirrors the platform map
-// in harvest-soundcloud-links-and-bio.mjs (kept as a separate copy,
+// in sync-soundcloud.mjs (kept as a separate copy,
 // same as every other per-script convention in this folder, rather
 // than a shared import).
 // ------------------------------------------------------------

@@ -2,7 +2,7 @@
 // Shared SoundCloud bio-processing helpers.
 //
 // Used by enrich-bios.mjs (HTML-scraping pipeline) and
-// enrich-soundcloud.mjs (API pipeline) so the bio parsing
+// sync-soundcloud.mjs (API pipeline) so the bio parsing
 // logic lives in one place.
 // ============================================================
 

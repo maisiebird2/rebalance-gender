@@ -136,7 +136,7 @@ async function fetchAll(table, select, applyFilters = (q) => q) {
 
 // ------------------------------------------------------------
 // URL classification. Same per-script-copy convention as
-// integrate-harvested-links.mjs / harvest-soundcloud-links-and-bio.mjs.
+// integrate-harvested-links.mjs / sync-soundcloud.mjs.
 // Unlike the SoundCloud harvester, soundcloud.com is NOT excluded
 // here (Discogs is a different source, so a SoundCloud link is a
 // real find). discogs.com self-links, Twitter/X (project policy),

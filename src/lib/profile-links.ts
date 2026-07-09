@@ -18,7 +18,7 @@
 // This module only checks that input *looks like* a handle/URL for
 // the right platform (syntax). It does not check that the resulting
 // URL actually resolves to a real profile — see project notes on
-// enrich-soundcloud.mjs for why that's a separate, async concern
+// sync-soundcloud.mjs for why that's a separate, async concern
 // (checking resolvability is still an open TODO).
 // ============================================================
 
