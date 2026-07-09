@@ -116,11 +116,18 @@ Behaviour worth knowing:
   the fresh auto-classification. In practice this only bites with
   `--force`, since already-resolved pairs are otherwise skipped, but it
   differs from the Python version, which also preserves `approved`.
-- **Disk cache**: API responses are cached in `.cache/lastfm_search/`,
-  `.cache/lastfm_tags/`, `.cache/mb_search/`, `.cache/spotify_search/`
-  (md5-keyed JSON files). Note: this conflicts with the project
-  preference to track processed state in the database rather than cache
-  files — a candidate for cleanup when orchestration is built.
+- **Response cache (DB-backed)**: External API responses (Last.fm
+  search/tags, MusicBrainz search, Spotify search) are memoized in the
+  `api_response_cache` table — namespaced rows keyed `(namespace,
+  cache_key)` with a `payload jsonb` and `fetched_at`. This replaced the
+  old `.cache/` disk-JSON cache (2026-07-05) to satisfy the project rule
+  "write to the database, not cache files". It's a fetch cache only —
+  "what has been processed" is still derived from `pending_artist_links`
+  via `alreadyResolved()`. Entries older than `CACHE_TTL_DAYS` (30) count
+  as misses and are refetched/overwritten; `--dry-run` reads the cache
+  but writes nothing. Run `supabase_migration_api_response_cache.sql`
+  once before first use. Optional cleanup: delete rows older than 30 days
+  (query included, commented, in the migration).
 - **Rate limits**: Last.fm ~4 req/s, MusicBrainz 1 req/s (strict),
   Spotify 10 req/s. A full run over ~1,450 artists is dominated by the
   MusicBrainz throttle.

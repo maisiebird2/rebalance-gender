@@ -21,6 +21,29 @@ Phase 7 │ Recommendation engine signals
 Phase 8 │ Review / data quality
 ```
 
+```mermaid
+flowchart TD
+    P0["Phase 0 · Initial load (once)<br/>migrate.mjs"] --> P1
+    WEB["Website entry (ongoing)<br/>submit / revise / edit"] -. "gap: not yet automatic" .-> P2
+    P1["Phase 1 · Data quality<br/>clean-artist-names.mjs"] --> P2
+    P2["Phase 2 · Link &amp; profile harvesting<br/>2a/2b SoundCloud, 2c direct harvesters,<br/>2d promote (looped via harvest-links-loop.mjs),<br/>2e/2f cleanup"] --> P3
+    P2 -.-> P6
+    P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify"] --> P4
+    P3 --> P5
+    P3 --> P6
+    P3 --> P7
+    P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
+    P5["Phase 5 · Profile images<br/>enrich-images.ts → store-images.mjs"]
+    P6["Phase 6 · Discography<br/>enrich-bandcamp.mjs"]
+    P7["Phase 7 · Rec. signals<br/>follow graph, MB tags, genre harvest+integrate"]
+    P2 -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
+    P7 -. as-needed .-> P8G["Genre cleanup<br/>genre-report → dedupe → prune → apply-status"]
+
+    classDef orchestrated stroke:#4f46e5,stroke-width:2px;
+    class P1,P2,P6 orchestrated;
+```
+*(Boxes with a bold border — Phase 1, 2, 6 — are currently run end-to-end by `orchestrate-platform-enrichment.mjs --approved`. Dashed arrows are as-needed or not-yet-automatic paths.)*
+
 Artists enter the database through **two entry points**: the one-time
 bulk CSV load (Phase 0), and continuously via the website's
 submission/revision flow (see "Ongoing entry point" below, after
@@ -224,6 +247,13 @@ promotes them. All platforms the current harvesters emit, including
 `youtube`, `facebook`, and `tiktok` (keys added 2026-07-03), are
 valid.
 
+Discrepancy detection normalizes both URLs before comparing —
+scheme, `www.`, trailing slash, and hostname case are ignored, and
+known tracking/share params (Spotify's `si`/`nd`/`context`,
+`utm_*`, Instagram's `igsh`/`igshid`, `fbclid`, `gclid`, YouTube's
+`feature`/`pp`) are stripped — so a harvested link carrying a share
+param doesn't falsely flag against a clean live URL.
+
 ```bash
 node scripts/integrate-harvested-links.mjs
 node scripts/integrate-harvested-links.mjs --approved   # directory artists only
@@ -238,6 +268,22 @@ clears any false mismatch flags caused by scheme differences alone.
 
 ```bash
 node scripts/fix-http-https-mismatches.mjs
+```
+
+### 2f. `clean-bandcamp-urls.mjs`
+One-off cleanup (safe to re-run, idempotent): rewrites Bandcamp
+links that point at a specific album, track, releases, or follow
+page down to the artist's core `https://<sub>.bandcamp.com` page —
+in both `artist_links` (preserving the pre-strip value in
+`original_url`, without clobbering an existing one) and
+`artist_harvested_links`.
+
+```bash
+node scripts/clean-bandcamp-urls.mjs
+node scripts/clean-bandcamp-urls.mjs --links-only       # artist_links only
+node scripts/clean-bandcamp-urls.mjs --harvested-only   # artist_harvested_links only
+node scripts/clean-bandcamp-urls.mjs --name="Erika"     # filter by artist name
+DRY_RUN=1 node scripts/clean-bandcamp-urls.mjs           # preview
 ```
 
 ---
@@ -298,11 +344,14 @@ displays them; it sits here to keep Phases 2–3, the link-finding
 steps, adjacent.
 
 ### 4a. `sanitize-bios.mjs`
-Runs every raw bio through DOMPurify: strips unsafe tags and
-attributes, converts bare newlines to `<br>` for plain-text bios,
-adds `rel="noopener noreferrer"` to all links. Writes to
-`bio_sanitized` in `artist_enrichment`. Skips rows that already
-have `bio_sanitized` set (use `--force` to re-sanitize).
+Runs every raw bio through `sanitize-html` (pure Node, no DOM
+required — replaced `isomorphic-dompurify` 2026-07-05): strips
+unsafe tags and attributes, converts bare newlines to `<br>` for
+plain-text bios, adds `target="_blank" rel="noopener noreferrer"` to
+all links. Writes to `bio_sanitized` in `artist_enrichment`. Skips
+rows that already have `bio_sanitized` set (use `--force` to
+re-sanitize). Uses keyset pagination on `id`, so `--limit` caps the
+query itself rather than trimming an over-fetched batch.
 
 ```bash
 npm run sanitize-bios
@@ -490,6 +539,10 @@ npm run integrate-harvested-genres
 npm run integrate-harvested-genres -- --force-skipped   # after editing BROAD_TAGS
 ```
 
+Full documentation of the genre lifecycle — the vocabulary/alias
+system, the data model, the display rule (≥3-approved-artists
+filter), and the cleanup toolkit below — is in `GENRES.md`.
+
 ---
 
 ## Phase 8 — Review / data quality
@@ -521,6 +574,30 @@ node scripts/qc-links.mjs --platform=lastfm   # one platform
 node scripts/qc-links.mjs --name="Danz"       # artists matching name
 node scripts/qc-links.mjs --limit=100         # first N artists
 node scripts/qc-links.mjs --csv               # output issues as CSV
+```
+
+### Genre cleanup toolkit *(as-needed; see `GENRES.md`)*
+
+Run `genre-report.mjs` first — it drives the rest. All support
+`--dry-run` / `DRY_RUN=1`.
+
+- **`genre-report.mjs`** — read-only. Writes `genre-report.csv`
+  (artist counts, alias-merge candidates, suspected non-genres) and
+  prints the artist-count distribution.
+- **`dedupe-genres-by-alias.mjs`** — merges existing `genres` rows
+  that only collide through the alias map (e.g. "drum & bass" /
+  "drum'n'bass" / "dnb"), not just by normalized name.
+- **`prune-genres.mjs`** — rolls tail subgenres into a parent, then
+  cuts genres below an artist-count threshold (default 3;
+  reversible unless `--hard`).
+- **`apply-genre-status.mjs`** — applies hand-edited `status`
+  changes from `genre-report.csv` back to the database.
+
+```bash
+node scripts/genre-report.mjs
+node scripts/dedupe-genres-by-alias.mjs --dry-run
+node scripts/prune-genres.mjs --dry-run --threshold=3
+node scripts/apply-genre-status.mjs --dry-run
 ```
 
 ---
@@ -569,6 +646,16 @@ Not part of the pipeline; run manually when debugging.
 - **`test-queries.mjs`** — runs the directory's genre/country filter
   queries using the publishable key (exactly as the app does) to
   debug RLS or filter issues.
+- **`update-artist-count.mjs`** — recomputes the approved-artist
+  count and writes a rounded display value to `site_stats` so the
+  homepage reads one row instead of counting on every request.
+  Manual/local-test path only — a `pg_cron` job in
+  `supabase_migration_site_stats.sql` already refreshes it daily if
+  enabled.
+
+  ```bash
+  npm run update-artist-count
+  ```
 - **`commit-search-miss.sh`** (project root) — one-off git helper
   that committed the search-miss feature; safe to delete.
 - **`test-xlsx.mjs`** (project root) — throwaway probe of the
@@ -638,6 +725,10 @@ Not part of the pipeline; run manually when debugging.
   by `enrich-bios.mjs` and `clean-linktree-bios.mjs`.
 - **`soundcloud-bio.mjs`** — SoundCloud bio parsing shared by
   `enrich-bios.mjs` (legacy) and `enrich-soundcloud.mjs`.
+- **`non-genre-hints.mjs`** — heuristics (places, decades, roles,
+  library junk) flagging `genres` rows that probably aren't musical
+  genres. Used by `genre-report.mjs` for its `suspected_non_genre`
+  column; human-review-only, never auto-cuts.
 - **`scoring.py`** — signal loading, Supabase client, pair
   enumeration, and Jaccard scoring for the Python scoring pipeline
   (see `SCORING.md`).
@@ -745,6 +836,7 @@ npm run enrich-soundcloud
 node scripts/harvest-soundcloud-links-and-bio.mjs
 node scripts/integrate-harvested-links.mjs
 node scripts/fix-http-https-mismatches.mjs
+node scripts/clean-bandcamp-urls.mjs
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios
