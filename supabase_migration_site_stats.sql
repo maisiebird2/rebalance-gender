@@ -29,6 +29,12 @@ create policy "Public can read site stats"
   on public.site_stats for select
   using (true);
 
+-- Base table-level SELECT grant. Tables created via the SQL editor do
+-- NOT automatically get this for anon/authenticated, and without it the
+-- RLS policy above is moot (the anon publishable-key read returns no
+-- rows). Matches the grant on the artists table. Idempotent.
+grant select on table public.site_stats to anon, authenticated;
+
 -- ────────────────────────────────────────────────────────────
 -- 2. Refresh function — recomputes the approved-artist count
 -- ────────────────────────────────────────────────────────────
