@@ -182,6 +182,9 @@ Scripts live in `scripts/` and run from the repo root with `npm run <name>`
 | 7 | Recommendation signals — SC follow graph, MB tags, genre harvesting |
 | 8 | Review and data quality passes |
 
+**Read `scripts/GENRES.md`** for how genres are harvested, normalised,
+deduplicated/pruned, and displayed (the ≥3-approved-artists filter rule).
+
 Python scripts (scoring pipeline) require conda; packages:
 `conda install numpy pandas requests charset-normalizer`
 
