@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import type { DiscoverResponse, DiscoverResult } from "@/app/api/discover/route";
 import DiscoverResultsGrid from "@/components/DiscoverResultsGrid";
+import { randomSampleArtist } from "@/lib/sample-artists";
 
 type State =
   | { status: "idle" }
@@ -15,6 +16,15 @@ export default function DiscoverPage() {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<State>({ status: "idle" });
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Set a random sample name as the input's placeholder on each page load.
+  // Written straight to the DOM (not React state) so it stays client-only
+  // and doesn't affect server/client hydration.
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.placeholder = `e.g. ${randomSampleArtist()}`;
+    }
+  }, []);
 
   const runSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
@@ -42,11 +52,14 @@ export default function DiscoverPage() {
     }
   }, []);
 
-  // If arriving from the header's "Find similar" panel (/discover?q=…),
-  // prefill the field and run the search automatically.
+  // If arriving from the header's "Discover similar" panel (/discover?q=…),
+  // prefill the field and run the search automatically. The value comes from
+  // the URL, which is client-only, so it can't be initial state without a
+  // hydration mismatch — hence setState in this mount effect.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get("q")?.trim();
     if (q) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery(q);
       runSearch(q);
     }
@@ -79,7 +92,6 @@ export default function DiscoverPage() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. Objekt, or paste a Last.fm URL"
           className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm shadow-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
         />
         <button

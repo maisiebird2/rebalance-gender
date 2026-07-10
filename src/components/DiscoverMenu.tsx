@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { randomSampleArtist } from "@/lib/sample-artists";
 
 /**
  * Header entry point for the "find similar artists" feature. A distinct
@@ -10,65 +11,16 @@ import { useRouter } from "next/navigation";
  * input, and a hint. Submitting routes to /discover with the query
  * prefilled, where the results render.
  */
-
-// Sample artist names for the input placeholder — one is picked at random
-// each time the page loads. Edit this list to change the suggestions.
-const SAMPLE_ARTISTS = [
-  "Peggy Gou",
-  "David Guetta",
-  "Martin Garrix",
-  "Alok",
-  "Armin Van Buuren",
-  "Timmy Trumpet",
-  "FISHER",
-  "Skrillex",
-  "Afrojack",
-  "Anyma",
-  "Vintage Culture",
-  "Don Diablo",
-  "Steve Aoki",
-  "Tiësto",
-  "Indira Paganotto",
-  "Amelie Lens",
-  "Lilly Palmer",
-  "Nora En Pure ",
-  "Deborah De Luca",
-  "Chris Lake",
-  "Zeds Dead",
-  "Boys Noize",
-  "Subtronics",
-  "Crankdat",
-  "Knock2",
-  "Kaytranada",
-  "A. G. Cook",
-  "Brutalismus 3000",
-  "DJ Anderson do Paraíso",
-  "REZZ",
-  "Ninajirachi",
-  "Alison Wonderland",
-  "Charlotte de Witte",
-  "Vintage Culture",
-  "Fred again...",
-  "Sara Landry",
-  "Miss Monique",
-  "Honey Dijon",
-];
-
 export default function DiscoverMenu() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [placeholder, setPlaceholder] = useState(`e.g. ${SAMPLE_ARTISTS[0]}`);
+  // Random sample name for the placeholder, chosen once per page load. The
+  // panel input is client-only (rendered on open), so a lazy initializer is
+  // safe here — no hydration mismatch.
+  const [placeholder] = useState(() => `e.g. ${randomSampleArtist()}`);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Pick a random sample name for the placeholder on each page load. Done in
-  // an effect (not during render) so server and client markup match.
-  useEffect(() => {
-    const pick =
-      SAMPLE_ARTISTS[Math.floor(Math.random() * SAMPLE_ARTISTS.length)];
-    setPlaceholder(`e.g. ${pick}`);
-  }, []);
 
   // Focus the field when the panel opens.
   useEffect(() => {
