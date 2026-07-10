@@ -47,7 +47,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.16.0",
-    "sanitize-html": "^2.15.0"
+    "sanitize-html": "^2.15.0",
+    "undici": "^8.7.0"
   },
   "overrides": {
     "postcss": ">=8.5.10"

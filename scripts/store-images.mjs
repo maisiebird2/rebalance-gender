@@ -27,6 +27,14 @@
 // same convention as every other harvester in this pipeline. A later
 // successful run clears the row.
 //
+// Each download/upload/DB-write is retried on transient failure
+// (exponential backoff, up to 3 retries) before being treated as a
+// real failure — added after a run died partway through on a
+// stretch of "TypeError: fetch failed" errors, most likely a dead
+// connection after a network blip rather than anything wrong with
+// those specific images. A row only reaches harvest_failures now if
+// it still fails after retries.
+//
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/store-images.mjs                  # every artist_images row missing a storage_url
@@ -38,6 +46,7 @@
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
+import { Agent } from "undici";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,12 +97,75 @@ if (!SUPABASE_URL || !SECRET_KEY) {
   process.exit(1);
 }
 
+// Added 2026-07-10, revised same day: a long run died partway through
+// on a sustained stretch of "TypeError: fetch failed" — every
+// remaining request to Supabase (Storage upload AND a plain
+// PostgREST update) failing the same way, immune to in-process
+// retries, but a full script restart fixed it. First attempt at a
+// fix used `pipelining: 0` on the theory that it would stop undici
+// reusing a stale pooled connection — WRONG, verified against
+// undici's own docs: pipelining controls something unrelated
+// (batching multiple in-flight requests on one connection, not
+// keep-alive/reuse), and it changed nothing, confirmed by a second
+// identical failure. Replaced with the option that actually controls
+// this: a short keepAliveTimeout, so idle sockets get discarded
+// quickly instead of lingering long enough to be silently closed
+// server-side (proxy/load-balancer idle timeout) without the client
+// noticing. Still not confirmed as the actual fix — see
+// describeError() below and scripts/PIPELINE.md for how to gather
+// real diagnostic data if this happens again, since two guesses in a
+// row missed. Passed to both our own fetch() calls and, via
+// global.fetch, every call supabase-js makes internally.
+const dispatcher = new Agent({ keepAliveTimeout: 4000, keepAliveMaxTimeout: 4000 });
+
 const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
+  global: { fetch: (url, opts) => fetch(url, { ...opts, dispatcher }) },
 });
 
 const BUCKET = "artist-images";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------
+// Retry a Supabase call (anything returning { data, error }) on
+// transient failures — added 2026-07-10 after a long run died
+// partway through with "TypeError: fetch failed" on every remaining
+// row (Storage upload AND the harvest_failures write both failed the
+// same way), most likely a dead pooled connection after a network
+// blip rather than a real per-request error. Restarting the script
+// fixed it; this avoids needing a manual restart for the same thing.
+// Exponential backoff: 1s, 2s, 4s (3 retries, 4 attempts total).
+// ------------------------------------------------------------
+async function withRetry(operation, { retries = 3, label = "" } = {}) {
+  let result;
+  for (let attempt = 0; ; attempt++) {
+    result = await operation();
+    if (!result.error) return result;
+    if (attempt >= retries) return result;
+    const delay = 1000 * 2 ** attempt;
+    console.log(`    (${label} failed: ${describeError(result.error)} — retrying in ${delay}ms)`);
+    await sleep(delay);
+  }
+}
+
+// ------------------------------------------------------------
+// Pull the real underlying network error (ECONNRESET, ETIMEDOUT,
+// DNS failure, etc.) out of a Supabase error object — "fetch failed"
+// alone is just the generic wrapper name and hides the actual cause.
+// postgrest-js (DB calls) already builds this into `.details`.
+// storage-js (Storage calls) wraps the raw exception in
+// `.originalError`, whose `.cause` holds the real error.
+// ------------------------------------------------------------
+function describeError(error) {
+  if (!error) return "";
+  if (error.details) return error.details;
+  const cause = error.originalError?.cause;
+  if (cause) {
+    const code = cause.code ? ` (${cause.code})` : "";
+    return `${error.message}\n\nCaused by: ${cause.name ?? "Error"}: ${cause.message ?? cause}${code}`;
+  }
+  return error.message;
+}
 
 // ------------------------------------------------------------
 // Rewrite a SoundCloud image URL to request the 500×500 variant.
@@ -129,26 +201,37 @@ async function ensureBucket() {
 // Download an image URL and return { buffer, contentType }, or
 // { error } on any failure (bad status, timeout, network error).
 // ------------------------------------------------------------
-async function downloadImage(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile image storage)",
-      },
-      redirect: "follow",
-    });
-    if (!res.ok) return { error: `HTTP ${res.status}` };
-    const contentType = res.headers.get("content-type") ?? "image/jpeg";
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return { buffer, contentType };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  } finally {
-    clearTimeout(timeout);
+async function downloadImage(url, { retries = 3 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile image storage)",
+        },
+        redirect: "follow",
+        dispatcher,
+      });
+      if (!res.ok) return { error: `HTTP ${res.status}` };
+      const contentType = res.headers.get("content-type") ?? "image/jpeg";
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return { buffer, contentType };
+    } catch (err) {
+      // err.cause carries the underlying network error (e.g. ECONNRESET)
+      // that a bare err.message ("fetch failed") hides — surfaced here
+      // so a future occurrence is easier to diagnose than this one was.
+      const cause = err instanceof Error && err.cause ? ` (cause: ${err.cause.code ?? err.cause.message ?? err.cause})` : "";
+      const message = (err instanceof Error ? err.message : String(err)) + cause;
+      if (attempt >= retries) return { error: message };
+      const delay = 1000 * 2 ** attempt;
+      console.log(`    (download ${message} — retrying in ${delay}ms)`);
+      await sleep(delay);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -209,6 +292,29 @@ async function main() {
 
   let uploaded = 0;
   let failed = 0;
+  // If the connection-pool fix above isn't enough (or something else
+  // sustained goes wrong), stop after a run of consecutive failures
+  // instead of grinding through the rest of a 1000+ row list — a
+  // rerun is safe and cheap (only rows still missing storage_url get
+  // reprocessed), so bailing out fast beats burning through every
+  // remaining row on a doomed connection.
+  const MAX_CONSECUTIVE_FAILURES = 8;
+  let consecutiveFailures = 0;
+  const bailIfSustainedFailure = () => {
+    consecutiveFailures++;
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      console.log(
+        `\n${MAX_CONSECUTIVE_FAILURES} artists in a row failed even after retries — ` +
+          `stopping early rather than grinding through the rest. This usually means a ` +
+          `sustained connectivity problem, not anything wrong with those specific images. ` +
+          `Check your connection and re-run this script — it only reprocesses rows still ` +
+          `missing storage_url, so nothing already uploaded is redone.`
+      );
+      console.log(`  uploaded so far: ${uploaded}`);
+      console.log(`  failed so far:   ${failed}`);
+      process.exit(1);
+    }
+  };
 
   for (const row of rows) {
     const { artist_id: artistId, platform, source_url: rawSourceUrl, artists: artist } = row;
@@ -233,6 +339,7 @@ async function main() {
           url: sourceUrl,
         });
       }
+      bailIfSustainedFailure();
       await sleep(300);
       continue;
     }
@@ -244,47 +351,57 @@ async function main() {
 
     if (!DRY_RUN) {
       // upsert: overwrite if the file already exists (covers --force).
-      const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(storagePath, buffer, {
-          contentType,
-          upsert: true,
-        });
+      const { error: uploadError } = await withRetry(
+        () =>
+          supabase.storage.from(BUCKET).upload(storagePath, buffer, {
+            contentType,
+            upsert: true,
+          }),
+        { label: "upload" }
+      );
 
       if (uploadError) {
-        console.log(`✗ upload failed: ${uploadError.message}`);
+        const detail = describeError(uploadError);
+        console.log(`✗ upload failed: ${detail}`);
         failed++;
         await recordFailure(supabase, {
           artistId,
           service,
           status: "upload_failed",
-          detail: uploadError.message,
+          detail,
           url: sourceUrl,
         });
+        bailIfSustainedFailure();
         await sleep(300);
         continue;
       }
 
-      const { error: updateError } = await supabase
-        .from("artist_images")
-        .update({
-          storage_url: publicUrl,
-          storage_path: storagePath,
-          stored_at: new Date().toISOString(),
-        })
-        .eq("artist_id", artistId)
-        .eq("platform", platform);
+      const { error: updateError } = await withRetry(
+        () =>
+          supabase
+            .from("artist_images")
+            .update({
+              storage_url: publicUrl,
+              storage_path: storagePath,
+              stored_at: new Date().toISOString(),
+            })
+            .eq("artist_id", artistId)
+            .eq("platform", platform),
+        { label: "DB update" }
+      );
 
       if (updateError) {
-        console.log(`✗ DB update failed: ${updateError.message}`);
+        const detail = describeError(updateError);
+        console.log(`✗ DB update failed: ${detail}`);
         failed++;
         await recordFailure(supabase, {
           artistId,
           service,
           status: "write_failed",
-          detail: updateError.message,
+          detail,
           url: sourceUrl,
         });
+        bailIfSustainedFailure();
         await sleep(300);
         continue;
       }
@@ -294,6 +411,7 @@ async function main() {
 
     console.log(`✓ ${Math.round(buffer.length / 1024)} KB → ${publicUrl}`);
     uploaded++;
+    consecutiveFailures = 0;
     await sleep(200);
   }
 
