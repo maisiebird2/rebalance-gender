@@ -151,8 +151,12 @@ def load_mb_tags(client, dir_ids):
 
 
 def load_mb_collabs(client, dir_ids):
-    """Return set of canonical (id_a, id_b) tuples for dir-artist pairs."""
-    rows = client.get('mb_collaborations', 'artist_id_a,artist_id_b')
+    """Return set of canonical (id_a, id_b) tuples for dir-artist pairs.
+
+    Reads the platform-neutral `collaborations` table (MusicBrainz +
+    Discogs edges); a pair from either source collapses into one entry.
+    """
+    rows = client.get('collaborations', 'artist_id_a,artist_id_b')
     return {
         pair_key(r['artist_id_a'], r['artist_id_b'])
         for r in rows

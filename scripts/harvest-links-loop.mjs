@@ -59,7 +59,16 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // terminates naturally. The same page fetch also does the full
 // Bandcamp profile pull (discography, bio, location, image, genre
 // tags) — see sync-bandcamp.mjs / Phase 2b in PIPELINE.md.
-const HARVESTERS = ["harvest-links-discogs.mjs", "sync-bandcamp.mjs"];
+// sync-hoer.mjs (HÖR) is also a full member: it SEEDS new pending
+// artists from HÖR's directory and stages their page socials
+// (Instagram/SoundCloud) into artist_harvested_links, which the other
+// harvesters then feed on — so it belongs in the convergence loop, not
+// as a terminal stage. It tracks processed state in the DB
+// (resolved_artists service 'hoer-sync' + a set-date cursor in
+// hoer_sync_state), so each round only ingests new artists/sets and the
+// loop still terminates. --approved gates only its enrichment, never its
+// seeding. See sync-hoer.mjs.
+const HARVESTERS = ["sync-hoer.mjs", "sync-discogs.mjs", "sync-bandcamp.mjs"];
 const INTEGRATE = "integrate-harvested-links.mjs";
 
 // ------------------------------------------------------------

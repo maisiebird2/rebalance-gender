@@ -479,7 +479,7 @@ function extractPlainUrls(text) {
 // ------------------------------------------------------------
 // Platform classification for harvested links (web-profiles + bio
 // URLs). Same per-script-copy convention as every other harvester in
-// this folder (integrate-harvested-links.mjs, harvest-links-discogs.mjs)
+// this folder (integrate-harvested-links.mjs, sync-discogs.mjs)
 // rather than a shared import.
 // ------------------------------------------------------------
 const DOMAIN_PLATFORM_MAP = [

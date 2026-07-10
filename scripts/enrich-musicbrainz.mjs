@@ -8,8 +8,9 @@
 //
 //   - Folksonomy tags  → upserted into mb_tags
 //   - Artist relations (collaborations, band membership, etc.)
-//     → upserted into mb_collaborations, but ONLY when the
-//     related artist's MBID is also in our artists table
+//     → upserted into `collaborations` (source_platform =
+//     'musicbrainz'), but ONLY when the related artist's MBID is
+//     also in our artists table
 //
 // MusicBrainz enforces a strict 1 request/second rate limit.
 // A full run over ~1,400 artists takes roughly 25–30 minutes.
@@ -264,31 +265,34 @@ async function upsertTags(artistId, tags) {
   return { inserted: rows.length }
 }
 
-// Upsert a collaboration edge.
+// Upsert a collaboration edge into the platform-neutral `collaborations`
+// table (source_platform = 'musicbrainz'; sync-discogs.mjs writes the
+// same table with source_platform = 'discogs').
 // IMPORTANT: artist_id_a < artist_id_b (UUID string comparison) per schema constraint.
 async function upsertCollab(idA, idB, count) {
   const [lo, hi] = idA < idB ? [idA, idB] : [idB, idA]
 
   // Try insert first; if conflict, increment the count.
   const { error: insertErr } = await supabase
-    .from('mb_collaborations')
-    .insert({ artist_id_a: lo, artist_id_b: hi, collab_count: count })
+    .from('collaborations')
+    .insert({ artist_id_a: lo, artist_id_b: hi, collab_count: count, source_platform: 'musicbrainz' })
     .select()
 
   if (!insertErr) return 'inserted'
 
-  // Conflict on unique (artist_id_a, artist_id_b) — increment collab_count
+  // Conflict on unique (artist_id_a, artist_id_b, source_platform) — increment collab_count
   if (insertErr.code === '23505') {
     const { data: existing, error: selectErr } = await supabase
-      .from('mb_collaborations')
+      .from('collaborations')
       .select('id, collab_count')
       .eq('artist_id_a', lo)
       .eq('artist_id_b', hi)
+      .eq('source_platform', 'musicbrainz')
       .single()
     if (selectErr) throw selectErr
 
     const { error: updateErr } = await supabase
-      .from('mb_collaborations')
+      .from('collaborations')
       .update({ collab_count: existing.collab_count + count })
       .eq('id', existing.id)
     if (updateErr) throw updateErr
