@@ -228,6 +228,28 @@ html:not(.dark) .smoke-layer {
   to { transform: rotate(360deg); }
 }
 
+/* --- Avatar ring, static variant (artist page hero) ---------------------
+   The artist page isn't a hoverable card, so this ring is always on
+   (no hover gate, no spin) rather than reusing .avatar-ring's hover
+   trigger from .glass-card. */
+.avatar-ring-static {
+  position: relative;
+}
+.dark .avatar-ring-static::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 0deg,
+    var(--magenta),
+    var(--violet-brand),
+    var(--magenta)
+  );
+  opacity: 0.85;
+  z-index: -1;
+}
+
 /* --- Signature fader motif (logo) --------------------------------------
    The header lockup uses two channel faders (mixing-desk sliders), rendered
    inline as SVG in layout.tsx: gradient knobs on gray tracks, sitting at

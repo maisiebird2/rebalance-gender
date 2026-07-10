@@ -44,7 +44,7 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
       }
     >
       <div className="flex items-start gap-3">
-        <div className="avatar-ring h-16 w-16 shrink-0 rounded-full">
+        <div className="avatar-ring h-24 w-24 shrink-0 rounded-full">
           <div className="h-full w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
             {profileImage ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -61,41 +61,45 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
           </div>
         </div>
 
-        {/* Each field on its own line: name, aliases, pronouns, location. */}
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <h3 className="ff-display truncate text-base font-medium">
-            {artist.name}
-          </h3>
-          {aliasText && (
-            <p className="truncate text-xs text-gray-400 dark:text-gray-500">
-              aka {aliasText}
-            </p>
-          )}
-          {artist.pronoun?.value && (
-            <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
-              {artist.pronoun.value}
-            </p>
-          )}
-          {locationText && (
-            <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
-              {locationText}
-            </p>
+        {/* Text column sits to the right of the avatar; genres live in this
+            same column (below the other fields) so they align on the left
+            with the name/aka/pronoun/location rather than the avatar. */}
+        <div className="min-w-0 flex-1">
+          <div className="space-y-0.5">
+            <h3 className="ff-display truncate text-base font-medium">
+              {artist.name}
+            </h3>
+            {aliasText && (
+              <p className="truncate text-xs text-gray-400 dark:text-gray-500">
+                aka {aliasText}
+              </p>
+            )}
+            {artist.pronoun?.value && (
+              <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
+                {artist.pronoun.value}
+              </p>
+            )}
+            {locationText && (
+              <p className="ff-mono truncate text-xs text-gray-500 dark:text-gray-400">
+                {locationText}
+              </p>
+            )}
+          </div>
+
+          {artist.genres?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {artist.genres.map((genre, i) => (
+                <span
+                  key={genre.id}
+                  className={`ff-mono rounded-md px-2 py-0.5 text-[11px] font-medium lowercase tracking-wide ${tagClass(i)}`}
+                >
+                  {genre.name}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       </div>
-
-      {artist.genres?.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {artist.genres.map((genre, i) => (
-            <span
-              key={genre.id}
-              className={`ff-mono rounded-md px-2 py-0.5 text-[11px] font-medium lowercase tracking-wide ${tagClass(i)}`}
-            >
-              {genre.name}
-            </span>
-          ))}
-        </div>
-      )}
     </Link>
   );
 

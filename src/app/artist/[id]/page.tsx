@@ -114,19 +114,21 @@ export default async function ArtistPage({ params }: PageProps) {
         <div className="order-1">
           {/* Avatar + name */}
           <div className="flex items-center gap-4">
-            <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-              {profileImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={profileImage}
-                  alt={artist.name}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-3xl font-semibold text-gray-400">
-                  {artist.name.charAt(0).toUpperCase()}
-                </div>
-              )}
+            <div className="avatar-ring-static h-40 w-40 shrink-0 rounded-full">
+              <div className="h-full w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                {profileImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={profileImage}
+                    alt={artist.name}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-3xl font-semibold text-gray-400">
+                    {artist.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
