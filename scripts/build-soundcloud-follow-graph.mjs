@@ -452,19 +452,20 @@ function cleanScUrl(url) {
   }
 }
 
-// SoundCloud CDN avatar URLs default to a 100×100 "-large" variant.
-// Replacing the suffix with "-t500x500" gets the 500×500 version,
-// which is the largest size the CDN serves without a separate request.
-function upgradeAvatarUrl(url) {
-  if (typeof url !== "string" || !url) return null;
-  return url.replace(/-large(\.\w+)$/, "-t500x500$1").replace(/-large$/, "-t500x500");
-}
-
 // Upsert enrichment data from a SoundCloud user object into
 // artist_enrichment. Called for both source artists (from /resolve)
 // and newly-created followed artists (from the followings collection)
 // — the data is already in hand from those API responses, so no
 // extra API calls are needed.
+//
+// Deliberately does NOT write an image: this script discovers
+// non-directory follow-graph nodes (~100x more numerous than
+// directory artists), and images are only ever stored for
+// directory_status = 'approved' artists — see
+// supabase_migration_artist_images.sql and src/lib/enrich-images.ts.
+// If one of these artists is later approved into the directory,
+// sync-soundcloud.mjs's image-only pass picks up their avatar then
+// (see PIPELINE.md, "Image-only pass").
 async function upsertEnrichment(artistId, user) {
   if (DRY_RUN) return { error: null };
 
@@ -473,7 +474,7 @@ async function upsertEnrichment(artistId, user) {
       artist_id: artistId,
       platform: "soundcloud",
       external_id: user.id != null ? String(user.id) : null,
-      profile_image_url: upgradeAvatarUrl(user.avatar_url),
+      profile_image_url: null,
       bio: typeof user.description === "string" && user.description.trim()
         ? `SoundCloud bio: ${user.description.trim()}`
         : null,
@@ -679,7 +680,9 @@ async function main() {
               artist_id: artistId,
               platform: "soundcloud",
               external_id: followed.id != null ? String(followed.id) : null,
-              profile_image_url: upgradeAvatarUrl(followed.avatar_url),
+              // No image — see upsertEnrichment()'s comment above:
+              // non-directory follow-graph nodes don't get images.
+              profile_image_url: null,
               bio:
                 typeof followed.description === "string" && followed.description.trim()
                   ? followed.description.trim()

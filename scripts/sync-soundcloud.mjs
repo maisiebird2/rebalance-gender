@@ -11,7 +11,10 @@
 //   GET /resolve?url=<profile url>
 //     -> the user's resource: follower/track counts, avatar, numeric
 //        id, urn, and the full, untruncated `description` (bio) text.
-//        Written to artist_enrichment (platform = 'soundcloud').
+//        Bio/follower/track data written to artist_enrichment
+//        (platform = 'soundcloud'); the avatar goes to artist_images
+//        (platform = 'soundcloud') instead — see "Image handling"
+//        below.
 //   GET /users/{urn}/web-profiles
 //     -> the "Links" section: an array of { service, url, title, ... }
 //        pointing at the artist's other platforms. Staged into
@@ -62,6 +65,39 @@
 // URL, status, the failed url, and occurred_at — one level up from
 // this repo (the "Rebalance Gender" folder), so re-running never
 // overwrites a previous run's report. See writeFailuresCsv().
+//
+// Image handling: the resolved user's avatar is written to
+// artist_images (artist_id, platform='soundcloud'), never to
+// artist_enrichment.profile_image_url (explicitly nulled in that
+// upsert, so a pre-migration value doesn't linger looking
+// authoritative) — see supabase_migration_artist_images.sql.
+// Directory-only, unconditionally: the image write only happens when
+// this artist's directory_status is 'approved' at the moment
+// syncArtist() runs, checked inline regardless of which flags scoped
+// this call — unlike bio/links/tracks, this script otherwise
+// processes non-directory artists too (follow-graph nodes, ~100x more
+// numerous than directory ones), and there's no reason to store or
+// re-host images for artists that aren't shown anywhere.
+//
+// Image completion is tracked independently from the main
+// 'soundcloud-sync' completion (resolved_artists), because the two
+// can now legitimately diverge: an artist can be fully bio/links
+// synced as a non-directory node, then get approved into the
+// directory later — at that point only the image is missing, not a
+// full re-sync. main() detects this (approved, resolved_artists
+// already has a 'soundcloud-sync' row, but no artist_images row for
+// soundcloud yet) and routes those artists through syncArtist() with
+// { imageOnly: true }: still one /resolve call (the only way to get
+// the avatar — no cheaper endpoint), but skipping playlists,
+// web-profiles, and every bio/link write, since those are already
+// done. Image-only failures are recorded under their own
+// harvest_failures service ('image-sync:soundcloud', see
+// IMAGE_STATE_SERVICE below) rather than 'soundcloud-sync', so a
+// 404/dead-link discovered by the image-only path doesn't pollute the
+// main sync's failure state (which already succeeded for this
+// artist) — and so a fix to the link is picked up automatically next
+// run via the same link-changed-since-failure cross-check
+// 'soundcloud-sync' already uses (see loadFailureUrls in main()).
 //
 // Single per-artist unit: the actual sync logic lives in the exported
 // syncArtist() function below. The CLI loop in main() is a thin driver
@@ -150,6 +186,9 @@ const statusArg = args.find((a) => a.startsWith("--status="));
 const STATUS_FILTER = statusArg ? statusArg.slice("--status=".length) : null;
 
 const STATE_SERVICE = "soundcloud-sync"; // resolved_artists.service / harvest_failures.service value
+// harvest_failures.service value for the image-only path — deliberately
+// separate from STATE_SERVICE; see "Image handling" above.
+const IMAGE_STATE_SERVICE = "image-sync:soundcloud";
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -263,6 +302,33 @@ async function loadArtistIdsWithLinktreeLink() {
       .from("artist_links")
       .select("artist_id")
       .eq("platform", "linktree")
+      .order("artist_id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) ids.add(r.artist_id);
+    if ((data?.length ?? 0) < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return ids;
+}
+
+// ------------------------------------------------------------
+// Artist IDs that already have a stored SoundCloud image
+// (artist_images, platform='soundcloud') — preloaded once so main()
+// can tell which already-synced, approved artists still need the
+// lighter image-only pass. Presence of the row is what matters here,
+// not whether it's been re-hosted to Storage yet (that's
+// store-images.mjs's separate concern).
+// ------------------------------------------------------------
+async function fetchArtistIdsWithSoundcloudImage() {
+  const PAGE_SIZE = 1000;
+  const ids = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("artist_images")
+      .select("artist_id")
+      .eq("platform", "soundcloud")
       .order("artist_id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
@@ -514,18 +580,28 @@ async function fetchAllSoundCloudLinks() {
 // ------------------------------------------------------------
 // syncArtist — the single per-artist unit. Resolves one artist from
 // SoundCloud and fans the result out to artist_enrichment (profile
-// data + bio) and artist_harvested_links/artist_harvested_bios
-// (staged links + raw bio). Returns a status object the CLI loop uses
-// for its summary tallies; a future event-triggered caller (single
-// artist, on approval) can call this directly and ignore the tallying.
+// data + bio), artist_images (avatar, approved artists only), and
+// artist_harvested_links/artist_harvested_bios (staged links + raw
+// bio). Returns a status object the CLI loop uses for its summary
+// tallies; a future event-triggered caller (single artist, on
+// approval) can call this directly and ignore the tallying.
 //
 // opts.artistIdsWithLinktree — a mutable Set<artist_id> the caller
 // preloads once (see loadArtistIdsWithLinktreeLink) and passes in, so
 // a run processing many artists doesn't re-query it per artist.
+//
+// opts.imageOnly — when true, does the wrong-field guard + /resolve
+// call and the image write ONLY, skipping playlists, web-profiles,
+// and every bio/link write, and leaving resolved_artists('soundcloud-
+// sync') untouched. For artists whose main sync already succeeded but
+// who are missing a soundcloud artist_images row (typically: approved
+// after their non-directory main sync already ran) — see main() and
+// the module header's "Image handling" section.
 // ------------------------------------------------------------
 export async function syncArtist(artist, opts = {}) {
-  const { debug = false, dryRun = false, artistIdsWithLinktree = new Set() } = opts;
-  const { artistId, name, scUrl } = artist;
+  const { debug = false, dryRun = false, artistIdsWithLinktree = new Set(), imageOnly = false } = opts;
+  const { artistId, name, scUrl, directoryStatus } = artist;
+  const isApproved = directoryStatus === "approved";
 
   // Records a failure and, only for statuses that should stop being
   // retried automatically (today: just a definitive 404 — see the
@@ -542,9 +618,26 @@ export async function syncArtist(artist, opts = {}) {
     await recordFailure(supabase, { artistId, service: STATE_SERVICE, status, detail, url: scUrl });
   }
 
+  // Same idea, for the image-only concern — a separate
+  // harvest_failures service (IMAGE_STATE_SERVICE) so an image-only
+  // failure never touches 'soundcloud-sync' state for an artist whose
+  // main sync already succeeded. There's no resolved_artists row for
+  // images (completion = an artist_images row existing), so there's
+  // no markDone here; main()'s image-only candidate selection does
+  // its own link-changed-since-failure cross-check against this
+  // service instead.
+  async function failImage(status, detail) {
+    if (dryRun) return;
+    await recordFailure(supabase, { artistId, service: IMAGE_STATE_SERVICE, status, detail, url: scUrl });
+  }
+
   // -- Wrong-field URL guard: skip before spending an API call --
   if (!isSoundCloudUrl(scUrl)) {
     console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
+    if (imageOnly) {
+      await failImage("wrong_field_url", "stored soundcloud link does not resolve to a soundcloud.com domain");
+      return { status: "skipped_wrong_field" };
+    }
     // Marked processed, same reasoning as a 404: a domain mismatch
     // doesn't fix itself on retry, so recording a fresh harvest_failures
     // row for it every single run forever is pure waste. main()'s
@@ -563,6 +656,15 @@ export async function syncArtist(artist, opts = {}) {
 
   if (!res.ok || !res.data) {
     console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
+    if (imageOnly) {
+      if (res.status === 404) {
+        await failImage("resolve_404", "resolve returned 404 (dead link)");
+      } else {
+        await failImage("resolve_failed", `resolve failed (HTTP ${res.status ?? "timeout"})`);
+      }
+      await sleep(300);
+      return { status: "failed_resolve", httpStatus: res.status };
+    }
     if (res.status === 404) {
       // Definitive dead link — mark processed so it doesn't retry
       // forever; main()'s loadFailureUrls cross-check un-sticks it
@@ -587,6 +689,51 @@ export async function syncArtist(artist, opts = {}) {
       `  [debug] ${name}: followers=${user.followers_count} tracks=${user.track_count} ` +
         `avatar=${user.avatar_url ?? "(none)"}`
     );
+  }
+
+  // -- Image write: artist_images (artist_id, platform='soundcloud'),
+  // approved artists only, regardless of what scoped this call. Done
+  // for both the full sync and the image-only path — one /resolve
+  // call already got us the avatar either way, so there's no reason
+  // to defer it.
+  let imageStatus = "not_approved";
+  if (isApproved) {
+    const avatarUrl = upgradeAvatarUrl(user.avatar_url);
+    if (!avatarUrl) {
+      imageStatus = "no_avatar";
+      if (debug) console.log(`  [debug] ${name}: approved but no avatar_url on resolved user`);
+    } else if (!dryRun) {
+      const { error: imageError } = await supabase.from("artist_images").upsert(
+        {
+          artist_id: artistId,
+          platform: "soundcloud",
+          source_url: avatarUrl,
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: "artist_id,platform" }
+      );
+      if (imageError) {
+        console.error(`  failed to save soundcloud image: ${imageError.message}`);
+        imageStatus = "failed";
+        await failImage("write_failed", `artist_images upsert failed: ${imageError.message}`);
+      } else {
+        imageStatus = "stored";
+        await clearFailure(supabase, { artistId, service: IMAGE_STATE_SERVICE });
+      }
+    } else {
+      imageStatus = "stored"; // dry run — would have stored
+    }
+  }
+
+  if (imageOnly) {
+    // Stop here — playlists/web-profiles/bio/links are already done
+    // from the main sync; resolved_artists('soundcloud-sync') is left
+    // untouched since this call was never about the main sync.
+    console.log(
+      `${imageStatus === "stored" ? "✓" : imageStatus === "no_avatar" ? "○" : "✗"} ${name}: image-only — ${imageStatus}`
+    );
+    await sleep(300);
+    return { status: imageStatus === "stored" ? "image_synced" : "image_failed", imageStatus };
   }
 
   // -- 2. Zero uploads: fall back to the account's playlists (sets) --
@@ -693,7 +840,10 @@ export async function syncArtist(artist, opts = {}) {
         artist_id: artistId,
         platform: "soundcloud",
         external_id: user.id != null ? String(user.id) : null,
-        profile_image_url: upgradeAvatarUrl(user.avatar_url),
+        // Image lives in artist_images now (written above), not here —
+        // explicitly nulled (not omitted) so a stale pre-migration
+        // value doesn't sit around looking authoritative.
+        profile_image_url: null,
         bio: bio ? `SoundCloud bio: ${bio}` : bio,
         follower_count: user.followers_count ?? null,
         track_count: user.track_count ?? null,
@@ -814,6 +964,7 @@ export async function syncArtist(artist, opts = {}) {
       return acc;
     }, {}),
     hasBio: Boolean(rawBio),
+    imageStatus,
   };
 }
 
@@ -913,10 +1064,12 @@ async function main() {
   }
 
   const artistIdsWithLinktree = await loadArtistIdsWithLinktreeLink();
+  const artistIdsWithSoundcloudImage = await fetchArtistIdsWithSoundcloudImage();
 
   const links = await fetchAllSoundCloudLinks();
 
   let rows = links;
+  let imageOnlyRows = [];
   let skippedProcessed = 0;
   let retriedLinkChanged = 0;
   if (!FORCE) {
@@ -932,6 +1085,9 @@ async function main() {
     // this map is one syncArtist chose to mark done, so all of them
     // get the same treatment automatically as new ones are added.
     const failedUrls = await loadFailureUrls(supabase, { service: STATE_SERVICE });
+    // Same cross-check, for the image-only concern's own failure
+    // service — see "Image handling" in the module header.
+    const imageFailedUrls = await loadFailureUrls(supabase, { service: IMAGE_STATE_SERVICE });
 
     const remaining = [];
     for (const row of links) {
@@ -940,6 +1096,31 @@ async function main() {
         if (failedUrl && failedUrl !== row.url) {
           remaining.push(row);
           retriedLinkChanged++;
+          continue;
+        }
+        if (failedUrl) {
+          // Still a matching, unresolved main-sync failure — link
+          // hasn't changed since. Excluded from everything, same as
+          // before a human fixes it.
+          skippedProcessed++;
+          continue;
+        }
+        // Genuinely synced already (no current main-sync failure).
+        // Still eligible for the lighter image-only path if approved
+        // and missing a soundcloud image — directory-only for images
+        // holds regardless of what scoped this run.
+        const isApproved = row.artists?.directory_status === "approved";
+        const hasImage = artistIdsWithSoundcloudImage.has(row.artist_id);
+        if (isApproved && !hasImage) {
+          const imageFailedUrl = imageFailedUrls.get(row.artist_id);
+          if (imageFailedUrl && imageFailedUrl === row.url) {
+            // Same URL already failed the image-only path (e.g. a 404
+            // discovered only once we tried the image) — don't keep
+            // re-attempting until the link changes.
+            skippedProcessed++;
+          } else {
+            imageOnlyRows.push(row);
+          }
         } else {
           skippedProcessed++;
         }
@@ -949,7 +1130,10 @@ async function main() {
     }
     rows = remaining;
   }
-  if (LIMIT) rows = rows.slice(0, LIMIT);
+  if (LIMIT) {
+    rows = rows.slice(0, LIMIT);
+    imageOnlyRows = imageOnlyRows.slice(0, LIMIT);
+  }
 
   console.log(
     `Found ${links.length} SoundCloud link(s)` +
@@ -957,6 +1141,11 @@ async function main() {
       (retriedLinkChanged > 0 ? `, ${retriedLinkChanged} retried (link changed since a prior failure)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
+  if (imageOnlyRows.length > 0) {
+    console.log(
+      `${imageOnlyRows.length} already-synced approved artist(s) missing a soundcloud image — running the lighter image-only pass for them.\n`
+    );
+  }
 
   let attempted = 0;
   let synced = 0;
@@ -965,6 +1154,7 @@ async function main() {
   let failedWrite = 0;
   let totalLinksFound = 0;
   let biosFound = 0;
+  let imagesStored = 0;
   const byPlatform = {};
 
   for (const row of rows) {
@@ -972,7 +1162,7 @@ async function main() {
     attempted++;
 
     const result = await syncArtist(
-      { artistId: row.artist_id, name, scUrl: row.url },
+      { artistId: row.artist_id, name, scUrl: row.url, directoryStatus: row.artists?.directory_status },
       { debug: DEBUG, dryRun: DRY_RUN, artistIdsWithLinktree }
     );
 
@@ -981,6 +1171,7 @@ async function main() {
         synced++;
         totalLinksFound += result.linksFound ?? 0;
         if (result.hasBio) biosFound++;
+        if (result.imageStatus === "stored") imagesStored++;
         for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
           byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
         }
@@ -994,6 +1185,24 @@ async function main() {
       case "failed_write":
         failedWrite++;
         break;
+    }
+  }
+
+  let imageOnlyAttempted = 0;
+  let imageOnlyFailed = 0;
+  for (const row of imageOnlyRows) {
+    const name = row.artists?.name ?? row.artist_id;
+    imageOnlyAttempted++;
+
+    const result = await syncArtist(
+      { artistId: row.artist_id, name, scUrl: row.url, directoryStatus: row.artists?.directory_status },
+      { debug: DEBUG, dryRun: DRY_RUN, imageOnly: true }
+    );
+
+    if (result.status === "image_synced") {
+      imagesStored++;
+    } else {
+      imageOnlyFailed++;
     }
   }
 
@@ -1012,6 +1221,11 @@ async function main() {
     console.log(`    ${platform}: ${count}`);
   }
   console.log(`  bios found:             ${biosFound}`);
+  if (imageOnlyAttempted > 0) {
+    console.log(`  image-only attempted:   ${imageOnlyAttempted}`);
+    console.log(`  image-only failed:      ${imageOnlyFailed}`);
+  }
+  console.log(`  images stored:          ${imagesStored}`);
 
   await writeFailuresCsv();
 }

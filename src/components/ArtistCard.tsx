@@ -20,11 +20,9 @@ const tagClass = (i: number) =>
     : "bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-200 dark:border dark:border-violet-500/25";
 
 export default function ArtistCard({ artist, footer }: ArtistCardProps) {
-  // Prefer the artist's harvested profile picture; fall back to a cached
-  // enrichment image (currently SoundCloud) if no dedicated one is set yet.
-  const profileImage =
-    artist.profile_image_url ??
-    artist.enrichment?.find((e) => e.profile_image_url)?.profile_image_url;
+  // One image picked from every platform this artist has stored (see
+  // src/lib/artist-images.ts) — resolved once, in queries.ts.
+  const profileImage = artist.displayImageUrl;
 
   const locationText = artist.locations
     ?.map((l) => [l.city, l.country].filter(Boolean).join(", "))

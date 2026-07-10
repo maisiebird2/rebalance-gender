@@ -14,7 +14,7 @@ export default async function RecommendedArtists({ artistId }: Props) {
       <h2 className="mb-4 text-lg font-semibold">You might also like</h2>
       <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-10">
         {recommended.map((artist) => {
-          const image = artist.profile_image_url ?? artist.enrichment_image;
+          const image = artist.image_url;
           return (
             <Link
               key={artist.id}

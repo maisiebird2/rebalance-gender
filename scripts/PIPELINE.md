@@ -153,11 +153,22 @@ pair, which each called `GET /resolve?url=<profile-url>` separately
 for the same artist — the same call returning the same user
 resource). This stage calls it once and fans the result out:
 
-- **Profile data** — bio, follower count, track count, profile image
-  URL, numeric user ID, and a playlists fallback for zero-track
-  accounts (`GET /users/{id}/playlists`, only called when
-  `track_count` is 0) — upserted into `artist_enrichment` (platform =
-  `soundcloud`). Same behavior as the old 2a.
+- **Profile data** — bio, follower count, track count, numeric user
+  ID, and a playlists fallback for zero-track accounts (`GET
+  /users/{id}/playlists`, only called when `track_count` is 0) —
+  upserted into `artist_enrichment` (platform = `soundcloud`). Same
+  behavior as the old 2a.
+- **Profile image** — as of 2026-07-09, the resolved avatar goes to
+  `artist_images` (`artist_id`, `platform='soundcloud'`), not
+  `artist_enrichment.profile_image_url` (explicitly nulled there
+  instead). Approved-only, unconditionally — checked inside
+  `syncArtist()` itself regardless of which flags scoped the run,
+  since this script otherwise processes non-directory artists too
+  (~100x more numerous than directory ones) and there's no reason to
+  store images for them. Image completion is tracked independently of
+  the main `soundcloud-sync` completion (see "Image-only pass" below),
+  since the two can diverge: an artist synced as a non-directory node
+  and approved later needs just the image, not a full re-sync.
 - **Other-platform links** — fetched via `GET
   /users/{urn}/web-profiles` (the "Links" section) plus a scan of the
   raw bio text for plain URLs and gate.sc-wrapped links — staged into
@@ -236,6 +247,19 @@ this repo — the "Rebalance Gender" folder, not inside
 `other-links-domain-counts.mjs`; the timestamped filename means
 re-running never overwrites a previous run's report. See
 `writeFailuresCsv()`.
+
+**Image-only pass:** each run, `main()` separates already-synced
+artists (a genuine `soundcloud-sync` success, not a still-unresolved
+permanent failure) into a second bucket — those that are now approved
+but still missing a soundcloud `artist_images` row — and runs
+`syncArtist(artist, { imageOnly: true })` for them: one `/resolve`
+call for the avatar, skipping playlists/web-profiles/bio/link writes
+and leaving `resolved_artists` untouched. Image-only failures persist
+to their own `harvest_failures` service (`image-sync:soundcloud`, via
+`failImage()`), separate from `soundcloud-sync`'s, with the same
+link-changed-since-failure cross-check applied independently — a 404
+found only by the image-only path doesn't pollute the main sync's
+(already-successful) failure state.
 
 ```bash
 npm run sync-soundcloud
@@ -452,45 +476,122 @@ Runs after Phase 3 so image enrichment can draw on the full link
 set, including the Last.fm, Spotify, and Wikipedia links Phase 3
 resolves (all of which are in the platform priority list below).
 
-### 5a. `enrich-images.ts`
-For each approved artist without a `profile_image_url`, tries their
-linked profiles in priority order (SoundCloud → Bandcamp → Resident
-Advisor → …) and pulls the `og:image` meta tag as a best-effort
-profile photo. No API key required. Supports `--limit=N`, `--force`,
-`--platforms=a,b`, and `DRY_RUN=1`.
+### 5a. `enrich-images.ts` — multi-platform + `artist_images` 2026-07-09
+For each artist with `directory_status = 'approved'` (checked inside
+`enrichArtistImages()` itself, not just at the call site — no flag or
+future caller can bypass it), tries **every** linked profile the
+artist has, not just the first hit, and pulls the `og:image` meta tag
+as a best-effort profile photo from each one. No API key required.
+Supports `--limit=N`, `--force`, `--platforms=a,b`, and `DRY_RUN=1`.
 
-The single-artist core lives in `src/lib/enrich-images.ts` and is
-also called automatically by the website — on admin quick-approve
-(`src/app/admin/actions.ts`) and when image-capable links are added
-on the artist edit page — so newly approved artists get an image
+Writes one row per successful platform to `artist_images`
+(`artist_id`, `platform`, `source_url`, ...) — see
+`supabase_migration_artist_images.sql` — rather than a single
+`artists.profile_image_url` winner, so an artist can hold images from
+several platforms at once instead of one platform's pick silently
+overwriting another's. `soundcloud` and `bandcamp` are permanently
+off-limits to this script (see `DEDICATED_HARVEST_PLATFORMS` in
+`src/lib/enrich-images.ts`): those two have their own dedicated,
+better-guarded harvesters (`sync-soundcloud.mjs`, `sync-bandcamp.mjs`),
+and a generic `og:image` scrape must never clobber their pick, even
+with `--force`.
+
+No cache file — state lives in the DB. A platform is skipped once
+`artist_images` has a row for it, or once `harvest_failures` has a
+*confirmed* no-image result for it (`service = "image-enrich:
+<platform>"`, `status = 'no_og_image'` — a genuinely transient failure,
+like a timeout or 5xx, is NOT part of this skip set and is retried
+every run). A brand-new link on a platform never tried before is
+always attempted, force or not.
+
+The single-artist core (`enrichArtistImages()`) lives in
+`src/lib/enrich-images.ts` and is also called automatically by the
+website — on admin quick-approve (`src/app/admin/actions.ts`), when
+image-capable links are added on the artist edit page, and when a
+single link is saved from the missing-links admin page — so newly
+approved artists (or artists who just got a new link) get images
 without waiting for a bulk run.
-
-Caveat: URL fetch results are cached in `image-fetch-cache.json`
-next to the script; use `--force` to bypass.
 
 ```bash
 npm run enrich-images
 ```
 
-### 5b. `store-images.mjs` — generalized to all sources 2026-07-09
-Re-hosts profile images: for each approved artist, picks the
-best-available source image by the same `PLATFORM_PRIORITY` order 5a
-uses (SoundCloud's `sc_image_url` / enrichment row first, then any
-other platform's `artist_enrichment.profile_image_url` — e.g.
-Bandcamp, via `sync-bandcamp.mjs`), downloads it (applying the
-500×500 resize rewrite only when the source is actually SoundCloud),
-and uploads it to Supabase Storage (`artist-images/{artist_id}.{ext}`),
-then points `artists.profile_image_url` at the Storage URL and records
-the true `artists.profile_image_source`. Skips an artist only when
-their current best-priority source is already correctly re-hosted
-(unless `--force`) — so a higher-priority image that appears later
-(e.g. a SoundCloud sync completing after a Bandcamp-sourced image was
-already stored) gets picked up on the next run instead of being stuck.
-Supports `--limit=N` and `DRY_RUN=1`. Run after Phase 2 and Phase 6
-(needs both SoundCloud and Bandcamp enrichment rows) and after 5a.
+As of 2026-07-09, `sync-soundcloud.mjs` (2a) and `sync-bandcamp.mjs`
+(Phase 6) also write directly to `artist_images` for their own
+platforms — see those sections — so this script's role is exactly the
+platforms it's the only source for: everything in `PLATFORM_PRIORITY`
+except soundcloud/bandcamp.
+
+### 5b. `store-images.mjs` — re-hosts every `artist_images` row 2026-07-09
+Re-hosts profile images to Supabase Storage: walks every
+`artist_images` row lacking a `storage_url` (every row, if `--force`),
+downloads its `source_url` (applying the SoundCloud CDN 500×500 resize
+rewrite only when `platform === 'soundcloud'`), and uploads it to
+`artist-images/{artist_id}/{platform}.{ext}` — one Storage object per
+platform, not one shared slot per artist, since an artist can now
+display images from several platforms at once. Writes
+`storage_url`/`storage_path`/`stored_at` back onto that row. No longer
+picks a single "best" source or touches
+`artists.profile_image_url/source/fetched_at` — every artist_images
+row gets re-hosted, and the frontend picks which one to show (see 5c,
+below). Supports `--limit=N`, `--force`, and `DRY_RUN=1`. Run any time
+after 5a/2a/6 have found new images.
+
+Failures (download/upload/DB-write errors) persist to
+`harvest_failures` (`service = "image-store:<platform>"`) instead of
+console-only — this was a known gap in the original single-winner
+version (failures there only ever logged to console) and is fixed as
+part of this rewrite.
 
 ```bash
 node scripts/store-images.mjs
+```
+
+### 5c. Frontend read path — day-seeded rotation
+`src/lib/artist-images.ts` exports `pickArtistImage(artistId, images,
+date?)`: a deterministic pick from an artist's `artist_images` rows,
+seeded by `artist_id` + today's date (UTC). Stable across a page's
+render (no hydration mismatch, no per-visit flicker), rotates once a
+day, needs no cron job or extra DB writes. Prefers `storage_url`;
+falls back to `source_url` when 5b hasn't re-hosted that row yet, so a
+newly-found image shows up immediately instead of waiting on the next
+5b run.
+
+`queries.ts`'s `ARTIST_SELECT` embeds `images:artist_images(...)` and
+`normalizeArtist()` resolves it into `ArtistWithRelations.
+displayImageUrl` — what `ArtistCard.tsx` and the artist page
+(`src/app/artist/[id]/page.tsx`) render. `getRecommendedArtists()` and
+`/api/discover` (`src/app/api/discover/route.ts`, both branches) do
+the same resolution inline for their own lighter result shapes.
+`artists.profile_image_url` (the legacy single-slot column) is no
+longer read anywhere in the frontend.
+
+### 5d. Pruning images — `prune-artist-images.mjs`
+Two independent modes, exactly one required per run:
+
+- `--platform=<platform>` — for the case a platform objects to being
+  scraped. Deletes every Storage object re-hosted from that platform,
+  the `artist_images` rows themselves, and any lingering
+  `harvest_failures` rows for that platform's image services
+  (`image-enrich:`, `image-sync:`, `image-store:` + platform, cleared
+  globally), so a future re-add starts clean.
+- `--non-directory` — every writer (5a, 2a, Phase 6, 5b, and the
+  backfill migration) already restricts itself to `directory_status =
+  'approved'` artists, so an `artist_images` row for a non-approved
+  artist should only exist for one reason: approved once, demoted
+  since (rejected, `not_eligible`, etc.) — see "Demoted artists" under
+  Planned changes. Deletes those images (Storage object + row), and
+  clears `harvest_failures` image-service rows scoped to just the
+  affected artists (not globally, since other artists' images for the
+  same platform are unaffected).
+
+There's deliberately no "remove everything" mode — one of the two
+flags above is always required.
+
+```bash
+node scripts/prune-artist-images.mjs --platform=bandcamp
+node scripts/prune-artist-images.mjs --non-directory
+DRY_RUN=1 node scripts/prune-artist-images.mjs --non-directory   # preview
 ```
 
 ---
@@ -505,11 +606,16 @@ to every concern that page can answer instead of just discography —
 - **Discography** — album/track grid → `artist_bandcamp_albums` (the
   numeric IDs feed Bandcamp's embedded player). Same scrape
   `enrich-bandcamp.mjs` did.
-- **Bio + profile image** → `artist_enrichment` (`platform = 'bandcamp'`),
-  plus the raw bio into `artist_harvested_bios` as an audit trail
-  (same pattern SoundCloud's bio gets). The image is written as a raw
-  URL only — re-hosting to Storage is `store-images.mjs`'s job (5b,
-  generalized alongside this script; see "Loose ends" / Phase 5).
+- **Bio** → `artist_enrichment` (`platform = 'bandcamp'`), plus the
+  raw bio into `artist_harvested_bios` as an audit trail (same pattern
+  SoundCloud's bio gets).
+- **Profile image** → as of 2026-07-09, `artist_images` (`artist_id`,
+  `platform='bandcamp'`), not `artist_enrichment.profile_image_url`
+  (explicitly nulled there instead). Written as a raw `source_url`
+  only — re-hosting to Storage is `store-images.mjs`'s job (5b). No
+  extra directory-only gating needed here (unlike SoundCloud): this
+  whole script already only ever processes `directory_status =
+  'approved'` artists, unconditionally — see "Processed state" below.
 - **Location** → `artist_locations`, only when the artist doesn't
   already have a row there (never overwrites a manual entry).
 - **External links sidebar** → staged into `artist_harvested_links`,
@@ -1091,6 +1197,85 @@ image from the wrong source) gets re-hosted instead of silently kept.
 Once every image is served from our own Storage domain, the
 per-source allowlist in `next.config` can be reduced to just that
 domain.
+
+### Multi-image `artist_images` table — ✅ DONE (2026-07-09)
+
+Replaced the one-image-per-artist model (`artists.profile_image_url`
+plus one row per platform squatting in `artist_enrichment`) with
+`artist_images` — one row per `(artist_id, platform)`, so an artist can
+hold images from several platforms at once and the frontend rotates
+between them instead of one platform's pick silently overwriting
+another's. See `supabase_migration_artist_images.sql` for the schema
+and full rationale.
+
+Built: the table; `enrich-images.ts` (5a), `sync-soundcloud.mjs` (2a),
+and `sync-bandcamp.mjs` (Phase 6) all writing to it instead of
+`artist_enrichment.profile_image_url`; `store-images.mjs` (5b)
+re-hosting every row to its own per-platform Storage path; the
+frontend read path (5c) picking a day-seeded image per artist;
+`prune-artist-images.mjs` (5d, `--platform=X` or `--non-directory`)
+for purging one platform's images or a demoted artist's leftover ones.
+Failure persistence extends across all three writers now
+(`image-enrich:<platform>`, `image-sync:<platform>` for SoundCloud's
+image-only pass, `image-store:<platform>` for 5b's re-hosting) —
+closing the gap flagged when 5b was still the single-winner version
+(its download/upload failures used to be console-only).
+`build-soundcloud-follow-graph.mjs` (Phase 7-ish; discovers non-
+directory follow-graph nodes) no longer writes
+`artist_enrichment.profile_image_url` either — found and fixed
+2026-07-09 after the rest of this work landed; it's not one of the
+three image writers above and was never migrated to `artist_images`,
+just stopped writing an image at all, consistent with "directory-only,
+unconditionally."
+
+**Demoted artists:** the original decision here was to leave a demoted
+artist's (`approved` → `rejected`/`not_eligible`/etc.) images in place
+rather than purge them — reversed 2026-07-09: `prune-artist-images.mjs
+--non-directory` now exists specifically to sweep these up, run
+on-demand or periodically.
+
+**Migration order for existing data:**
+
+1. `supabase_migration_artist_images.sql` (Supabase SQL editor) —
+   creates the table.
+2. `supabase_migration_backfill_artist_images.sql` (Supabase SQL
+   editor) — copies existing images (`sc_image_url`, every
+   `artist_enrichment.profile_image_url` row, and `artists.
+   profile_image_url`/`profile_image_source` for platforms neither of
+   those already cover) into `artist_images`, for approved artists
+   only. `ON CONFLICT DO NOTHING` throughout, so it's safe to re-run
+   and never overwrites a row a live script already wrote. Skipping
+   this step doesn't break anything going forward — every writer works
+   from an empty table just fine — but every image already harvested
+   before this change would otherwise need re-fetching from scratch
+   instead of being reused.
+3. `node scripts/store-images.mjs` (terminal, not the SQL editor) —
+   run once to re-host the backfilled (and freshly-harvested) rows to
+   Storage.
+
+**Before dropping any of the legacy columns** (`artists.
+profile_image_url`, `profile_image_source`, `profile_image_fetched_at`,
+`sc_image_url` — none of which any writer or the frontend reads
+anymore, but which are deliberately left in place rather than dropped
+in this same change): run the backfill above first, so nothing that
+only ever lived in those columns is lost. They're otherwise safe to
+drop in a follow-up migration whenever confidence is high enough —
+nothing currently depends on them.
+
+**Schema reconciliation — done (2026-07-09):** cross-checked a live
+schema dump of `artists`, `artist_enrichment`, `artist_images`, and
+`harvest_failures` against every migration file and everything the
+pipeline code reads/writes. Everything matches except one confirmed
+gap: `artists.sc_image_url` does not exist on the live database —
+`supabase_migration_sc_image_url.sql` was never applied there. Step 1
+of the backfill migration already guards for this (checks
+`information_schema.columns` first, skips with a `RAISE NOTICE`
+instead of erroring). `src/lib/types.ts`'s `Artist` interface declared
+`sc_image_url` as if it were live; removed, with a comment explaining
+why. No code referenced the field outside that declaration, and
+`tsc --noEmit` is clean. Nothing else outstanding — code side of this
+refactor is fully done; the only remaining step is Maisie running the
+three-item migration order above.
 
 ### Build out Phase 2c: the direct-link harvesters
 

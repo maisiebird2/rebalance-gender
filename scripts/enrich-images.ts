@@ -1,74 +1,48 @@
 #!/usr/bin/env tsx
 // ============================================================
-// Profile picture enrichment.
+// Profile picture enrichment (bulk CLI).
 //
-// For each artist that doesn't yet have a profile_image_url,
-// looks at their linked profiles (SoundCloud, Bandcamp, Resident
-// Advisor, Instagram, etc.) in priority order, fetches the page,
-// and pulls the og:image meta tag as a best-effort profile photo.
-// No API keys required.
+// Thin driver over enrichArtistImages() in src/lib/enrich-images.ts —
+// see that file for the actual per-artist logic (which platforms get
+// tried, the directory-only guard, the skip-set, and why
+// soundcloud/bandcamp are off-limits here since they have their own
+// dedicated harvesters). This script just walks every directory
+// artist and calls it — same "single per-artist unit + thin CLI
+// driver" shape as sync-soundcloud.mjs.
+//
+// For each artist with directory_status = 'approved', tries every
+// platform link that doesn't already have a stored image (or a
+// confirmed no-image result), fetches the og:image meta tag, and
+// stores a row per platform that succeeds in artist_images. An artist
+// can end up with images from several platforms at once.
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   npm run enrich-images                       # run on all approved directory artists missing an image
-//   npm run enrich-images -- --limit=20         # only process the first 20 (for testing)
-//   npm run enrich-images -- --force            # re-fetch even artists that already have an image, bypass URL cache
-//   npm run enrich-images -- --platforms=soundcloud,bandcamp
-//                                               # only try these platforms
+//   npx tsx scripts/enrich-images.ts                    # all approved artists, every uncovered platform
+//   npx tsx scripts/enrich-images.ts --limit=20         # only the first 20 (for testing)
+//   npx tsx scripts/enrich-images.ts --force            # re-check platforms that already have a stored image
+//                                                        # or a confirmed no-image result (soundcloud/bandcamp
+//                                                        # excepted — never touched by this script)
+//   npx tsx scripts/enrich-images.ts --platforms=resident_advisor,discogs
+//                                                        # only try these platforms
+//   DRY_RUN=1 npx tsx scripts/enrich-images.ts          # fetch + log, don't write to the DB
 //
-// Only artists with directory_status = 'approved' are processed.
-//   DRY_RUN=1 npm run enrich-images            # fetch + log, but don't write to the DB
-//
-// Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
-//
-// URL fetch results are cached in image-fetch-cache.json alongside this
-// script. Any URL that has already been tried (successfully or not) is
-// skipped on subsequent runs. Use --force to bypass the cache entirely.
-//
-// This makes one HTTP request per (artist, link) pair tried, with a
-// short delay between artists to be polite to the source sites. For
-// ~1450 artists a full run can take a while — start with --limit to
-// sanity-check results before running on everything.
+// No cache file — state lives in the DB. A platform is skipped once
+// artist_images has a row for it, or once harvest_failures has a
+// confirmed 'no_og_image' row for it (service = "image-enrich:
+// <platform>"); a brand-new link on a platform never tried before is
+// always attempted, force or not. See src/lib/enrich-images.ts for
+// the full skip-set rules.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchOgImage, PLATFORM_PRIORITY } from "../src/lib/enrich-images.js";
+import { enrichArtistImages, DEDICATED_HARVEST_PLATFORMS } from "../src/lib/enrich-images.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
-
-// ------------------------------------------------------------
-// URL-level cache — persisted to disk between runs.
-// Structure: { [url]: { checkedAt: ISO string, result: string | null } }
-// "result" is the og:image URL found, or null if nothing was found.
-// A URL present in the cache (regardless of result) is not re-fetched
-// unless --force is passed.
-// ------------------------------------------------------------
-const CACHE_PATH = path.join(__dirname, "image-fetch-cache.json");
-
-function loadCache(): Record<string, { checkedAt: string; result: string | null }> {
-  try {
-    if (fs.existsSync(CACHE_PATH)) {
-      return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`Warning: could not read cache file (${message}); starting fresh.`);
-  }
-  return {};
-}
-
-function saveCache(cache: Record<string, { checkedAt: string; result: string | null }>) {
-  try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`Warning: could not write cache file (${message}).`);
-  }
-}
 
 // ------------------------------------------------------------
 // CLI args
@@ -78,9 +52,9 @@ const FORCE = args.includes("--force");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const platformsArg = args.find((a) => a.startsWith("--platforms="));
-const ALLOWED_PLATFORMS: Set<string> | null = platformsArg
-  ? new Set(platformsArg.split("=")[1].split(",").map((p) => p.trim()))
-  : null;
+const ALLOWED_PLATFORMS: string[] | undefined = platformsArg
+  ? platformsArg.split("=")[1].split(",").map((p) => p.trim())
+  : undefined;
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -125,168 +99,74 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
 async function main() {
   console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running image enrichment\n");
-
-  const cache = FORCE ? {} : loadCache();
   if (FORCE) {
-    console.log("--force: bypassing URL cache\n");
-  } else {
-    const cachedCount = Object.keys(cache).length;
-    if (cachedCount > 0) {
-      console.log(`URL cache loaded: ${cachedCount} URL(s) already checked (pass --force to bypass)\n`);
-    }
+    console.log(
+      `--force: re-checking platforms that already have a stored image or a confirmed no-image result ` +
+        `(except ${[...DEDICATED_HARVEST_PLATFORMS].join(", ")}, never touched by this script)\n`
+    );
+  }
+  if (ALLOWED_PLATFORMS) {
+    console.log(`Restricted to platforms: ${ALLOWED_PLATFORMS.join(", ")}\n`);
   }
 
   let query = supabase
     .from("artists")
-    .select("id, name, profile_image_url, links:artist_links(platform, url)")
+    .select("id, name")
     .eq("directory_status", "approved")
+    .eq("deleted", false)
     .order("name");
 
-  if (!FORCE) {
-    query = query.is("profile_image_url", null);
-  }
-  if (LIMIT) {
-    query = query.limit(LIMIT);
-  }
+  if (LIMIT) query = query.limit(LIMIT);
 
-  const { data: allArtists, error } = await query;
+  const { data: artists, error } = await query;
   if (error) throw error;
 
-  // Pre-filter: separate artists with no usable links from those we can work with.
-  type ArtistRow = {
-    id: string;
-    name: string;
-    profile_image_url: string | null;
-    links: { platform: string; url: string }[];
-    _candidates: string[];
-    _linksByPlatform: Map<string, string>;
-  };
+  console.log(`${artists.length} approved artist(s) to check.\n`);
 
-  type RawArtistRow = {
-    id: string;
-    name: string;
-    profile_image_url: string | null;
-    links: { platform: string; url: string }[] | null;
-  };
-
-  const artists: ArtistRow[] = [];
-  let noLinkCount = 0;
-
-  for (const artist of allArtists as RawArtistRow[]) {
-    const linksByPlatform = new Map<string, string>(
-      (artist.links ?? []).map((l) => [l.platform, l.url])
-    );
-
-    let candidates = PLATFORM_PRIORITY.filter((p) => linksByPlatform.has(p));
-    if (ALLOWED_PLATFORMS) {
-      candidates = candidates.filter((p) => ALLOWED_PLATFORMS!.has(p));
-    }
-
-    if (candidates.length === 0) {
-      noLinkCount++;
-    } else {
-      artists.push({
-        ...artist,
-        links: artist.links ?? [],
-        _candidates: candidates,
-        _linksByPlatform: linksByPlatform,
-      });
-    }
-  }
-
-  console.log(`Fetched ${allArtists.length} artist(s) from DB:`);
-  console.log(`  ${noLinkCount} skipped upfront — no usable links`);
-  console.log(`  ${artists.length} to process${FORCE ? " (force re-fetch)" : ""}${ALLOWED_PLATFORMS ? `, platforms: ${[...ALLOWED_PLATFORMS].join(", ")}` : ""}\n`);
-
-  let found = 0;
-  let notFound = 0;
-  let allCached = 0;
+  let storedCount = 0;
+  let attemptedCount = 0;
+  let noActivity = 0;
+  let fullyCovered = 0;
   const bySource: Record<string, number> = {};
 
   for (const artist of artists) {
-    const { _candidates: candidates, _linksByPlatform: linksByPlatform } = artist;
+    const result = await enrichArtistImages(artist.id, supabase, {
+      force: FORCE,
+      dryRun: DRY_RUN,
+      allowedPlatforms: ALLOWED_PLATFORMS,
+    });
 
-    let imageUrl: string | null = null;
-    let source: string | null = null;
-    let anyCandidateUncached = false;
+    attemptedCount += result.attempted.length;
 
-    for (const platform of candidates) {
-      const url = linksByPlatform.get(platform)!;
-
-      // Skip URLs we've already tried.
-      if (cache[url] !== undefined) {
-        if (cache[url].result) {
-          if (!imageUrl) {
-            imageUrl = cache[url].result;
-            source = platform;
-          }
-        }
-        continue;
-      }
-
-      anyCandidateUncached = true;
-      const fetched = await fetchOgImage(url);
-
-      // Record in cache regardless of outcome.
-      cache[url] = { checkedAt: new Date().toISOString(), result: fetched ?? null };
-      if (!DRY_RUN) saveCache(cache);
-
-      if (fetched) {
-        imageUrl = fetched;
-        source = platform;
-        break;
-      }
-      await sleep(200);
-    }
-
-    if (!anyCandidateUncached && !imageUrl) {
-      // Every candidate URL was already cached and none yielded an image.
-      allCached++;
-      console.log(`~ ${artist.name}: all URLs already checked, no image (cached)`);
-      continue;
-    }
-
-    if (imageUrl) {
-      found++;
-      bySource[source!] = (bySource[source!] ?? 0) + 1;
-      console.log(`✓ ${artist.name}: ${source} -> ${imageUrl}`);
-
-      if (!DRY_RUN) {
-        const { error: updateError } = await supabase
-          .from("artists")
-          .update({
-            profile_image_url: imageUrl,
-            profile_image_source: source,
-            profile_image_fetched_at: new Date().toISOString(),
-          })
-          .eq("id", artist.id);
-        if (updateError) {
-          console.error(`  failed to save: ${updateError.message}`);
-        }
-      }
+    if (result.stored.length > 0) {
+      storedCount += result.stored.length;
+      for (const platform of result.stored) bySource[platform] = (bySource[platform] ?? 0) + 1;
+      console.log(`✓ ${artist.name}: ${result.stored.join(", ")}`);
+    } else if (result.attempted.length > 0) {
+      console.log(`✗ ${artist.name}: no image found (tried ${result.attempted.join(", ")})`);
+    } else if (result.skippedExisting.length + result.skippedProtected.length > 0) {
+      // Every candidate platform already has an image, or a confirmed
+      // no-image result, or is soundcloud/bandcamp — nothing to do.
+      fullyCovered++;
     } else {
-      notFound++;
-      console.log(`✗ ${artist.name}: no image found (tried ${candidates.join(", ")})`);
+      // No usable links at all.
+      noActivity++;
     }
-
-    await sleep(300);
   }
 
   console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  found:     ${found}`);
-  for (const [src, count] of Object.entries(bySource)) {
-    console.log(`    via ${src}: ${count}`);
+  console.log(`  images stored:   ${storedCount}`);
+  for (const [platform, count] of Object.entries(bySource)) {
+    console.log(`    via ${platform}: ${count}`);
   }
-  console.log(`  not found: ${notFound}`);
-  console.log(`  cached (no new attempts): ${allCached}`);
-  console.log(`  skipped upfront (no links): ${noLinkCount}`);
+  console.log(`  platform attempts with no image found: ${attemptedCount - storedCount}`);
+  console.log(`  artists already fully covered: ${fullyCovered}`);
+  console.log(`  artists with no usable links: ${noActivity}`);
 }
 
 main().catch((err) => {

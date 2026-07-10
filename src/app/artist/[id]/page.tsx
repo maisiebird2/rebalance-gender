@@ -34,9 +34,9 @@ export default async function ArtistPage({ params }: PageProps) {
 
   if (!artist) notFound();
 
-  const profileImage =
-    artist.profile_image_url ??
-    artist.enrichment?.find((e) => e.profile_image_url)?.profile_image_url;
+  // One image picked from every platform this artist has stored (see
+  // src/lib/artist-images.ts) — resolved once, in queries.ts.
+  const profileImage = artist.displayImageUrl;
 
   const locationText = artist.locations
     ?.map((l) => [l.city, l.country].filter(Boolean).join(", "))

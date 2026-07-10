@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
-import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
+import { enrichArtistImages, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 
 export interface ActionResult {
   error?: string;
@@ -59,14 +59,16 @@ export async function saveArtistPlatformLink(
   });
   if (error) return { error: `Link save error: ${error.message}` };
 
-  // New image-capable link → try to backfill a profile image (same
-  // behavior as the edit form), without blocking the response.
+  // New image-capable link → try to backfill a profile image from just
+  // this platform (not a no-op re-check of every platform — this is
+  // specifically about the one link that just changed), without
+  // blocking the response.
   if ((PLATFORM_PRIORITY as readonly string[]).includes(platform)) {
     after(async () => {
       try {
-        await enrichArtistImage(artistId, admin);
+        await enrichArtistImages(artistId, admin, { allowedPlatforms: [platform] });
       } catch (e) {
-        console.error(`enrichArtistImage(${artistId}) failed:`, e);
+        console.error(`enrichArtistImages(${artistId}) failed:`, e);
       }
     });
   }

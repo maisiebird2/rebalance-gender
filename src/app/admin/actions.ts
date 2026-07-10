@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { enrichArtistImage } from "@/lib/enrich-images";
+import { enrichArtistImages } from "@/lib/enrich-images";
 
 async function requireAuth() {
   const supabase = await createClient();
@@ -28,7 +28,10 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
   revalidatePath("/admin");
   revalidatePath("/");
   // Run image enrichment in the background after the response is sent.
-  after(() => enrichArtistImage(id, admin));
+  // This is the moment images become allowed for this artist at all
+  // (enrichArtistImages only ever acts on directory_status = 'approved'),
+  // so check every platform link they have.
+  after(() => enrichArtistImages(id, admin));
 }
 
 export async function quickReject(id: string): Promise<{ error: string } | void> {

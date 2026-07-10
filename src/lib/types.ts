@@ -134,6 +134,27 @@ export interface BandcampAlbum {
   sort_order: number;
 }
 
+/**
+ * One stored image for an artist from a given platform. See
+ * supabase_migration_artist_images.sql — unique on (artist_id,
+ * platform), so an artist can hold several of these at once (one per
+ * platform that turned up a usable profile photo) instead of a single
+ * artists.profile_image_url winner. storage_url is set once
+ * store-images.mjs has re-hosted the image to Supabase Storage;
+ * source_url (the original external URL) is used as a fallback until
+ * then. See src/lib/artist-images.ts for how one gets picked for
+ * display.
+ */
+export interface ArtistImage {
+  artist_id: string;
+  platform: LinkPlatform;
+  source_url: string;
+  storage_url: string | null;
+  storage_path: string | null;
+  fetched_at: string;
+  stored_at: string | null;
+}
+
 export interface ArtistEnrichment {
   id: number;
   artist_id: string;
@@ -166,9 +187,13 @@ export interface Artist {
   profile_image_url: string | null;
   profile_image_source: LinkPlatform | null;
   profile_image_fetched_at: string | null;
-  /** Original SoundCloud image URL (og:image from the SC page). Used as the
-   *  source when downloading and uploading to Supabase Storage. */
-  sc_image_url: string | null;
+  // sc_image_url intentionally omitted: supabase_migration_sc_image_url.sql
+  // exists in the repo but has never been applied to the live database, so
+  // this column does not exist there (confirmed against a live schema dump,
+  // 2026-07-09) — querying it fails with "column a.sc_image_url does not
+  // exist". Only add it back if that migration is actually run. See
+  // supabase_migration_backfill_artist_images.sql step 1 for the guarded
+  // SQL read that already handles both states.
   booking_info: string | null;
   management_info: string | null;
   contact_info: string | null;
@@ -187,6 +212,17 @@ export interface ArtistWithRelations extends Artist {
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
   bandcamp_albums?: BandcampAlbum[];
+  /** Every stored image for this artist, across all platforms. */
+  images: ArtistImage[];
+  /**
+   * One image URL picked from `images`, deterministically seeded by
+   * artist_id + today's date — see src/lib/artist-images.ts. Null
+   * when the artist has no stored images. This is what components
+   * should render; `profile_image_url` (inherited from Artist) is the
+   * legacy single-slot column and is no longer kept up to date by any
+   * writer.
+   */
+  displayImageUrl: string | null;
 }
 
 // Filter options shown in the directory UI

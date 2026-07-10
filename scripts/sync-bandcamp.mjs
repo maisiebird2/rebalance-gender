@@ -20,7 +20,7 @@
 //        clobbers a manually-entered location)
 //     -> band photo (#pic-container popup image, falling back to
 //        og:image only when we've confirmed og:type=band — see
-//        "Image handling" below) -> artist_enrichment.profile_image_url
+//        "Image handling" below) -> artist_images (platform='bandcamp')
 //     -> external links sidebar (#band-links)  -> artist_harvested_links
 //        (staged, never written directly to artist_links — same
 //        contract as every other harvester; integrate-harvested-
@@ -76,18 +76,18 @@
 // applies to a wrong-field SoundCloud URL.
 //
 // Image handling: sync-bandcamp.mjs writes the raw discovered image
-// URL to artist_enrichment.profile_image_url — same as
-// sync-soundcloud.mjs does with the SoundCloud avatar — and does NOT
-// re-host it to Storage itself. Re-hosting is store-images.mjs's job
-// (Phase 5b), which PIPELINE.md's "Generalize store-images.mjs (5b)
-// to all image sources" planned change calls for: pick the current
-// image by true source priority across every artist_enrichment
-// platform row (not just soundcloud), apply the SoundCloud-CDN resize
-// rewrite only when the source actually is SoundCloud, and record the
-// true profile_image_source instead of hardcoding it. That
-// generalization is implemented alongside this script (see
-// store-images.mjs) so Bandcamp images get re-hosted the same way
-// SoundCloud ones do, instead of staying hot-linked.
+// URL to artist_images (artist_id, platform='bandcamp') — see
+// supabase_migration_artist_images.sql — and does NOT re-host it to
+// Storage itself. Re-hosting is store-images.mjs's job (Phase 5b): it
+// walks every artist_images row lacking a storage_url, downloads it,
+// and uploads it to artist-images/{artist_id}/bandcamp.{ext}. An
+// artist can hold images from several platforms at once now (this one
+// plus, say, SoundCloud's) rather than one platform's pick silently
+// overwriting another's — see scripts/PIPELINE.md, "Multi-image
+// artist_images table". This script never writes to
+// artist_enrichment.profile_image_url (explicitly nulled in that
+// upsert instead, so a pre-migration value doesn't linger looking
+// authoritative).
 //
 // On a redirected track/merch page (shapes #3 and #4), og:image is
 // the release/product's artwork, not a photo of the artist — using it
@@ -734,7 +734,11 @@ export async function syncArtist(artist, opts = {}) {
         artist_id: artistId,
         platform: "bandcamp",
         external_id: sidebar.bandId,
-        profile_image_url: sidebar.imageUrl,
+        // Images live in artist_images now, not here — see
+        // supabase_migration_artist_images.sql and the write below.
+        // Explicitly nulled (not omitted) so a stale value from before
+        // this change doesn't sit around looking authoritative.
+        profile_image_url: null,
         bio: sidebar.bio ? `Bandcamp bio: ${sidebar.bio}` : null,
         follower_count: null, // not available via static scrape — see module header
         track_count: albums.length || null,
@@ -760,6 +764,24 @@ export async function syncArtist(artist, opts = {}) {
       await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
       await sleep(300);
       return { status: "failed_write" };
+    }
+
+    // Image → artist_images (artist_id, platform), not
+    // artist_enrichment (see above). Directory-only is already
+    // guaranteed here: this whole script only ever processes
+    // directory_status = 'approved' artists (see fetchAllBandcampLinks),
+    // with no flag to bypass that.
+    if (sidebar.imageUrl) {
+      const { error: imageError } = await supabase.from("artist_images").upsert(
+        {
+          artist_id: artistId,
+          platform: "bandcamp",
+          source_url: sidebar.imageUrl,
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: "artist_id,platform" }
+      );
+      if (imageError) noteWriteFailure("artist_images", imageError.message);
     }
 
     if (sidebar.bio) {

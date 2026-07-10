@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { pickArtistImage } from "@/lib/artist-images";
+import type { ArtistImage } from "@/lib/types";
 
 const LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/";
 
@@ -128,8 +130,7 @@ export async function POST(request: NextRequest) {
         recommended:artists!recommended_artist_id(
           id,
           name,
-          profile_image_url,
-          enrichment:artist_enrichment(profile_image_url)
+          images:artist_images(platform, source_url, storage_url)
         )
       `)
       .eq("source_artist_id", dbArtist.id)
@@ -142,8 +143,7 @@ export async function POST(request: NextRequest) {
         recommended: {
           id: string;
           name: string;
-          profile_image_url: string | null;
-          enrichment: { profile_image_url: string | null }[] | null;
+          images: ArtistImage[] | null;
         } | null;
       };
 
@@ -151,12 +151,10 @@ export async function POST(request: NextRequest) {
         .map((row) => {
           const a = row.recommended;
           if (!a) return null;
-          const enrichmentImage =
-            a.enrichment?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
           return {
             id: a.id,
             name: a.name,
-            profile_image_url: a.profile_image_url ?? enrichmentImage ?? null,
+            profile_image_url: pickArtistImage(a.id, a.images),
             score: row.total_score,
           };
         })
@@ -225,12 +223,13 @@ export async function POST(request: NextRequest) {
     // 3. Name-based fallback for directory artists without a Last.fm link
     const { data: allArtists } = await supabase
       .from("artists")
-      .select("id, name, profile_image_url")
+      .select("id, name, images:artist_images(platform, source_url, storage_url)")
       .eq("directory_status", "approved")
       .eq("deleted", false);
 
-    const artistById = new Map<string, { id: string; name: string; profile_image_url: string | null }>();
-    for (const a of allArtists ?? []) {
+    type CandidateArtist = { id: string; name: string; images: ArtistImage[] | null };
+    const artistById = new Map<string, CandidateArtist>();
+    for (const a of (allArtists ?? []) as CandidateArtist[]) {
       artistById.set(a.id, a);
       if (!lfmScores.has(a.id)) {
         const score = lfmByName.get(a.name.toLowerCase());
@@ -283,22 +282,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ resolvedName, results: [] } satisfies DiscoverResponse);
     }
 
-    // 6. Fetch enrichment images for candidates
-    const candidateIds = Array.from(candidates);
-    const { data: enrichmentRows } = await supabase
-      .from("artist_enrichment")
-      .select("artist_id, profile_image_url")
-      .in("artist_id", candidateIds)
-      .not("profile_image_url", "is", null);
-
-    const enrichmentImageById = new Map<string, string>();
-    for (const row of enrichmentRows ?? []) {
-      if (row.profile_image_url)
-        enrichmentImageById.set(row.artist_id, row.profile_image_url);
-    }
-
-    // 7. Score, rank, and return top 20
+    // 6. Score, rank, and return top 20
     // Weights: LFM similar score is primary (80%), genre overlap secondary (20%)
+    // (Images already came back embedded in the step-3 artists query —
+    // every candidate that ends up in results is, by construction, one
+    // of those approved artists, via the artistById lookup below.)
+    const candidateIds = Array.from(candidates);
     const results: DiscoverResult[] = candidateIds
       .map((id) => {
         const lfm = lfmScores.get(id) ?? 0;
@@ -309,10 +298,7 @@ export async function POST(request: NextRequest) {
         return {
           id,
           name: artist.name,
-          profile_image_url:
-            artist.profile_image_url ??
-            enrichmentImageById.get(id) ??
-            null,
+          profile_image_url: pickArtistImage(artist.id, artist.images),
           score,
         };
       })

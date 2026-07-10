@@ -8,7 +8,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { cleanLinkUrl } from "@/lib/platforms";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
-import { enrichArtistImage, PLATFORM_PRIORITY } from "@/lib/enrich-images";
+import { enrichArtistImages, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -278,10 +278,12 @@ export async function saveArtist(
 
   // ── 9. Trigger image enrichment if warranted ──────────────────
   // Run after the response is sent so it doesn't block the redirect.
-  // enrichArtistImage skips artists that already have a profile_image_url,
-  // so this is a no-op if the artist already has an image.
+  // enrichArtistImages only attempts platforms that don't already have
+  // a stored image (or a confirmed no-image result), so this is a
+  // no-op for platforms already covered — cheap to call unconditionally
+  // whenever new links might have changed the picture.
   if (directoryStatus === "approved" && hasNewImageUrls) {
-    after(() => enrichArtistImage(artistId, admin));
+    after(() => enrichArtistImages(artistId, admin));
   }
 
   // ── 10. Revalidate caches and redirect ─────────────────────────

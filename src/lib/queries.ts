@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { getSupabaseClient } from "./supabase";
+import { pickArtistImage } from "./artist-images";
 import type {
   ArtistPage,
   ArtistWithRelations,
@@ -12,6 +13,7 @@ import type {
   ArtistAlias,
   ArtistLink,
   ArtistEnrichment,
+  ArtistImage,
   BandcampAlbum,
 } from "./types";
 
@@ -25,6 +27,7 @@ type RawArtistRow = Artist & {
   aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
+  images: ArtistImage[];
   bandcamp_albums?: BandcampAlbum[];
 };
 
@@ -58,11 +61,13 @@ const ARTIST_SELECT = `
   aliases:artist_aliases(*),
   links:artist_links(*),
   enrichment:artist_enrichment(*),
+  images:artist_images(platform, source_url, storage_url, storage_path, fetched_at, stored_at),
   bandcamp_albums:artist_bandcamp_albums(*)
 `;
 
 // Flatten the nested artist_genres(genres(*)) shape into a plain
-// genres[] array on each artist for easier use in components.
+// genres[] array on each artist for easier use in components, and
+// resolve which stored image to display (see src/lib/artist-images.ts).
 function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
   const genres: Genre[] = (row.artist_genres ?? [])
     .map((ag) => ag.genres)
@@ -71,6 +76,8 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
   return {
     ...row,
     genres,
+    images: row.images ?? [],
+    displayImageUrl: pickArtistImage(row.id, row.images),
   };
 }
 
@@ -306,8 +313,7 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
 export interface RecommendedArtist {
   id: string;
   name: string;
-  profile_image_url: string | null;
-  enrichment_image: string | null;
+  image_url: string | null;
 }
 
 /**
@@ -324,8 +330,7 @@ export async function getRecommendedArtists(
     recommended: {
       id: string;
       name: string;
-      profile_image_url: string | null;
-      enrichment: { profile_image_url: string | null }[] | null;
+      images: ArtistImage[] | null;
     } | null;
   };
 
@@ -336,8 +341,7 @@ export async function getRecommendedArtists(
       recommended:artists!recommended_artist_id(
         id,
         name,
-        profile_image_url,
-        enrichment:artist_enrichment(profile_image_url)
+        images:artist_images(platform, source_url, storage_url)
       )
     `)
     .eq("source_artist_id", artistId)
@@ -353,13 +357,10 @@ export async function getRecommendedArtists(
     .map((row) => {
       const a = row.recommended;
       if (!a) return null;
-      const enrichmentImage =
-        a.enrichment?.find((e) => e.profile_image_url)?.profile_image_url ?? null;
       return {
-        id:               a.id,
-        name:             a.name,
-        profile_image_url: a.profile_image_url ?? null,
-        enrichment_image: enrichmentImage,
+        id: a.id,
+        name: a.name,
+        image_url: pickArtistImage(a.id, a.images),
       };
     })
     .filter((a): a is RecommendedArtist => a !== null);
