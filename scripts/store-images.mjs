@@ -2,20 +2,47 @@
 // ============================================================
 // Profile image storage script.
 //
-// For each approved artist that has a SoundCloud enrichment with a
-// profile_image_url, this script:
-//   1. Rewrites the URL to request the 500×500 variant.
-//   2. Downloads the image.
-//   3. Uploads it to Supabase Storage under artist-images/{artist_id}.jpg
-//   4. Writes the resulting public Storage URL back to artists.profile_image_url,
-//      artists.profile_image_source = 'soundcloud', and artists.profile_image_fetched_at.
+// Generalized (per PIPELINE.md, "Generalize store-images.mjs (5b) to
+// all image sources") to re-host from ANY platform, not just
+// SoundCloud. For each approved artist, picks the best available
+// source image by the same priority order enrich-images.ts (5a) uses
+// — PLATFORM_PRIORITY below — downloads it, uploads it to Supabase
+// Storage under artist-images/{artist_id}.{ext}, and writes the
+// resulting public Storage URL back to artists.profile_image_url,
+// the TRUE artists.profile_image_source (not hardcoded 'soundcloud'
+// — the bug this generalization fixes), and
+// artists.profile_image_fetched_at.
 //
-// Artists that already have a Supabase Storage URL (containing "/storage/v1/object/")
-// are skipped unless --force is passed.
+// Where a source image can come from, in priority order:
+//   - soundcloud: artists.sc_image_url (legacy migration column) or
+//     artist_enrichment(platform='soundcloud').profile_image_url
+//     (sync-soundcloud.mjs's upgraded 500x500 avatar) — whichever is
+//     present; sc_image_url wins if both are.
+//   - any other platform in PLATFORM_PRIORITY (bandcamp, resident_advisor,
+//     …): artist_enrichment(platform=X).profile_image_url, written by
+//     that platform's own sync script (e.g. sync-bandcamp.mjs), OR —
+//     if no enrichment row exists for X but 5a already picked X as
+//     the current best guess — artists.profile_image_url itself, when
+//     artists.profile_image_source === X.
+//
+// The SoundCloud-CDN 500×500 resize rewrite (toSize500) is applied
+// ONLY when the picked source is actually SoundCloud; every other
+// source is fetched at whatever size its og:image/profile-image URL
+// provides, per the PIPELINE.md plan.
+//
+// Bug this fixes: the old SoundCloud-only version only skipped
+// artists already on a Storage URL, with no regard for WHICH source
+// that Storage image came from — so an artist whose image 5a chose
+// from Bandcamp (hot-linked, not yet on Storage) got silently
+// overwritten by a re-hosted SoundCloud image the moment one existed,
+// ignoring priority order entirely. This version re-derives the true
+// best-priority source every run and only treats an artist as "done"
+// when the recorded profile_image_source actually matches that
+// source.
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   node scripts/store-images.mjs                  # all artists missing a stored image
+//   node scripts/store-images.mjs                  # all artists needing a (re)stored image
 //   node scripts/store-images.mjs --limit=20       # test on first 20
 //   node scripts/store-images.mjs --force          # re-download and overwrite existing
 //   DRY_RUN=1 node scripts/store-images.mjs        # log only, no uploads or DB writes
@@ -79,6 +106,30 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 
 const BUCKET = "artist-images";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ------------------------------------------------------------
+// Platform priority — must match src/lib/enrich-images.ts's exported
+// PLATFORM_PRIORITY. Kept as a local copy rather than a cross-module
+// import: this script runs under plain `node` (not `tsx`, which the
+// TypeScript enrich-images.ts requires), same per-script-copy
+// convention already used for the small domain-classification tables
+// in sync-soundcloud.mjs / sync-bandcamp.mjs. If enrich-images.ts's
+// list changes, update this one too.
+// ------------------------------------------------------------
+const PLATFORM_PRIORITY = [
+  "soundcloud",
+  "bandcamp",
+  "resident_advisor",
+  "discogs",
+  "beatport",
+  "qobuz",
+  "lastfm",
+  "spotify",
+  "wikipedia",
+  "apple_music",
+  "youtube",
+  "other",
+];
 
 // ------------------------------------------------------------
 // Rewrite a SoundCloud image URL to request the 500×500 variant.
@@ -149,14 +200,14 @@ async function main() {
     console.log(`Bucket "${BUCKET}" ready.\n`);
   }
 
-  // Fetch approved artists that have a SoundCloud image URL.
-  // Primary source: artists.sc_image_url (the og:image URL moved here by the migration).
-  // Fallback: artist_enrichment.profile_image_url for the soundcloud platform
-  //           (populated by the API enrichment script).
+  // Fetch approved artists with every possible image source: the
+  // legacy SoundCloud-specific column, every platform's
+  // artist_enrichment row, and the artist's current profile_image_url
+  // / profile_image_source (5a's best guess, or a prior 5b run).
   let query = supabase
     .from("artists")
     .select(
-      `id, name, profile_image_url, sc_image_url,
+      `id, name, profile_image_url, profile_image_source, sc_image_url,
        enrichment:artist_enrichment(platform, profile_image_url)`
     )
     .eq("directory_status", "approved")
@@ -168,35 +219,70 @@ async function main() {
   const { data: allArtists, error } = await query;
   if (error) throw error;
 
-  // Filter to artists that have a SoundCloud image from either source.
+  // For each artist, walk PLATFORM_PRIORITY and pick the first
+  // platform with an available source image — same priority order 5a
+  // uses, so 5b never demotes a higher-priority source in favor of a
+  // lower one just because the lower one happens to be cached in
+  // artist_enrichment.
+  function pickBestSource(a) {
+    for (const platform of PLATFORM_PRIORITY) {
+      if (platform === "soundcloud") {
+        const url =
+          a.sc_image_url ??
+          a.enrichment?.find((e) => e.platform === "soundcloud" && e.profile_image_url)
+            ?.profile_image_url;
+        if (url) return { platform, url };
+        continue;
+      }
+
+      const enrichmentUrl = a.enrichment?.find(
+        (e) => e.platform === platform && e.profile_image_url
+      )?.profile_image_url;
+      if (enrichmentUrl) return { platform, url: enrichmentUrl };
+
+      // No dedicated enrichment row for this platform, but 5a already
+      // chose it as the current best guess — use what it stored.
+      if (a.profile_image_source === platform && a.profile_image_url) {
+        return { platform, url: a.profile_image_url };
+      }
+    }
+    return null;
+  }
+
+  // Filter to artists that have SOME source image, and where the true
+  // best source isn't already correctly re-hosted on Storage.
   const artists = allArtists.filter((a) => {
-    const sourceUrl =
-      a.sc_image_url ??
-      a.enrichment?.find((e) => e.platform === "soundcloud" && e.profile_image_url)
-        ?.profile_image_url;
+    const best = pickBestSource(a);
+    if (!best) return false;
 
-    if (!sourceUrl) return false;
-
-    // Skip if already stored in Supabase Storage (unless --force).
     const alreadyStored = a.profile_image_url?.includes("/storage/v1/object/");
-    if (alreadyStored && !FORCE) return false;
+    // Only treat as "done" when the Storage image actually reflects
+    // the current best-priority source — otherwise a higher-priority
+    // source appeared since (or the recorded source was never set)
+    // and this artist needs re-hosting from it.
+    const doneForBestSource = alreadyStored && a.profile_image_source === best.platform;
+    if (doneForBestSource && !FORCE) return false;
 
-    a._sourceImageUrl = sourceUrl;
+    a._source = best;
     return true;
   });
 
   console.log(`${allArtists.length} approved artists fetched from DB.`);
   console.log(
-    `${artists.length} to process (have SoundCloud image${FORCE ? ", force re-upload" : ", not yet stored"}).\n`
+    `${artists.length} to process (have a source image${FORCE ? ", force re-upload" : ", not yet correctly stored"}).\n`
   );
 
   let uploaded = 0;
   let failed = 0;
 
   for (const artist of artists) {
-    const sourceUrl = toSize500(artist._sourceImageUrl);
+    const { platform: sourcePlatform, url: rawSourceUrl } = artist._source;
+    // The SoundCloud CDN resize rewrite only makes sense for actual
+    // SoundCloud URLs — every other source is fetched at whatever
+    // size its own URL provides.
+    const sourceUrl = sourcePlatform === "soundcloud" ? toSize500(rawSourceUrl) : rawSourceUrl;
 
-    process.stdout.write(`${artist.name} … `);
+    process.stdout.write(`${artist.name} (${sourcePlatform}) … `);
 
     const downloaded = await downloadImage(sourceUrl);
     if (!downloaded) {
@@ -231,7 +317,7 @@ async function main() {
         .from("artists")
         .update({
           profile_image_url: publicUrl,
-          profile_image_source: "soundcloud",
+          profile_image_source: sourcePlatform,
           profile_image_fetched_at: new Date().toISOString(),
         })
         .eq("id", artist.id);

@@ -16,7 +16,7 @@ Phase 2 │ Platform link & profile harvesting (SoundCloud + direct links)
 Phase 3 │ External matching fallback (Last.fm, MusicBrainz, Spotify)
 Phase 4 │ Bio processing
 Phase 5 │ Profile images
-Phase 6 │ Discography enrichment (Bandcamp)
+Phase 6 │ Discography & profile enrichment (Bandcamp)
 Phase 7 │ Recommendation engine signals
 Phase 8 │ Review / data quality
 ```
@@ -34,7 +34,8 @@ flowchart TD
     P3 --> P7
     P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
     P5["Phase 5 · Profile images<br/>enrich-images.ts → store-images.mjs"]
-    P6["Phase 6 · Discography<br/>enrich-bandcamp.mjs"]
+    P6["Phase 6 · Discography &amp; profile<br/>sync-bandcamp.mjs"]
+    P6 -. "bandcamp images feed 5b" .-> P5
     P7["Phase 7 · Rec. signals<br/>follow graph, MB tags, genre harvest+integrate"]
     P2 -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
     P7 -. as-needed .-> P8G["Genre cleanup<br/>genre-report → dedupe → prune → apply-status"]
@@ -66,11 +67,15 @@ npm run orchestrate-platform-enrichment -- --approved
 
 It runs, in dependency order: `clean-artist-names` (Phase 1) →
 `sync-soundcloud` (2a — the merged SoundCloud sync stage) →
-`harvest-links-loop` (the 2c+2d convergence loop) → `enrich-bandcamp`
+`harvest-links-loop` (the 2c+2d convergence loop) → `sync-bandcamp`
 (Phase 6, run last since it depends on Bandcamp links that 2d may have
-just promoted). Each stage tracks its own processed state in the
-database, so the orchestrator holds no state and is safe to re-run — a
-second run only touches artists with new data.
+just promoted; also the merged discography + bio + location + image +
+links + genre-tags stage — see Phase 6 below). Each stage tracks its
+own processed state in the database, so the orchestrator holds no
+state and is safe to re-run — a second run only touches artists with
+new data. Note that `store-images.mjs` (5b) is not yet part of this
+orchestrator; run it after `sync-bandcamp` to pick up any Bandcamp
+images that stage just found (see "Typical full run order").
 
 `--approved` restricts every stage to directory artists
 (`directory_status = 'approved'`, excluding deleted). It is forwarded to
@@ -283,8 +288,10 @@ DRY_RUN=1 npm run harvest-links-discogs        # no writes
 Requires `DISCOGS_TOKEN` in `.env.local` (discogs.com → Settings →
 Developers → "Generate new token").
 
-Still planned: `harvest-links-linktree.mjs` and
-`harvest-links-bandcamp.mjs` — see "Planned changes".
+Still planned: `harvest-links-linktree.mjs`. Bandcamp link harvesting
+is done — folded into `sync-bandcamp.mjs` (Phase 6) rather than built
+as a separate 2c script, since it's the same page fetch as the
+discography scrape.
 
 #### `harvest-links-loop.mjs` — the 2c+2d convergence loop
 Runs all 2c harvesters then 2d in rounds until a round produces no
@@ -465,18 +472,22 @@ next to the script; use `--force` to bypass.
 npm run enrich-images
 ```
 
-### 5b. `store-images.mjs`
-Re-hosts profile images: for each approved artist whose SoundCloud
-enrichment has a `profile_image_url`, downloads the 500×500 variant
-and uploads it to Supabase Storage (`artist-images/{artist_id}.jpg`),
-then points `artists.profile_image_url` at the Storage URL. Skips
-artists already on Storage URLs unless `--force`. Supports
-`--limit=N` and `DRY_RUN=1`. Run after Phase 2 (needs SoundCloud
-enrichment rows) and after 5a.
-
-Note: SoundCloud-only for now — images 5a fetched from other
-platforms stay hot-linked, and 5b can overwrite 5a's non-SoundCloud
-choice. Generalizing it to all sources is in "Planned changes".
+### 5b. `store-images.mjs` — generalized to all sources 2026-07-09
+Re-hosts profile images: for each approved artist, picks the
+best-available source image by the same `PLATFORM_PRIORITY` order 5a
+uses (SoundCloud's `sc_image_url` / enrichment row first, then any
+other platform's `artist_enrichment.profile_image_url` — e.g.
+Bandcamp, via `sync-bandcamp.mjs`), downloads it (applying the
+500×500 resize rewrite only when the source is actually SoundCloud),
+and uploads it to Supabase Storage (`artist-images/{artist_id}.{ext}`),
+then points `artists.profile_image_url` at the Storage URL and records
+the true `artists.profile_image_source`. Skips an artist only when
+their current best-priority source is already correctly re-hosted
+(unless `--force`) — so a higher-priority image that appears later
+(e.g. a SoundCloud sync completing after a Bandcamp-sourced image was
+already stored) gets picked up on the next run instead of being stuck.
+Supports `--limit=N` and `DRY_RUN=1`. Run after Phase 2 and Phase 6
+(needs both SoundCloud and Bandcamp enrichment rows) and after 5a.
 
 ```bash
 node scripts/store-images.mjs
@@ -484,24 +495,63 @@ node scripts/store-images.mjs
 
 ---
 
-## Phase 6 — Discography enrichment
+## Phase 6 — Discography & profile enrichment
 
-### `enrich-bandcamp.mjs`
-Fetches Bandcamp album and release data for artists that have a
-Bandcamp link, scraping the music grid on each artist's page.
-Writes to `artist_bandcamp_albums` (the numeric IDs feed Bandcamp's
-embedded player). Benefits from Phases 2 and 3 running first: more
-Bandcamp links found → more discographies fetched. (The same page
-fetch could also capture sidebar links for 2c — see "Planned
-changes".)
+### `sync-bandcamp.mjs` — ✅ merged 2026-07-09 (replaces `enrich-bandcamp.mjs`)
+The Bandcamp analog of `sync-soundcloud.mjs` (2a): one page fetch per
+artist (`{core url}/music`, falling back to the core URL), fanned out
+to every concern that page can answer instead of just discography —
+
+- **Discography** — album/track grid → `artist_bandcamp_albums` (the
+  numeric IDs feed Bandcamp's embedded player). Same scrape
+  `enrich-bandcamp.mjs` did.
+- **Bio + profile image** → `artist_enrichment` (`platform = 'bandcamp'`),
+  plus the raw bio into `artist_harvested_bios` as an audit trail
+  (same pattern SoundCloud's bio gets). The image is written as a raw
+  URL only — re-hosting to Storage is `store-images.mjs`'s job (5b,
+  generalized alongside this script; see "Loose ends" / Phase 5).
+- **Location** → `artist_locations`, only when the artist doesn't
+  already have a row there (never overwrites a manual entry).
+- **External links sidebar** → staged into `artist_harvested_links`,
+  same contract as every other harvester (promoted by
+  `integrate-harvested-links.mjs` / `harvest-links-loop.mjs`). This is
+  what the former "Planned changes" entry `harvest-links-bandcamp.mjs`
+  described — folded into this script instead of a separate one, since
+  it's the same page fetch.
+- **Genre tags** (release pages only) → staged into
+  `artist_harvested_genres` (`source_platform = 'bandcamp'`), same
+  shape as the Last.fm/MusicBrainz/Spotify genre harvesters.
+
+Handles three page shapes beyond the "full page with releases" case,
+since Bandcamp reuses the same bio-container sidebar partial across
+all of them: an artist with a bio but no releases (the `/music` page
+stays on that path, just with an empty grid); an artist whose core URL
+redirects to their one track (no `/music` landing page exists at all);
+and an artist whose core URL redirects to a merch item. In all three,
+discography is naturally empty but bio/location/links are still
+harvested. A URL that isn't a real Bandcamp artist subdomain (e.g. a
+saved `bandcamp.com/search?...` link) is rejected before any fetch —
+see the wrong-field guard in the script header. Not harvested: fan/
+supporter counts (loaded client-side, not in the static HTML) and
+release credits text (captured opportunistically into `raw_data`, not
+promoted to a column — a future collaboration-signal enhancement, same
+status as Discogs' `members`/`groups`).
+
+Benefits from Phases 2 and 3 running first: more Bandcamp links found
+→ more profiles fetched.
 
 Always directory-only: it processes only artists with
 `directory_status = 'approved'` (excluding deleted), so there is no
 `--approved` flag — the orchestrator forwards one anyway, a harmless
 no-op here.
 
+Uses `resolved_artists` (service = `bandcamp-sync`) and
+`harvest_failures` for processed-state and failure tracking — same
+pattern as `sync-soundcloud.mjs` (2a). The old `enrich-bandcamp.mjs`
+never used `resolved_artists`, so there's no prior state to backfill.
+
 ```bash
-npm run enrich-bandcamp
+npm run sync-bandcamp
 ```
 
 ---
@@ -937,10 +987,10 @@ pipeline script or submit form touches it.
 - **`harvest_failures`** — new 2026-07-09 (see Phase 2a and
   `scripts/lib/harvest-failures.mjs`): one row per (`artist_id`,
   `service`) holding the *current* failure for that pair, cleared on
-  the next success. Currently only written by `sync-soundcloud.mjs`
-  (service = `soundcloud-sync`); adopting it in the other Phase 2
-  harvesters (Discogs, and whatever Linktree/Bandcamp harvesters get
-  built) is still open.
+  the next success. Written by `sync-soundcloud.mjs`
+  (service = `soundcloud-sync`) and, as of 2026-07-09, `sync-bandcamp.mjs`
+  (service = `bandcamp-sync`); adopting it in the remaining Phase 2
+  harvesters (Discogs, Linktree) is still open.
 
 ---
 
@@ -955,9 +1005,9 @@ node scripts/clean-bandcamp-urls.mjs
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios
+npm run sync-bandcamp
 npm run enrich-images
 node scripts/store-images.mjs
-npm run enrich-bandcamp
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
 npm run fetch-lastfm-similar
@@ -1010,28 +1060,37 @@ stored ID instead of re-resolving the profile URL: 1 call per artist
 for a links refresh, and immune to resolve failures when an artist
 renames their profile URL.
 
-### Generalize `store-images.mjs` (5b) to all image sources
+### Generalize `store-images.mjs` (5b) to all image sources — ✅ DONE (2026-07-09)
 
-5b currently re-hosts only SoundCloud images: it sources from
+5b previously re-hosted only SoundCloud images: it sourced from
 `artists.sc_image_url` / the `soundcloud` row of `artist_enrichment`,
-applies a SoundCloud-CDN-specific `-t500x500` resize rewrite, and
-hardcodes `profile_image_source = 'soundcloud'`. Images that 5a
+applied a SoundCloud-CDN-specific `-t500x500` resize rewrite, and
+hardcoded `profile_image_source = 'soundcloud'`. Images that 5a
 fetched from other platforms (Bandcamp, Resident Advisor, Discogs, …)
-stay hot-linked to the source site — vulnerable to URL rot, and every
-source domain must be allowlisted in `next.config` for `next/image`.
+stayed hot-linked to the source site — vulnerable to URL rot, and
+every source domain had to be allowlisted in `next.config` for
+`next/image`.
 
-There is also an override bug: 5b's "already stored" check only
-skips Storage URLs, so an artist whose image 5a chose from Bandcamp
-gets silently overwritten with the re-hosted SoundCloud image if one
-exists.
+There was also an override bug: 5b's "already stored" check only
+skipped Storage URLs, so an artist whose image 5a chose from Bandcamp
+got silently overwritten with the re-hosted SoundCloud image if one
+existed.
 
-Plan: re-host `artists.profile_image_url` from *any* source — apply
-the resize rewrite only to SoundCloud CDN URLs (other sources are
-fetched at whatever size the og:image provides), record the true
-`profile_image_source` instead of hardcoding `'soundcloud'`, and
-keep the existing Storage upload path. Once every image is served
-from our own Storage domain, the per-source allowlist in
-`next.config` can be reduced to just that domain.
+Built: 5b now walks the same `PLATFORM_PRIORITY` order as
+`enrich-images.ts` (5a) — a local copy, since this script runs under
+plain `node` and 5a's list lives in a `.ts` file — picking the
+highest-priority platform with an available source image (SoundCloud's
+`sc_image_url` / enrichment row, or any other platform's
+`artist_enrichment.profile_image_url`, e.g. the one `sync-bandcamp.mjs`
+now writes). The resize rewrite applies only when the picked source is
+actually SoundCloud. The override bug is fixed as a side effect: an
+artist is only treated as "already done" when the Storage image's
+recorded `profile_image_source` matches the *current* best-priority
+source, so a higher-priority image that appeared since (or a Storage
+image from the wrong source) gets re-hosted instead of silently kept.
+Once every image is served from our own Storage domain, the
+per-source allowlist in `next.config` can be reduced to just that
+domain.
 
 ### Build out Phase 2c: the direct-link harvesters
 
@@ -1043,11 +1102,12 @@ that implement it:
 Phase 2c:
   harvest-links-discogs.mjs     ✅ BUILT (2026-07-03) — see Phase 2c
   harvest-links-linktree.mjs    see below
-  harvest-links-bandcamp.mjs    Bandcamp artist pages carry a sidebar
-                                of external links on the same page
-                                enrich-bandcamp.mjs (Phase 6) already
-                                fetches for the music grid; capture
-                                them (shared fetch or separate pass)
+  harvest-links-bandcamp.mjs    ✅ DONE (2026-07-09) — folded into
+                                sync-bandcamp.mjs (Phase 6) instead of
+                                built as a separate script, since it's
+                                the same page fetch as the discography
+                                scrape. Stages into artist_harvested_links
+                                same as every other harvester here.
 
 After Phase 3 (needs resolved MusicBrainz IDs):
   MB URL-rels                   move the url-rel harvesting inside
@@ -1089,7 +1149,7 @@ next to a correct direct link). Extend the existing Spotify-style
 skip to all three services, so Phase 2's direct links suppress
 Phase 3 work entirely for those (artist, service) pairs.
 
-### Persist harvest failures as queryable data — ✅ DONE for SoundCloud (2026-07-09)
+### Persist harvest failures as queryable data — ✅ DONE for SoundCloud + Bandcamp (2026-07-09)
 
 Previously a fetch/resolve failure in the Phase 2 scripts existed only
 as a console line and an in-memory tally — once the terminal
@@ -1103,16 +1163,17 @@ next success, with a machine-readable `status`, human-readable
 `detail`, and the offending `url`. Chosen over adding `status`/`detail`
 columns to `resolved_artists` so that table's simple skip-set
 semantics (used by every stage's "is this artist already done" check)
-stay untouched. `sync-soundcloud.mjs` writes to it via the shared
-`scripts/lib/harvest-failures.mjs` helper (`recordFailure()` /
-`clearFailure()`); wiring the other Phase 2 harvesters (Discogs, and
-whatever Linktree/Bandcamp harvesters get built) onto the same table
-is still open. (Built after a real case: an artist whose `soundcloud`
+stay untouched. `sync-soundcloud.mjs` and `sync-bandcamp.mjs` write to
+it via the shared `scripts/lib/harvest-failures.mjs` helper
+(`recordFailure()` / `clearFailure()`); wiring the remaining Phase 2
+harvesters (Discogs, and whatever Linktree harvester gets built) onto
+the same table is still open. (Built after a real case: an artist
+whose `soundcloud`
 link field contained a Spotify URL failed `/resolve`, was 404-marked
 processed, and left no record of the underlying bad link — see the
 guard below, which now catches that case before it burns an API call.)
 
-### Guard harvesters against wrong-field URLs — ✅ DONE for SoundCloud (2026-07-09)
+### Guard harvesters against wrong-field URLs — ✅ DONE for SoundCloud + Bandcamp (2026-07-09)
 
 Cheap pre-check in each Phase 2 fetcher: before spending an API
 call, verify the stored URL's domain actually matches the platform
@@ -1121,19 +1182,20 @@ being processed. Built into `sync-soundcloud.mjs`: the stored
 `/resolve` is called; on mismatch it's skipped and flagged (via
 `harvest_failures` above) instead of calling the API, and — unlike a
 404 — left unmarked in `resolved_artists` so a later link correction
-is retried automatically. The Discogs harvester
-(`harvest-links-discogs.mjs`) already effectively does this via its
-artist-ID regex (`discogs.com/artist/`). Wrong-field rows are exactly
-what `qc-links.mjs` (Phase 8) detects after the fact; this catches
-them at point of use too.
+is retried automatically. `sync-bandcamp.mjs` does the same against
+`*.bandcamp.com` (rejecting both non-Bandcamp URLs and the bare
+`bandcamp.com` apex — e.g. a saved search-results link). The Discogs
+harvester (`harvest-links-discogs.mjs`) already effectively does this
+via its artist-ID regex (`discogs.com/artist/`). Wrong-field rows are
+exactly what `qc-links.mjs` (Phase 8) detects after the fact; this
+catches them at point of use too.
 
 Considered and set aside: Spotify (API exposes no external links),
 Last.fm (none structured; page links mostly mirror MB's), Resident
 Advisor (links exist on ra.co artist pages but only via an
 unofficial GraphQL endpoint — fragile; revisit later), Beatport /
-Qobuz / Tidal / Apple Music pages (no meaningful outbound links). Any
-future Linktree/Bandcamp harvester should adopt the same guard when
-it's built.
+Qobuz / Tidal / Apple Music pages (no meaningful outbound links). A
+future Linktree harvester should adopt the same guard when it's built.
 
 ### New harvester: `harvest-links-discogs.mjs` ✅ BUILT (2026-07-03)
 

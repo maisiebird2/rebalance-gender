@@ -43,8 +43,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// The 2c stage list. Add "harvest-links-linktree.mjs" and
-// "harvest-links-bandcamp.mjs" here when they exist.
+// The 2c stage list. Add "harvest-links-linktree.mjs" here when it
+// exists. Bandcamp link harvesting is NOT in this list on purpose —
+// it's folded into sync-bandcamp.mjs (Phase 6, run after this loop
+// converges) instead of being a separate 2c stage, since it shares
+// that script's one-fetch-per-artist page load.
 const HARVESTERS = ["harvest-links-discogs.mjs"];
 const INTEGRATE = "integrate-harvested-links.mjs";
 

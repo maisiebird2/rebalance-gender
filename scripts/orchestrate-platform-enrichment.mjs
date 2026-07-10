@@ -34,15 +34,21 @@
 //                                           links appear, promoting the
 //                                           staged links from step 2
 //                                           into artist_links.
-//   4. enrich-bandcamp.mjs                — scrapes each artist's
-//                                           Bandcamp discography. Runs
+//   4. sync-bandcamp.mjs                  — the merged Bandcamp
+//                                           stage: discography, bio,
+//                                           location, profile image,
+//                                           external links, and genre
+//                                           tags, all from one page
+//                                           fetch per artist. Runs
 //                                           LAST because it depends on
 //                                           Bandcamp links that step 3
 //                                           may have just promoted into
 //                                           artist_links. Already
 //                                           directory-only (it always
 //                                           filters directory_status =
-//                                           'approved').
+//                                           'approved'). Replaces the
+//                                           former enrich-bandcamp.mjs
+//                                           (discography-only).
 //
 // This is the same ordering as Phase 1 → Phase 2 of PIPELINE.md, wired
 // together so it can be launched (and, later, scheduled) with one flag.
@@ -142,10 +148,10 @@ export function orchestratePlatformEnrichment(opts = {}) {
       script: "harvest-links-loop.mjs",
       args: [...common, ...(maxRounds != null ? [`--max-rounds=${maxRounds}`] : [])],
     },
-    // enrich-bandcamp is already directory-only (always filters
+    // sync-bandcamp is already directory-only (always filters
     // directory_status = 'approved'); forwarding --approved is harmless
     // and keeps intent explicit.
-    { script: "enrich-bandcamp.mjs", args: [...common] },
+    { script: "sync-bandcamp.mjs", args: [...common] },
   ];
 
   for (const { script, args: stageArgs } of stages) {
