@@ -16,8 +16,8 @@
 //
 // This loop is deliberately the skeleton for the eventual
 // orchestrate.mjs: stage scripts as child processes, DB-tracked
-// state, convergence detection. Add future harvesters (linktree,
-// bandcamp) to the HARVESTERS array and nothing else changes.
+// state, convergence detection. Add future harvesters (e.g. linktree)
+// to the HARVESTERS array and nothing else changes.
 //
 // Usage (from the rebalance-gender/ folder):
 //
@@ -43,12 +43,23 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// The 2c stage list. Add "harvest-links-linktree.mjs" here when it
-// exists. Bandcamp link harvesting is NOT in this list on purpose —
-// it's folded into sync-bandcamp.mjs (Phase 6, run after this loop
-// converges) instead of being a separate 2c stage, since it shares
-// that script's one-fetch-per-artist page load.
-const HARVESTERS = ["harvest-links-discogs.mjs"];
+// The harvester stage list — every script that stages new links into
+// artist_harvested_links. Add "harvest-links-linktree.mjs" here when
+// it exists.
+//
+// sync-bandcamp.mjs (Phase 2b) is a full member of this loop: its
+// external-links sidebar is staged into artist_harvested_links like
+// any other harvester, and because Bandcamp links are themselves
+// discovered mid-loop (a Discogs page reveals a Bandcamp URL, 2d
+// promotes it, then this script can read that Bandcamp page), it
+// belongs in the convergence loop rather than as a terminal stage. It
+// tracks its processed state in the DB (resolved_artists, service
+// 'bandcamp-sync'), so each round only re-fetches artists whose
+// Bandcamp link arrived since the last round, and the loop still
+// terminates naturally. The same page fetch also does the full
+// Bandcamp profile pull (discography, bio, location, image, genre
+// tags) — see sync-bandcamp.mjs / Phase 2b in PIPELINE.md.
+const HARVESTERS = ["harvest-links-discogs.mjs", "sync-bandcamp.mjs"];
 const INTEGRATE = "integrate-harvested-links.mjs";
 
 // ------------------------------------------------------------

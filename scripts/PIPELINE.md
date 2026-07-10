@@ -12,11 +12,11 @@ stage in order.
 ```
 Phase 0 │ Initial load (run once)
 Phase 1 │ Data quality
-Phase 2 │ Platform link & profile harvesting (SoundCloud + direct links)
+Phase 2 │ Platform link & profile harvesting (SoundCloud, Bandcamp + direct links)
 Phase 3 │ External matching fallback (Last.fm, MusicBrainz, Spotify)
 Phase 4 │ Bio processing
 Phase 5 │ Profile images
-Phase 6 │ Discography & profile enrichment (Bandcamp)
+Phase 6 │ (merged into Phase 2b — Bandcamp discography & profile)
 Phase 7 │ Recommendation engine signals
 Phase 8 │ Review / data quality
 ```
@@ -24,42 +24,60 @@ Phase 8 │ Review / data quality
 ```mermaid
 flowchart TD
     P0["Phase 0 · Initial load (once)<br/>migrate.mjs"] --> P1
-    WEB["Website entry (ongoing)<br/>submit / revise / edit"] -. "gap: not yet automatic" .-> P2
-    P1["Phase 1 · Data quality<br/>clean-artist-names.mjs"] --> P2
-    P2["Phase 2 · Link &amp; profile harvesting<br/>2a SoundCloud sync, 2c direct harvesters,<br/>2d promote (looped via harvest-links-loop.mjs),<br/>2e/2f cleanup"] --> P3
-    P2 -.-> P6
-    P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify"] --> P4
+    WEB["Website entry (ongoing)<br/>submit / revise / edit"] -. "after review &amp; approval" .-> P2A
+    P1["Phase 1 · Data quality<br/>clean-artist-names.mjs"] --> P2A
+
+    subgraph P2 ["Phase 2 · Platform link &amp; profile harvesting"]
+        direction TB
+        P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
+        P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
+        P2C["2c · Direct-link harvesters<br/>harvest-links-discogs.mjs<br/>(linktree planned)"]
+        P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
+        P2EF["2e/2f · Cleanup (one-off)<br/>fix-http-https-mismatches<br/>clean-bandcamp-urls"]
+        P2A --> P2D
+        P2B -->|"convergence loop<br/>harvest-links-loop.mjs"| P2D
+        P2C -->|"convergence loop<br/>harvest-links-loop.mjs"| P2D
+        P2D -. "new links reveal<br/>more harvestable pages" .-> P2B
+        P2D -. "new links reveal<br/>more links" .-> P2C
+        P2D --> P2EF
+    end
+
+    P2EF --> P3
+    P2A -. "raw bio feeds 4" .-> P4
+    P2B -. "bandcamp images feed 5b" .-> P5
+    P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify<br/>resolve-and-load-links-lf-mb-sp.mjs"] --> P4
     P3 --> P5
-    P3 --> P6
     P3 --> P7
     P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
     P5["Phase 5 · Profile images<br/>enrich-images.ts → store-images.mjs"]
-    P6["Phase 6 · Discography &amp; profile<br/>sync-bandcamp.mjs"]
-    P6 -. "bandcamp images feed 5b" .-> P5
     P7["Phase 7 · Rec. signals<br/>follow graph, MB tags, genre harvest+integrate"]
-    P2 -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
+    P2EF -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
     P7 -. as-needed .-> P8G["Genre cleanup<br/>genre-report → dedupe → prune → apply-status"]
 
-    classDef orchestrated stroke:#4f46e5,stroke-width:2px;
-    class P1,P2,P6 orchestrated;
+    classDef orchestrated fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px,color:#312e81;
+    class P1,P2A,P2B,P2C,P2D orchestrated;
+    classDef normal fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px,color:#334155;
+    class P0,WEB,P2EF,P3,P4,P5,P7,P8,P8G normal;
+    style P2 fill:#eef2ff,stroke:#818cf8,stroke-width:1px,color:#4338ca;
+    linkStyle default stroke:#6366f1,stroke-width:2px;
 ```
-*(Boxes with a bold border — Phase 1, 2, 6 — are currently run end-to-end by `orchestrate-platform-enrichment.mjs --approved`. Dashed arrows are as-needed or not-yet-automatic paths.)*
+*(Boxes with a bold border — Phase 1 and the Phase 2 harvest/promote stages (2a, 2b, 2c, 2d) — are run end-to-end by `orchestrate-platform-enrichment.mjs --approved`: 2a first, then 2b/2c/2d as a convergence loop (`harvest-links-loop.mjs`) until no new links appear. The 2e/2f cleanups are one-off and not orchestrated. Dashed arrows are as-needed, cross-phase, or manual-entry paths.)*
 
 Artists enter the database through **two entry points**: the one-time
 bulk CSV load (Phase 0), and continuously via the website's
 submission/revision flow (see "Ongoing entry point" below, after
-Phase 8). The enrichment phases currently only run as bulk scripts,
-so artists arriving through the website sit with entry-form data
-only (plus an auto-fetched profile image) until the next manual
-pipeline run — closing that gap is the goal of the planned
-orchestration work.
+Phase 8). The enrichment phases run as bulk scripts, so artists
+arriving through the website start with entry-form data only (plus an
+auto-fetched profile image) and pick up the rest on the next pipeline
+run. This is by design: human review and approval deliberately sit
+between a website submission and enrichment.
 
 ---
 
 ## Orchestration
 
-Phases 1–2 (plus the Bandcamp discography step, Phase 6) can be run end
-to end with a single command via `orchestrate-platform-enrichment.mjs`:
+All of Phase 2 can be run end to end with a single command via
+`orchestrate-platform-enrichment.mjs`:
 
 ```bash
 npm run orchestrate-platform-enrichment -- --approved
@@ -67,15 +85,16 @@ npm run orchestrate-platform-enrichment -- --approved
 
 It runs, in dependency order: `clean-artist-names` (Phase 1) →
 `sync-soundcloud` (2a — the merged SoundCloud sync stage) →
-`harvest-links-loop` (the 2c+2d convergence loop) → `sync-bandcamp`
-(Phase 6, run last since it depends on Bandcamp links that 2d may have
-just promoted; also the merged discography + bio + location + image +
-links + genre-tags stage — see Phase 6 below). Each stage tracks its
-own processed state in the database, so the orchestrator holds no
-state and is safe to re-run — a second run only touches artists with
-new data. Note that `store-images.mjs` (5b) is not yet part of this
-orchestrator; run it after `sync-bandcamp` to pick up any Bandcamp
-images that stage just found (see "Typical full run order").
+`harvest-links-loop` (the 2b+2c+2d convergence loop). `sync-bandcamp`
+(2b — the merged discography + bio + location + image + links +
+genre-tags stage; see Phase 2b below) is now one of the loop's
+harvesters rather than a terminal step, so each round re-runs it as 2d
+promotes new Bandcamp links, and it converges alongside the other
+harvesters. Each stage tracks its own processed state in the database,
+so the orchestrator holds no state and is safe to re-run — a second
+run only touches artists with new data. Note that `store-images.mjs`
+(5b) is not part of this orchestrator; run it after the loop to pick
+up any Bandcamp images 2b just found (see "Typical full run order").
 
 `--approved` restricts every stage to directory artists
 (`directory_status = 'approved'`, excluding deleted). It is forwarded to
@@ -142,9 +161,15 @@ artist's platform picture for everything downstream (images, bios,
 matching, genres) and shrinks the set of artists that need
 best-match guessing at all.
 
-2a pulls from SoundCloud in a single merged stage; 2c is the
-direct-link harvesters; 2d–2e promote and clean. (2b is retired —
-its functionality is now part of 2a; see below.)
+2a pulls from SoundCloud in a single merged stage; 2b is the merged
+Bandcamp stage (`sync-bandcamp.mjs`, moved here from the former Phase 6
+on 2026-07-10); 2c is the direct-link harvesters; 2d promotes; 2e/2f
+clean up. 2b and 2c are both link harvesters, so they run inside the
+2d convergence loop (`harvest-links-loop.mjs`) — links beget links, and
+a Bandcamp page can reveal links just like a Discogs page can. (The
+label "2b" previously belonged to a retired SoundCloud harvester,
+`harvest-soundcloud-links-and-bio.mjs`, whose work is now part of 2a;
+the slot is reused for Bandcamp.)
 
 ### 2a. `sync-soundcloud.mjs`
 The merged SoundCloud stage (as of 2026-07-09; replaces the former
@@ -287,6 +312,86 @@ Artists already synced under the old two-script system have
 diagnostic scripts") so the first bulk run of this stage doesn't
 re-fetch everyone from scratch.
 
+### 2b. `sync-bandcamp.mjs`
+Merged 2026-07-09 (replaces `enrich-bandcamp.mjs`); moved here from the
+former Phase 6 and folded into the convergence loop as 2b on
+2026-07-10. The Bandcamp analog of `sync-soundcloud.mjs` (2a): one page
+fetch per artist (`{core url}/music`, falling back to the core URL),
+fanned out to every concern that page can answer instead of just
+discography —
+
+- **Discography** — album/track grid → `artist_bandcamp_albums` (the
+  numeric IDs feed Bandcamp's embedded player). Same scrape
+  `enrich-bandcamp.mjs` did.
+- **Bio** → `artist_enrichment` (`platform = 'bandcamp'`), plus the
+  raw bio into `artist_harvested_bios` as an audit trail (same pattern
+  SoundCloud's bio gets).
+- **Profile image** → as of 2026-07-09, `artist_images` (`artist_id`,
+  `platform='bandcamp'`), not `artist_enrichment.profile_image_url`
+  (explicitly nulled there instead). Written as a raw `source_url`
+  only — re-hosting to Storage is `store-images.mjs`'s job (5b). No
+  extra directory-only gating needed here (unlike SoundCloud): this
+  whole script already only ever processes `directory_status =
+  'approved'` artists, unconditionally — see "Processed state" below.
+- **Location** → `artist_locations`, only when the artist doesn't
+  already have a row there (never overwrites a manual entry).
+- **External links sidebar** → staged into `artist_harvested_links`,
+  same contract as every other harvester (promoted by
+  `integrate-harvested-links.mjs`, 2d). This is what makes 2b a
+  first-class member of the convergence loop, not just a profile
+  scrape — see "Runs inside the 2d convergence loop" below.
+- **Genre tags** (release pages only) → staged into
+  `artist_harvested_genres` (`source_platform = 'bandcamp'`), same
+  shape as the Last.fm/MusicBrainz/Spotify genre harvesters.
+
+Handles three page shapes beyond the "full page with releases" case,
+since Bandcamp reuses the same bio-container sidebar partial across
+all of them: an artist with a bio but no releases (the `/music` page
+stays on that path, just with an empty grid); an artist whose core URL
+redirects to their one track (no `/music` landing page exists at all);
+and an artist whose core URL redirects to a merch item. In all three,
+discography is naturally empty but bio/location/links are still
+harvested. A URL that isn't a real Bandcamp artist subdomain (e.g. a
+saved `bandcamp.com/search?...` link) is rejected before any fetch —
+see the wrong-field guard in the script header. Not harvested: fan/
+supporter counts (loaded client-side, not in the static HTML) and
+release credits text (captured opportunistically into `raw_data`, not
+promoted to a column — a future collaboration-signal enhancement, same
+status as Discogs' `members`/`groups`).
+
+**Runs inside the 2d convergence loop.** Because 2b both *stages*
+links (its sidebar → `artist_harvested_links`) and *consumes* links (it
+needs a Bandcamp `artist_links` row to know which page to fetch), it
+belongs in the same round-based loop as the direct-link harvesters (2c)
+rather than as a terminal step: a Discogs page found in one round can
+reveal a Bandcamp URL, 2d promotes it, and the next round's 2b then
+reads that Bandcamp page — which may itself reveal more links. It is
+listed in `harvest-links-loop.mjs`'s `HARVESTERS` array alongside
+`harvest-links-discogs.mjs`, so `orchestrate-platform-enrichment.mjs`
+picks it up automatically; there is no separate Bandcamp stage in the
+orchestrator anymore. Because it tracks processed state in the DB (see
+below), each round only re-fetches artists whose Bandcamp link arrived
+since the last round, so the loop still terminates naturally.
+
+Benefits from the SoundCloud sync (2a) and the other harvesters
+running: the more Bandcamp links they surface, the more profiles 2b
+fetches.
+
+Always directory-only: it processes only artists with
+`directory_status = 'approved'` (excluding deleted), so there is no
+`--approved` flag — the loop/orchestrator forwards one anyway, a
+harmless no-op here.
+
+**Processed state:** uses `resolved_artists` (service =
+`bandcamp-sync`) and `harvest_failures` for processed-state and failure
+tracking — same pattern as `sync-soundcloud.mjs` (2a). The old
+`enrich-bandcamp.mjs` never used `resolved_artists`, so there's no
+prior state to backfill.
+
+```bash
+npm run sync-bandcamp
+```
+
 ### 2c. Direct-link harvesters
 
 #### `harvest-links-discogs.mjs`
@@ -313,18 +418,21 @@ Requires `DISCOGS_TOKEN` in `.env.local` (discogs.com → Settings →
 Developers → "Generate new token").
 
 Still planned: `harvest-links-linktree.mjs`. Bandcamp link harvesting
-is done — folded into `sync-bandcamp.mjs` (Phase 6) rather than built
-as a separate 2c script, since it's the same page fetch as the
-discography scrape.
+is done — folded into `sync-bandcamp.mjs` (2b) rather than built as a
+separate 2c script, since it's the same page fetch as the discography
+scrape; 2b runs in this same convergence loop.
 
-#### `harvest-links-loop.mjs` — the 2c+2d convergence loop
-Runs all 2c harvesters then 2d in rounds until a round produces no
-new staged or live links (links beget links: a Discogs page may
-reveal a Linktree, a Linktree a Bandcamp). Convergence is detected
-by row counts of `artist_harvested_links` and `artist_links` before
-vs. after each round; because harvesters track state in the DB,
-each round only touches artists with new links. This loop is the
-skeleton for the eventual `orchestrate.mjs`.
+#### `harvest-links-loop.mjs` — the 2b+2c+2d convergence loop
+Runs the link harvesters — the 2c direct-link harvesters plus 2b
+(`sync-bandcamp.mjs`, which stages the links from each Bandcamp
+sidebar) — then 2d, in rounds until a round produces no new staged or
+live links (links beget links: a Discogs page may reveal a Bandcamp
+URL, 2d promotes it, and the next round's 2b reads that Bandcamp page
+to reveal yet more links). Convergence is detected by row counts of
+`artist_harvested_links` and `artist_links` before vs. after each
+round; because harvesters track state in the DB, each round only
+touches artists with new links. This loop is the skeleton for the
+eventual `orchestrate.mjs`.
 
 ```bash
 npm run harvest-links-loop
@@ -333,7 +441,7 @@ npm run harvest-links-loop -- --max-rounds=2
 DRY_RUN=1 npm run harvest-links-loop           # single round, no writes
 ```
 
-`--approved` restricts the loop to directory artists (`directory_status = 'approved'`, excluding deleted); it is forwarded to every child stage (the 2c harvesters and 2d).
+`--approved` restricts the loop to directory artists (`directory_status = 'approved'`, excluding deleted); it is forwarded to every child stage (the 2b/2c harvesters and 2d). `sync-bandcamp` is already directory-only, so the flag is a harmless no-op there.
 
 ### 2d. `integrate-harvested-links.mjs`
 Promotes rows from the `artist_harvested_links` staging table into
@@ -517,7 +625,7 @@ npm run enrich-images
 ```
 
 As of 2026-07-09, `sync-soundcloud.mjs` (2a) and `sync-bandcamp.mjs`
-(Phase 6) also write directly to `artist_images` for their own
+(2b) also write directly to `artist_images` for their own
 platforms — see those sections — so this script's role is exactly the
 platforms it's the only source for: everything in `PLATFORM_PRIORITY`
 except soundcloud/bandcamp.
@@ -575,7 +683,7 @@ Two independent modes, exactly one required per run:
   `harvest_failures` rows for that platform's image services
   (`image-enrich:`, `image-sync:`, `image-store:` + platform, cleared
   globally), so a future re-add starts clean.
-- `--non-directory` — every writer (5a, 2a, Phase 6, 5b, and the
+- `--non-directory` — every writer (5a, 2a, 2b, 5b, and the
   backfill migration) already restricts itself to `directory_status =
   'approved'` artists, so an `artist_images` row for a non-approved
   artist should only exist for one reason: approved once, demoted
@@ -596,69 +704,19 @@ DRY_RUN=1 node scripts/prune-artist-images.mjs --non-directory   # preview
 
 ---
 
-## Phase 6 — Discography & profile enrichment
+## Phase 6 — Discography & profile enrichment → moved to Phase 2b
 
-### `sync-bandcamp.mjs` — ✅ merged 2026-07-09 (replaces `enrich-bandcamp.mjs`)
-The Bandcamp analog of `sync-soundcloud.mjs` (2a): one page fetch per
-artist (`{core url}/music`, falling back to the core URL), fanned out
-to every concern that page can answer instead of just discography —
+`sync-bandcamp.mjs` used to be its own terminal phase here. As of
+2026-07-10 it is **Phase 2b**, a harvester inside the Phase 2
+convergence loop (`harvest-links-loop.mjs`), because it harvests
+platform links from the Bandcamp sidebar — and Bandcamp links are
+themselves discovered mid-loop. Its full write-up (discography, bio,
+image, location, links, genre tags, page-shape handling, processed
+state) now lives under [Phase 2b](#2b-sync-bandcampmjs) above.
 
-- **Discography** — album/track grid → `artist_bandcamp_albums` (the
-  numeric IDs feed Bandcamp's embedded player). Same scrape
-  `enrich-bandcamp.mjs` did.
-- **Bio** → `artist_enrichment` (`platform = 'bandcamp'`), plus the
-  raw bio into `artist_harvested_bios` as an audit trail (same pattern
-  SoundCloud's bio gets).
-- **Profile image** → as of 2026-07-09, `artist_images` (`artist_id`,
-  `platform='bandcamp'`), not `artist_enrichment.profile_image_url`
-  (explicitly nulled there instead). Written as a raw `source_url`
-  only — re-hosting to Storage is `store-images.mjs`'s job (5b). No
-  extra directory-only gating needed here (unlike SoundCloud): this
-  whole script already only ever processes `directory_status =
-  'approved'` artists, unconditionally — see "Processed state" below.
-- **Location** → `artist_locations`, only when the artist doesn't
-  already have a row there (never overwrites a manual entry).
-- **External links sidebar** → staged into `artist_harvested_links`,
-  same contract as every other harvester (promoted by
-  `integrate-harvested-links.mjs` / `harvest-links-loop.mjs`). This is
-  what the former "Planned changes" entry `harvest-links-bandcamp.mjs`
-  described — folded into this script instead of a separate one, since
-  it's the same page fetch.
-- **Genre tags** (release pages only) → staged into
-  `artist_harvested_genres` (`source_platform = 'bandcamp'`), same
-  shape as the Last.fm/MusicBrainz/Spotify genre harvesters.
-
-Handles three page shapes beyond the "full page with releases" case,
-since Bandcamp reuses the same bio-container sidebar partial across
-all of them: an artist with a bio but no releases (the `/music` page
-stays on that path, just with an empty grid); an artist whose core URL
-redirects to their one track (no `/music` landing page exists at all);
-and an artist whose core URL redirects to a merch item. In all three,
-discography is naturally empty but bio/location/links are still
-harvested. A URL that isn't a real Bandcamp artist subdomain (e.g. a
-saved `bandcamp.com/search?...` link) is rejected before any fetch —
-see the wrong-field guard in the script header. Not harvested: fan/
-supporter counts (loaded client-side, not in the static HTML) and
-release credits text (captured opportunistically into `raw_data`, not
-promoted to a column — a future collaboration-signal enhancement, same
-status as Discogs' `members`/`groups`).
-
-Benefits from Phases 2 and 3 running first: more Bandcamp links found
-→ more profiles fetched.
-
-Always directory-only: it processes only artists with
-`directory_status = 'approved'` (excluding deleted), so there is no
-`--approved` flag — the orchestrator forwards one anyway, a harmless
-no-op here.
-
-Uses `resolved_artists` (service = `bandcamp-sync`) and
-`harvest_failures` for processed-state and failure tracking — same
-pattern as `sync-soundcloud.mjs` (2a). The old `enrich-bandcamp.mjs`
-never used `resolved_artists`, so there's no prior state to backfill.
-
-```bash
-npm run sync-bandcamp
-```
+The Phase 6 number is left as this pointer rather than reused, so the
+Phase 7 / Phase 8 numbering and every cross-reference to them stay
+stable.
 
 ---
 
@@ -1030,13 +1088,14 @@ admin panel → quickApprove (src/app/admin/actions.ts)
      [alternatives: 'rejected', 'not_eligible']
 ```
 
-**The enrichment gap:** after approval an artist has only their
-form data and (maybe) a profile image. SoundCloud enrichment
-(Phase 2), external links (3), bio processing (4), image
-re-hosting (5b), genres (7), and similarity scores (`SCORING.md`) all
-wait for the next manual bulk run. Per-artist versions of these
-phases, triggered on approval, are the natural next orchestration
-step — `quickApprove`'s image enrichment is the template.
+**Enrichment after approval (by design):** after approval an artist
+has only their form data and (maybe) a profile image. SoundCloud
+enrichment (Phase 2), external links (3), bio processing (4), image
+re-hosting (5b), genres (7), and similarity scores (`SCORING.md`) are
+picked up on the next bulk run. Per-artist versions of these phases,
+triggered on approval, are a possible future convenience —
+`quickApprove`'s image enrichment is the template — but the periodic
+bulk-run model, with human review in front of it, is intentional.
 
 ### Edit suggestion from the public
 
@@ -1105,13 +1164,16 @@ pipeline script or submit form touches it.
 ```bash
 npm run clean-artist-names
 npm run sync-soundcloud
-node scripts/integrate-harvested-links.mjs
-node scripts/fix-http-https-mismatches.mjs
-node scripts/clean-bandcamp-urls.mjs
+# Phase 2 link-harvest convergence loop (2b+2c+2d) —
+# or run the whole loop at once with `npm run harvest-links-loop`
+npm run harvest-links-discogs   # 2c
+npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
+node scripts/integrate-harvested-links.mjs   # 2d
+node scripts/fix-http-https-mismatches.mjs   # 2e
+node scripts/clean-bandcamp-urls.mjs         # 2f
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios
-npm run sync-bandcamp
 npm run enrich-images
 node scripts/store-images.mjs
 npm run build-soundcloud-follow-graph
@@ -1209,7 +1271,7 @@ another's. See `supabase_migration_artist_images.sql` for the schema
 and full rationale.
 
 Built: the table; `enrich-images.ts` (5a), `sync-soundcloud.mjs` (2a),
-and `sync-bandcamp.mjs` (Phase 6) all writing to it instead of
+and `sync-bandcamp.mjs` (2b) all writing to it instead of
 `artist_enrichment.profile_image_url`; `store-images.mjs` (5b)
 re-hosting every row to its own per-platform Storage path; the
 frontend read path (5c) picking a day-seeded image per artist;
@@ -1288,7 +1350,7 @@ Phase 2c:
   harvest-links-discogs.mjs     ✅ BUILT (2026-07-03) — see Phase 2c
   harvest-links-linktree.mjs    see below
   harvest-links-bandcamp.mjs    ✅ DONE (2026-07-09) — folded into
-                                sync-bandcamp.mjs (Phase 6) instead of
+                                sync-bandcamp.mjs (Phase 2b) instead of
                                 built as a separate script, since it's
                                 the same page fetch as the discography
                                 scrape. Stages into artist_harvested_links

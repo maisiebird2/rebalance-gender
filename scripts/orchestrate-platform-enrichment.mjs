@@ -27,26 +27,26 @@
 //                                           + harvest-soundcloud-links-
 //                                           and-bio.mjs (2b) pair.
 //   3. harvest-links-loop.mjs             — the convergence loop:
-//                                           runs the direct-link
-//                                           harvesters (Discogs, …) +
-//                                           integrate-harvested-links
-//                                           in rounds until no new
-//                                           links appear, promoting the
-//                                           staged links from step 2
-//                                           into artist_links.
-//   4. sync-bandcamp.mjs                  — the merged Bandcamp
-//                                           stage: discography, bio,
-//                                           location, profile image,
-//                                           external links, and genre
-//                                           tags, all from one page
-//                                           fetch per artist. Runs
-//                                           LAST because it depends on
-//                                           Bandcamp links that step 3
-//                                           may have just promoted into
-//                                           artist_links. Already
-//                                           directory-only (it always
-//                                           filters directory_status =
-//                                           'approved'). Replaces the
+//                                           runs the link harvesters
+//                                           (Discogs + sync-bandcamp,
+//                                           Phase 2b) + integrate-
+//                                           harvested-links in rounds
+//                                           until no new links appear,
+//                                           promoting staged links
+//                                           (from step 2 and from each
+//                                           round) into artist_links.
+//                                           sync-bandcamp is inside the
+//                                           loop because Bandcamp links
+//                                           are themselves discovered
+//                                           mid-loop; the same page
+//                                           fetch also does the full
+//                                           Bandcamp profile pull
+//                                           (discography, bio, location,
+//                                           image, genre tags). It is
+//                                           already directory-only (it
+//                                           always filters
+//                                           directory_status =
+//                                           'approved') and replaces the
 //                                           former enrich-bandcamp.mjs
 //                                           (discography-only).
 //
@@ -144,14 +144,15 @@ export function orchestratePlatformEnrichment(opts = {}) {
     // forwarded to it.
     { script: "clean-artist-names.mjs", args: [] },
     { script: "sync-soundcloud.mjs", args: [...common] },
+    // harvest-links-loop now runs sync-bandcamp (Phase 2b) as one of
+    // its harvesters, so there is no separate Bandcamp stage here — the
+    // loop keeps re-running it as new Bandcamp links surface, then
+    // converges. --approved is forwarded to the loop, which forwards it
+    // to every child (harvesters + integrate).
     {
       script: "harvest-links-loop.mjs",
       args: [...common, ...(maxRounds != null ? [`--max-rounds=${maxRounds}`] : [])],
     },
-    // sync-bandcamp is already directory-only (always filters
-    // directory_status = 'approved'); forwarding --approved is harmless
-    // and keeps intent explicit.
-    { script: "sync-bandcamp.mjs", args: [...common] },
   ];
 
   for (const { script, args: stageArgs } of stages) {
