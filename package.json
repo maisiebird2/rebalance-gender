@@ -26,7 +26,7 @@
     "integrate-harvested-genres": "node scripts/integrate-harvested-genres.mjs",
     "compute-scores": "node scripts/compute-scores.mjs",
     "integrate-harvested-links": "node scripts/integrate-harvested-links.mjs",
-    "harvest-links-discogs": "node scripts/harvest-links-discogs.mjs",
+    "sync-discogs": "node scripts/sync-discogs.mjs",
     "harvest-links-loop": "node scripts/harvest-links-loop.mjs",
     "orchestrate-platform-enrichment": "node scripts/orchestrate-platform-enrichment.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",

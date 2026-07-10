@@ -3,7 +3,7 @@
 // compute-scores.mjs
 //
 // Reads all signal tables (artist_genres, mb_tags,
-// mb_collaborations, sc_follow_edges) and computes pairwise
+// collaborations, sc_follow_edges) and computes pairwise
 // similarity scores for approved directory artists, writing
 // the top-10 recommendations per artist into
 // artist_similarity_scores.
@@ -181,10 +181,12 @@ async function loadMbTags(dirIds) {
 
 async function loadMbCollabs(dirIds) {
   // Both artist_id_a and artist_id_b are directory artists (schema constraint
-  // artist_id_a < artist_id_b means rows are already canonical)
+  // artist_id_a < artist_id_b means rows are already canonical). The
+  // `collaborations` table now unions MusicBrainz and Discogs edges; a
+  // pair present under either source collapses into the same set entry.
   const rows = await fetchAllPages(from =>
     supabase
-      .from('mb_collaborations')
+      .from('collaborations')
       .select('artist_id_a, artist_id_b')
       .or(`artist_id_a.in.(${[...dirIds].join(',')}),artist_id_b.in.(${[...dirIds].join(',')})`)
       .order('artist_id_a')

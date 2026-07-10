@@ -31,7 +31,7 @@ flowchart TD
         direction TB
         P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
         P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
-        P2C["2c · Direct-link harvesters<br/>harvest-links-discogs.mjs<br/>(linktree planned)"]
+        P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs<br/>(linktree planned)"]
         P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
         P2EF["2e/2f · Cleanup (one-off)<br/>fix-http-https-mismatches<br/>clean-bandcamp-urls"]
         P2A --> P2D
@@ -367,7 +367,7 @@ rather than as a terminal step: a Discogs page found in one round can
 reveal a Bandcamp URL, 2d promotes it, and the next round's 2b then
 reads that Bandcamp page — which may itself reveal more links. It is
 listed in `harvest-links-loop.mjs`'s `HARVESTERS` array alongside
-`harvest-links-discogs.mjs`, so `orchestrate-platform-enrichment.mjs`
+`sync-discogs.mjs`, so `orchestrate-platform-enrichment.mjs`
 picks it up automatically; there is no separate Bandcamp stage in the
 orchestrator anymore. Because it tracks processed state in the DB (see
 below), each round only re-fetches artists whose Bandcamp link arrived
@@ -394,22 +394,58 @@ npm run sync-bandcamp
 
 ### 2c. Direct-link harvesters
 
-#### `harvest-links-discogs.mjs`
-For each artist with a Discogs link, calls the official Discogs API
-(`GET /artists/{id}`) and stages every usable URL from the response's
-`urls` array into `artist_harvested_links` (source_platform =
-`discogs`). Never writes to `artist_links` directly — 2d promotes.
-Processed state is tracked in `resolved_artists` (service =
-`discogs-links`), so re-runs only touch artists whose Discogs link
-arrived since the last run. Throttled to ~55 req/min (Discogs allows
-60/min authenticated).
+#### `sync-discogs.mjs` — ✅ one-call Discogs sync (2026-07-10, replaces `harvest-links-discogs.mjs`)
+The Discogs analog of `sync-soundcloud.mjs`/`sync-bandcamp.mjs`, and the
+successor to the link-only `harvest-links-discogs.mjs`. One call to the
+official Discogs API (`GET /artists/{id}`) per artist, fanned out to
+everything that resource answers:
+
+- **External links** (`urls`) → staged into `artist_harvested_links`
+  (source_platform = `discogs`); never written to `artist_links`
+  directly — 2d promotes. (Same as the old harvester.)
+- **Alt name spellings** (`namevariations`) → `artist_aliases`
+  (deduped against existing aliases and the artist's own name; never a
+  wholesale delete+insert, so human-entered aliases are preserved).
+  Discogs `aliases` — *separate* personas/side-projects — are
+  deliberately **not** written, since collapsing a different identity
+  into one directory entry is usually wrong.
+- **Real name** (`realname`) → `artist_legal_names` (`platform =
+  'discogs'`), a **private** table with no public read (see
+  `supabase_migration_artist_legal_names.sql`) — shared with HÖR's
+  legal-name capture (`sync-hoer`). Kept for dedup/disambiguation,
+  never shown publicly — exposing a legal name risks deadnaming or
+  outing an artist who performs under a chosen name.
+- **Profile text** (`profile`) → `biographies` (new table; `platform =
+  'discogs'`), with Discogs `[a=]`/`[url=]`/`[b]` markup stripped to
+  plain text; the raw text also goes to `artist_harvested_bios` as an
+  audit trail (same as SoundCloud/Bandcamp). `biographies` is the new
+  one-bio-per-artist-per-platform home for bios; SoundCloud/Bandcamp
+  bios will be backfilled into it later.
+- **Group membership** (`members`/`groups`) → `collaborations` (the
+  renamed, platform-neutral `mb_collaborations`; `source_platform =
+  'discogs'`), one undirected edge per pair, but **only** when the
+  related Discogs artist is also in our DB (matched via its own Discogs
+  link) — mirrors `enrich-musicbrainz.mjs`. This is the
+  recommendation-engine payoff of the expanded sync.
+
+Because it still stages links, it stays a full member of the 2c/2d
+convergence loop. Processed state uses a **new** `resolved_artists`
+service, `discogs-sync` (not the old harvester's `discogs-links`), so
+the expanded sync re-processes everyone once to capture the new fields;
+the old `discogs-links` rows are harmless and simply go unused. Failures
+persist to `harvest_failures` (service `discogs-sync`) with the same
+link-changed cross-check as the other sync scripts. Old-format
+name-based Discogs URLs are still resolved to `/artist/<id>` via the
+search API and rewritten back to `artist_links`. Throttled to ~55
+req/min (Discogs allows 60/min authenticated).
 
 ```bash
-npm run harvest-links-discogs
-npm run harvest-links-discogs -- --approved    # directory artists only
-npm run harvest-links-discogs -- --limit=20    # test run
-npm run harvest-links-discogs -- --force       # re-process all
-DRY_RUN=1 npm run harvest-links-discogs        # no writes
+npm run sync-discogs
+npm run sync-discogs -- --approved    # directory artists only
+npm run sync-discogs -- --limit=20    # test run
+npm run sync-discogs -- --force       # re-process all
+npm run sync-discogs -- --debug       # log every field/link classified
+DRY_RUN=1 npm run sync-discogs        # fetch + log, no writes
 ```
 
 `--approved` restricts the run to directory artists (`directory_status = 'approved'`, excluding deleted).
@@ -417,10 +453,16 @@ DRY_RUN=1 npm run harvest-links-discogs        # no writes
 Requires `DISCOGS_TOKEN` in `.env.local` (discogs.com → Settings →
 Developers → "Generate new token").
 
-Still planned: `harvest-links-linktree.mjs`. Bandcamp link harvesting
-is done — folded into `sync-bandcamp.mjs` (2b) rather than built as a
-separate 2c script, since it's the same page fetch as the discography
-scrape; 2b runs in this same convergence loop.
+**Migrations to run first** (Supabase SQL editor):
+`supabase_migration_collaborations.sql` (rename + `source_platform`),
+`supabase_migration_biographies.sql` (new bios table), and
+`supabase_migration_artist_legal_names.sql` (private real/legal-name table).
+
+Still planned: `harvest-links-linktree.mjs` (or, following this pattern,
+a `sync-linktree.mjs`). Bandcamp link harvesting is done — folded into
+`sync-bandcamp.mjs` (2b) rather than built as a separate 2c script,
+since it's the same page fetch as the discography scrape; 2b runs in
+this same convergence loop.
 
 #### `harvest-links-loop.mjs` — the 2b+2c+2d convergence loop
 Runs the link harvesters — the 2c direct-link harvesters plus 2b
@@ -739,7 +781,9 @@ npm run build-soundcloud-follow-graph
 For each artist with a resolved MusicBrainz ID (written by Phase 3),
 fetches their folksonomy tags and artist relationships. Tags go into
 `mb_tags`; collaboration/membership edges where both artists are in
-the database go into `mb_collaborations`.
+the database go into `collaborations` (the platform-neutral table,
+`source_platform = 'musicbrainz'`; `sync-discogs.mjs` writes the same
+table with `source_platform = 'discogs'`).
 
 ```bash
 npm run enrich-musicbrainz
@@ -1153,9 +1197,10 @@ pipeline script or submit form touches it.
   `scripts/lib/harvest-failures.mjs`): one row per (`artist_id`,
   `service`) holding the *current* failure for that pair, cleared on
   the next success. Written by `sync-soundcloud.mjs`
-  (service = `soundcloud-sync`) and, as of 2026-07-09, `sync-bandcamp.mjs`
-  (service = `bandcamp-sync`); adopting it in the remaining Phase 2
-  harvesters (Discogs, Linktree) is still open.
+  (service = `soundcloud-sync`), `sync-bandcamp.mjs`
+  (service = `bandcamp-sync`), and, as of 2026-07-10, `sync-discogs.mjs`
+  (service = `discogs-sync`); adopting it in the remaining Phase 2
+  harvester (Linktree, when built) is still open.
 
 ---
 
@@ -1166,7 +1211,7 @@ npm run clean-artist-names
 npm run sync-soundcloud
 # Phase 2 link-harvest convergence loop (2b+2c+2d) —
 # or run the whole loop at once with `npm run harvest-links-loop`
-npm run harvest-links-discogs   # 2c
+npm run sync-discogs            # 2c
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
 node scripts/integrate-harvested-links.mjs   # 2d
 node scripts/fix-http-https-mismatches.mjs   # 2e
