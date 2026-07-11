@@ -4,14 +4,31 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { buildOds, type Cell } from "@/lib/ods";
 
 export const dynamic = "force-dynamic";
+// This report pages through ~133k sc_followee artists and ~135k soundcloud_user
+// cache rows, which exceeds Vercel's default function budget (10s on Hobby).
+// 60s is the Hobby ceiling; raise to it. Every page is now a fast 1000-row read
+// of small columns (no JSONB detoast — see the permalink_url generated column;
+// artist_links is filtered to approved-owned rows server-side), so the wall
+// clock is just the ~135 sequential keyset round-trips of the two big streams,
+// run in parallel. Measured ~33s from a remote client on a slow link (latency-
+// bound); from Vercel, co-located with the DB, it is a few seconds — inside 60s
+// either way. This export just lifts the default so the platform doesn't cut
+// the request short.
+export const maxDuration = 60;
 
 // Absolute origin used to build links to each artist's edit page. Matches the
 // convention in src/lib/email.ts / layout.tsx / the harvest-failures report.
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://rebalance-gender.app";
 
-// PostgREST caps a single select at ~1000 rows, so page through with .range()
-// to guarantee we see every row regardless of table size.
+// PostgREST caps a single select at ~1000 rows, so page through to guarantee
+// we see every row regardless of table size. We use *keyset* pagination
+// (ORDER BY <unique key>, then WHERE key > lastSeen) rather than LIMIT/OFFSET:
+// OFFSET pages re-scan and discard everything before the window, so deep pages
+// on a large table (notably api_response_cache) get progressively slower and
+// eventually trip Postgres' statement_timeout. Keyset pages stay index-fast at
+// any depth, and the explicit ORDER BY also makes paging stable (OFFSET paging
+// with no ORDER BY can silently skip or duplicate rows).
 const PAGE_SIZE = 1000;
 
 /**
@@ -41,10 +58,14 @@ interface ArtistRow {
 
 interface CacheRow {
   cache_key: string; // artist_id as text
-  payload: { permalink_url?: string | null } | null;
+  // Generated column materializing payload->>'permalink_url' (see the migration
+  // supabase_migration_cache_permalink_url.sql) so reading it never detoasts the
+  // large SoundCloud user JSONB for every cached row.
+  permalink_url: string | null;
 }
 
 interface ArtistLinkRow {
+  id: number; // keyset cursor column
   artist_id: string;
   platform: string;
   url: string | null;
@@ -55,20 +76,26 @@ interface QueryResult<T> {
   error: { message: string } | null;
 }
 
-/** Page through a PostgREST query with .range() until a short page ends it.
+/** Keyset-paginate a PostgREST query until a short page ends it. `page` must
+ *  ORDER BY a unique column, `.limit(PAGE_SIZE)`, and (when given a cursor)
+ *  filter `key > cursor`; `cursorOf` reads that key off the last row of a page.
+ *
  *  Accepts a PromiseLike rather than Promise since a PostgrestFilterBuilder
- *  (the un-awaited return of e.g. admin.from(...).select(...).range(...)) is
+ *  (the un-awaited return of e.g. admin.from(...).select(...).limit(...)) is
  *  thenable but not a full Promise. */
 async function fetchAllPages<T>(
-  query: (from: number, to: number) => PromiseLike<QueryResult<T>>,
+  cursorOf: (row: T) => string | number,
+  page: (afterCursor: string | number | null) => PromiseLike<QueryResult<T>>,
 ): Promise<T[]> {
   const rows: T[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await query(from, from + PAGE_SIZE - 1);
+  let cursor: string | number | null = null;
+  for (;;) {
+    const { data, error } = await page(cursor);
     if (error) throw new Error(error.message);
-    const page = data ?? [];
-    rows.push(...page);
-    if (page.length < PAGE_SIZE) break;
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    cursor = cursorOf(batch[batch.length - 1]);
   }
   return rows;
 }
@@ -91,8 +118,10 @@ interface DuplicateRow {
  * platform, via artist_links).
  *
  * The SoundCloud permalink comes from api_response_cache
- * (namespace='soundcloud_user', cache_key=artist_id, payload->>permalink_url)
- * rather than artist_enrichment.raw_data — that column was dropped by
+ * (namespace='soundcloud_user', cache_key=artist_id, permalink_url — a
+ * generated column materializing payload->>'permalink_url', see
+ * supabase_migration_cache_permalink_url.sql) rather than
+ * artist_enrichment.raw_data — that column was dropped by
  * supabase_migration_move_raw_data_to_cache.sql, which moved the raw
  * per-artist API payloads into the cache table (see scripts/MATCHING.md /
  * scripts/find-sc-followee-duplicates.sql, the raw-SQL version of this
@@ -124,35 +153,72 @@ export async function GET() {
 
   try {
     [followees, approvedArtists, cacheRows, linkRows] = await Promise.all([
-      fetchAllPages<ArtistRow>((from, to) =>
-        admin
-          .from("artists")
-          .select("id, name")
-          .eq("directory_status", "sc_followee")
-          .eq("deleted", false)
-          .range(from, to),
+      fetchAllPages<ArtistRow>(
+        (r) => r.id,
+        (after) => {
+          let q = admin
+            .from("artists")
+            .select("id, name")
+            .eq("directory_status", "sc_followee")
+            .eq("deleted", false)
+            .order("id")
+            .limit(PAGE_SIZE);
+          if (after !== null) q = q.gt("id", after);
+          return q;
+        },
       ),
-      fetchAllPages<ArtistRow>((from, to) =>
-        admin
-          .from("artists")
-          .select("id, name")
-          .eq("directory_status", "approved")
-          .eq("deleted", false)
-          .range(from, to),
+      fetchAllPages<ArtistRow>(
+        (r) => r.id,
+        (after) => {
+          let q = admin
+            .from("artists")
+            .select("id, name")
+            .eq("directory_status", "approved")
+            .eq("deleted", false)
+            .order("id")
+            .limit(PAGE_SIZE);
+          if (after !== null) q = q.gt("id", after);
+          return q;
+        },
       ),
-      fetchAllPages<CacheRow>((from, to) =>
-        admin
-          .from("api_response_cache")
-          .select("cache_key, payload")
-          .eq("namespace", "soundcloud_user")
-          .range(from, to),
+      fetchAllPages<CacheRow>(
+        (r) => r.cache_key,
+        (after) => {
+          // Read the generated permalink_url column instead of the whole
+          // `payload` JSONB (or payload->>permalink_url, which still detoasts
+          // it): the SoundCloud user objects are large, and detoasting one per
+          // row was the report's dominant cost. See
+          // supabase_migration_cache_permalink_url.sql. cache_key is the
+          // trailing half of the (namespace, cache_key) PK, so ordering by it
+          // within the fixed namespace is index-backed.
+          let q = admin
+            .from("api_response_cache")
+            .select("cache_key, permalink_url")
+            .eq("namespace", "soundcloud_user")
+            .order("cache_key")
+            .limit(PAGE_SIZE);
+          if (after !== null) q = q.gt("cache_key", after);
+          return q;
+        },
       ),
-      fetchAllPages<ArtistLinkRow>((from, to) =>
-        admin
-          .from("artist_links")
-          .select("artist_id, platform, url")
-          .eq("not_found", false) // exclude url-less tombstone rows
-          .range(from, to),
+      fetchAllPages<ArtistLinkRow>(
+        (r) => r.id,
+        (after) => {
+          // Only approved artists' links are ever used (to build approvedByUrl
+          // below), so filter to them server-side via an inner join on the
+          // artist_links -> artists FK. That drops this from ~199k rows / ~199
+          // pages to ~10k / ~10, making it no longer the long pole. The nested
+          // `artists` object the embed returns is unused.
+          let q = admin
+            .from("artist_links")
+            .select("id, artist_id, platform, url, artists!inner(directory_status)")
+            .eq("artists.directory_status", "approved")
+            .eq("not_found", false) // exclude url-less tombstone rows
+            .order("id")
+            .limit(PAGE_SIZE);
+          if (after !== null) q = q.gt("id", after);
+          return q;
+        },
       ),
     ]);
   } catch (err) {
@@ -187,7 +253,7 @@ export async function GET() {
   for (const row of cacheRows) {
     const artistId = row.cache_key;
     if (!followeeIds.has(artistId)) continue;
-    const permalink = row.payload?.permalink_url;
+    const permalink = row.permalink_url;
     if (!permalink) continue;
 
     const matches = approvedByUrl.get(normalizeUrl(permalink));
