@@ -65,6 +65,24 @@ const ARTIST_SELECT = `
   bandcamp_albums:artist_bandcamp_albums(*)
 `;
 
+// Lean select for the directory GRID (ArtistCard). The card only renders
+// name, image, aliases, pronoun, genres, and locations — so unlike
+// ARTIST_SELECT it deliberately omits the heavy relations (enrichment
+// bios, artist_links, bandcamp_albums, labels) that were being joined and
+// shipped for every one of the 24 tiles per page but never displayed.
+// Keep this in sync with the fields ArtistCard.tsx actually reads.
+// normalizeArtist() needs genres.status (to keep only approved) and the
+// full images columns (to resolve displayImageUrl via pickArtistImage).
+const CARD_SELECT = `
+  id,
+  name,
+  pronoun:pronouns(*),
+  artist_genres(genres(id, name, status)),
+  locations:artist_locations(city, country),
+  aliases:artist_aliases(name),
+  images:artist_images(platform, source_url, storage_url, storage_path, fetched_at, stored_at)
+`;
+
 // Flatten the nested artist_genres(genres(*)) shape into a plain
 // genres[] array on each artist for easier use in components, and
 // resolve which stored image to display (see src/lib/artist-images.ts).
@@ -94,17 +112,21 @@ export async function getArtists(
 ): Promise<ArtistPage> {
   const supabase = getSupabaseClient();
 
-  let select = ARTIST_SELECT;
+  // The grid uses the lean CARD_SELECT (see note above) rather than the
+  // full ARTIST_SELECT — the homepage renders ArtistCard, which reads only
+  // a handful of fields. The genre/country replace targets below must match
+  // the strings in CARD_SELECT, not ARTIST_SELECT.
+  let select = CARD_SELECT;
   if (filters.genre) {
     select = select.replace(
-      "artist_genres(genres(*))",
-      "artist_genres!inner(genres!inner(*))"
+      "artist_genres(genres(id, name, status))",
+      "artist_genres!inner(genres!inner(id, name, status))"
     );
   }
   if (filters.country) {
     select = select.replace(
-      "locations:artist_locations(*)",
-      "locations:artist_locations!inner(*)"
+      "locations:artist_locations(city, country)",
+      "locations:artist_locations!inner(city, country)"
     );
   }
 
@@ -251,43 +273,47 @@ export async function getArtistById(
 
 /**
  * Fetch a randomly-ordered page of approved artists (no filters applied).
- * Uses two queries: first fetch all approved IDs (lightweight), shuffle
- * server-side with Fisher-Yates, then fetch the page slice by ID.
- * Each request produces a different random order — good for discovery.
+ *
+ * Sampling happens in Postgres via the random_approved_artist_ids() RPC
+ * (see supabase_migration_random_approved_artists.sql), so we ship back a
+ * small, constant number of ids per request instead of dumping the entire
+ * directory's id list to Node and shuffling it here. Each request is an
+ * independent random draw — same discovery behaviour as before, and, as
+ * before, an artist may reappear across page loads since every load
+ * reshuffles.
+ *
+ * Two round-trips: (1) the RPC for this page's random ids, (2) the card
+ * data for those ids. hasMore comes from the precomputed approved count
+ * (one indexed row) rather than the full id list.
  */
 export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
   const supabase = getSupabaseClient();
 
-  // 1. Fetch all approved IDs (just UUIDs, very lightweight)
-  const { data: idRows, error: idError } = await supabase
-    .from("artists")
-    .select("id")
-    .eq("directory_status", "approved")
-    .eq("deleted", false);
+  // 1. Ask Postgres for a random sample of approved ids (constant payload).
+  const { data: idRows, error: idError } = await supabase.rpc(
+    "random_approved_artist_ids",
+    { sample_size: PAGE_SIZE }
+  );
 
   if (idError || !idRows) {
     console.error("getRandomArtists id error:", idError);
     return { artists: [], hasMore: false };
   }
 
-  // 2. Fisher-Yates shuffle
-  const ids = idRows.map((r: { id: string }) => r.id);
-  for (let i = ids.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-  }
-
-  // 3. Slice for the requested page; we already have every ID, so
-  // "more pages exist" is a simple length check.
-  const from = (Math.max(1, page) - 1) * PAGE_SIZE;
-  const pageIds = ids.slice(from, from + PAGE_SIZE);
-  const hasMore = from + PAGE_SIZE < ids.length;
+  const pageIds = (idRows as { id: string }[]).map((r) => r.id);
   if (pageIds.length === 0) return { artists: [], hasMore: false };
 
-  // 4. Fetch full records for this page's IDs
+  // 2. "More pages exist" just means the directory holds more than we've
+  // shown so far. Because each load is an independent random draw, we can't
+  // (and needn't) track a stable offset — read the precomputed count.
+  const approvedCount = await getApprovedArtistCount();
+  const hasMore =
+    approvedCount != null && Math.max(1, page) * PAGE_SIZE < approvedCount;
+
+  // 3. Fetch card data for this page's ids.
   const { data, error } = await supabase
     .from("artists")
-    .select(ARTIST_SELECT)
+    .select(CARD_SELECT)
     .in("id", pageIds)
     .eq("directory_status", "approved")
     .eq("deleted", false);
@@ -297,8 +323,9 @@ export async function getRandomArtists(page: number = 1): Promise<ArtistPage> {
     return { artists: [], hasMore: false };
   }
 
-  // 5. Re-order to match the shuffled ID order (DB returns arbitrary order)
-  const byId = new Map((data ?? []).map((a: RawArtistRow) => [a.id, a]));
+  // 4. Re-order to match the RPC's random id order (DB returns arbitrary order)
+  const rows = (data ?? []) as unknown as RawArtistRow[];
+  const byId = new Map(rows.map((a) => [a.id, a]));
   const ordered = pageIds
     .map((id) => byId.get(id))
     .filter((a): a is RawArtistRow => Boolean(a));
