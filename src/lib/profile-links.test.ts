@@ -6,6 +6,7 @@ import {
   isSoundcloudShareLink,
   resolveShareUrl,
   resolveProfileLinkUrlAsync,
+  deriveHandle,
 } from "./profile-links";
 
 describe("isTemplatedPlatform", () => {
@@ -61,6 +62,16 @@ describe("normalizeProfileLink — bare handles", () => {
   });
 });
 
+describe("deriveHandle — bandcamp", () => {
+  it("derives the handle from a bare Bandcamp subdomain", () => {
+    expect(deriveHandle("bandcamp", "https://someartist.bandcamp.com")).toBe("someartist");
+  });
+
+  it("ignores a leading www. when deriving the Bandcamp handle", () => {
+    expect(deriveHandle("bandcamp", "https://www.nulleinsrec.bandcamp.com/")).toBe("nulleinsrec");
+  });
+});
+
 describe("normalizeProfileLink — pasted URLs", () => {
   it("re-canonicalizes a full URL with tracking params", () => {
     const result = normalizeProfileLink("instagram", "https://instagram.com/techno_blondy/?hl=en");
@@ -75,6 +86,18 @@ describe("normalizeProfileLink — pasted URLs", () => {
 
   it("extracts the Bandcamp handle from the subdomain, ignoring the path", () => {
     const result = normalizeProfileLink("bandcamp", "https://someartist.bandcamp.com/album/some-album");
+    expect(result.url).toBe("https://someartist.bandcamp.com");
+    expect(result.handle).toBe("someartist");
+  });
+
+  it("strips a leading www. from a Bandcamp URL (www is never a real handle)", () => {
+    const result = normalizeProfileLink("bandcamp", "https://www.nulleinsrec.bandcamp.com/");
+    expect(result.url).toBe("https://nulleinsrec.bandcamp.com");
+    expect(result.handle).toBe("nulleinsrec");
+  });
+
+  it("strips www. from a Bandcamp URL with a deep path too", () => {
+    const result = normalizeProfileLink("bandcamp", "https://www.someartist.bandcamp.com/album/x");
     expect(result.url).toBe("https://someartist.bandcamp.com");
     expect(result.handle).toBe("someartist");
   });

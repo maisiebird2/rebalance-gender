@@ -299,6 +299,25 @@ function isBandcampArtistUrl(rawUrl) {
 }
 
 // ------------------------------------------------------------
+// Strip a leading "www." from a Bandcamp artist URL. Bandcamp serves
+// every artist from a bare subdomain (foo.bandcamp.com) and 301s the
+// www. variant to it; Firefox flags the www. host as a potential
+// security risk. We normalize before fetching and before recording the
+// URL as a source_url so we never store or chase the www. form. A
+// string replace (not new URL().toString()) is used so the rest of the
+// URL — and the no-trailing-slash convention — is left exactly as-is.
+// The subdomain is required in the pattern so the bare bandcamp.com
+// apex (www.bandcamp.com) is left untouched for isBandcampArtistUrl to
+// reject.
+// ------------------------------------------------------------
+function stripBandcampWww(rawUrl) {
+  return rawUrl.replace(
+    /^(https?:\/\/)www\.([a-z0-9-]+\.bandcamp\.com)/i,
+    "$1$2"
+  );
+}
+
+// ------------------------------------------------------------
 // HTML parsing
 //
 // Discography grid — unchanged from enrich-bandcamp.mjs. Bandcamp
@@ -643,7 +662,10 @@ async function fetchAllBandcampLinks() {
 // ------------------------------------------------------------
 export async function syncArtist(artist, opts = {}) {
   const { debug = false, dryRun = false, artistIdsWithLocation = new Set() } = opts;
-  const { artistId, name, bcUrl } = artist;
+  const { artistId, name } = artist;
+  // Normalize away a leading www. (see stripBandcampWww) so the fetch
+  // and any stored source_url use Bandcamp's canonical bare-subdomain host.
+  const bcUrl = stripBandcampWww(artist.bcUrl);
 
   async function fail(status, { detail, markDone = false } = {}) {
     if (dryRun) return;

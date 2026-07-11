@@ -77,7 +77,13 @@ const CONFIG: Record<string, PlatformLinkConfig> = {
     // platform so stored URLs are consistent.
     buildUrl: (h) => `https://${h.toLowerCase()}.bandcamp.com`,
     extractHandle: (u) => {
-      const host = u.hostname.toLowerCase();
+      // Strip a leading "www." first. Bandcamp serves every artist from a
+      // bare subdomain (foo.bandcamp.com) and 301-redirects the www.
+      // variant to it; "www" is never a real artist handle, and Firefox
+      // flags the www. host as a potential security risk. Without this
+      // strip the "www" would be kept as part of the subdomain and the
+      // canonical URL would be rebuilt as https://www.foo.bandcamp.com.
+      const host = u.hostname.toLowerCase().replace(/^www\./, "");
       const sub = host.replace(/\.bandcamp\.com$/, "");
       return sub !== host ? sub : null;
     },
@@ -167,8 +173,10 @@ export function deriveHandle(platform: string, url: string): string | null {
       }
 
       case "bandcamp": {
-        // https://handle.bandcamp.com
-        const host = parsed.hostname.toLowerCase();
+        // https://handle.bandcamp.com — strip a leading "www." first; see
+        // the note in CONFIG.bandcamp.extractHandle (www is never a real
+        // handle and Firefox flags the www. host as a security risk).
+        const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
         const sub = host.replace(/\.bandcamp\.com$/, "");
         return sub !== host ? sub : null;
       }
