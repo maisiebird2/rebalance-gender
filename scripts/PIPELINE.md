@@ -27,29 +27,24 @@ flowchart TD
     P1["Phase 1 · Data quality<br/>clean-artist-names.mjs"] --> P2
     WEB["Website entry (ongoing)<br/>submit / revise / edit"] -. "after review &amp; approval" .-> P2
 
-    subgraph P2 ["Phase 2 · Platform link &amp; profile harvesting"]
+    subgraph P2 ["Phase 2 · Platform harvesting · convergence loop — harvest-links-loop.mjs — every harvester re-runs each round until a round finds no new links"]
         direction TB
-        subgraph LOOP ["Convergence loop · harvest-links-loop.mjs — every harvester re-runs each round until a round finds no new links"]
-            direction TB
-            HOER["HÖR seeder<br/>sync-hoer.mjs<br/>seeds new artists<br/>+ staged socials"]
-            P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
-            P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
-            P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs · sync-linktree.mjs<br/>links + bio + image"]
-            P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
-            HOER -->|"stage links"| P2D
-            P2A -->|"stage links"| P2D
-            P2B -->|"stage links"| P2D
-            P2C -->|"stage links"| P2D
-            P2D -. "promoted links reveal more<br/>pages to harvest next round<br/>(links beget links)" .-> P2A
-            P2D -.-> P2B
-            P2D -.-> P2C
-            P2D -.-> HOER
-        end
-        P2EF["2e/2f · Cleanup (one-off)<br/>fix-http-https-mismatches<br/>clean-bandcamp-urls"]
-        P2D --> P2EF
+        HOER["HÖR seeder<br/>sync-hoer.mjs<br/>seeds new artists<br/>+ staged socials"]
+        P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
+        P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
+        P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs · sync-linktree.mjs<br/>links + bio + image"]
+        P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
+        HOER -->|"stage links"| P2D
+        P2A -->|"stage links"| P2D
+        P2B -->|"stage links"| P2D
+        P2C -->|"stage links"| P2D
+        P2D -. "promoted links reveal more<br/>pages to harvest next round<br/>(links beget links)" .-> P2A
+        P2D -.-> P2B
+        P2D -.-> P2C
+        P2D -.-> HOER
     end
 
-    P2EF --> P3
+    P2D --> P3
     P2A -. "raw bio feeds 4" .-> P4
     P2B -. "bandcamp images feed 5b" .-> P5
     P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify<br/>resolve-and-load-links-lf-mb-sp.mjs"] --> P4
@@ -58,18 +53,17 @@ flowchart TD
     P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
     P5["Phase 5 · Profile images<br/>enrich-images.ts → store-images.mjs"]
     P7["Phase 7 · Rec. signals<br/>follow graph, MB tags, genre harvest+integrate"]
-    P2EF -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
+    P2D -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
     P7 -. as-needed .-> P8G["Genre cleanup<br/>genre-report → dedupe → prune → apply-status"]
 
     classDef orchestrated fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px,color:#312e81;
     class P1,HOER,P2A,P2B,P2C,P2D orchestrated;
     classDef normal fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px,color:#334155;
-    class P0,WEB,P2EF,P3,P4,P5,P7,P8,P8G normal;
+    class P0,WEB,P3,P4,P5,P7,P8,P8G normal;
     style P2 fill:#eef2ff,stroke:#818cf8,stroke-width:1px,color:#4338ca;
-    style LOOP fill:#e7ecff,stroke:#6366f1,stroke-width:1px,color:#3730a3;
     linkStyle default stroke:#6366f1,stroke-width:2px;
 ```
-*(Bold-bordered boxes — Phase 1 and every Phase 2 harvester/promoter (the HÖR seeder, 2a SoundCloud, 2b Bandcamp, 2c Discogs/Linktree, and 2d) — are run end to end by `orchestrate-platform-enrichment.mjs --approved`: `clean-artist-names` (Phase 1), then the whole of Phase 2 as one convergence loop (`harvest-links-loop.mjs`) that re-runs every harvester each round, promoting newly-staged links via 2d, until a round finds no new links. Each harvester tracks its own DB state, so a round only re-fetches artists whose links arrived since the last round. SoundCloud sync (2a) became a loop member on 2026-07-11 — it stages each profile's "Links" section, and SoundCloud links are themselves discovered mid-loop — so it is no longer a separate pre-loop stage. The 2e/2f cleanups are one-off and not orchestrated. Solid loop-back arrows carry staged links to 2d; dashed arrows are the loop's feedback, or as-needed / cross-phase / manual-entry paths.)*
+*(Bold-bordered boxes — Phase 1 and every Phase 2 harvester/promoter (the HÖR seeder, 2a SoundCloud, 2b Bandcamp, 2c Discogs/Linktree, and 2d) — are run end to end by `orchestrate-platform-enrichment.mjs --approved`: `clean-artist-names` (Phase 1), then the whole of Phase 2 as one convergence loop (`harvest-links-loop.mjs`) that re-runs every harvester each round, promoting newly-staged links via 2d, until a round finds no new links. Each harvester tracks its own DB state, so a round only re-fetches artists whose links arrived since the last round. SoundCloud sync (2a) became a loop member on 2026-07-11 — it stages each profile's "Links" section, and SoundCloud links are themselves discovered mid-loop — so it is no longer a separate pre-loop stage. Solid loop-back arrows carry staged links to 2d; dashed arrows are the loop's feedback, or as-needed / cross-phase / manual-entry paths.)*
 
 Artists enter the database through **two entry points**: the one-time
 bulk CSV load (Phase 0), and continuously via the website's
@@ -174,8 +168,8 @@ best-match guessing at all.
 
 2a pulls from SoundCloud in a single merged stage; 2b is the merged
 Bandcamp stage (`sync-bandcamp.mjs`, moved here from the former Phase 6
-on 2026-07-10); 2c is the direct-link harvesters; 2d promotes; 2e/2f
-clean up. 2a, 2b, and 2c are all link harvesters, so they all run
+on 2026-07-10); 2c is the direct-link harvesters; 2d promotes. 2a, 2b,
+and 2c are all link harvesters, so they all run
 inside the 2d convergence loop (`harvest-links-loop.mjs`) — links beget
 links, and a SoundCloud, Bandcamp, or Discogs page can each reveal
 links the others then read. (2a joined the loop on 2026-07-11; it had
@@ -629,30 +623,9 @@ node scripts/integrate-harvested-links.mjs --approved   # directory artists only
 
 `--approved` restricts promotion/flagging to directory artists (`directory_status = 'approved'`, excluding deleted).
 
-### 2e. `fix-http-https-mismatches.mjs`
-One-off cleanup (safe to re-run): rewrites `http://` links to
-`https://` in `artist_harvested_links` and `artist_links`, and
-clears any false mismatch flags caused by scheme differences alone.
-
-```bash
-node scripts/fix-http-https-mismatches.mjs
-```
-
-### 2f. `clean-bandcamp-urls.mjs`
-One-off cleanup (safe to re-run, idempotent): rewrites Bandcamp
-links that point at a specific album, track, releases, or follow
-page down to the artist's core `https://<sub>.bandcamp.com` page —
-in both `artist_links` (preserving the pre-strip value in
-`original_url`, without clobbering an existing one) and
-`artist_harvested_links`.
-
-```bash
-node scripts/clean-bandcamp-urls.mjs
-node scripts/clean-bandcamp-urls.mjs --links-only       # artist_links only
-node scripts/clean-bandcamp-urls.mjs --harvested-only   # artist_harvested_links only
-node scripts/clean-bandcamp-urls.mjs --name="Erika"     # filter by artist name
-DRY_RUN=1 node scripts/clean-bandcamp-urls.mjs           # preview
-```
+(The former 2e/2f one-off cleanup passes — `fix-http-https-mismatches.mjs`
+and `clean-bandcamp-urls.mjs` — have been retired from the pipeline; see
+"Legacy scripts".)
 
 ---
 
@@ -1100,6 +1073,24 @@ in the automated pipeline:
   a CSV file (setting `directory_status`, deleting duplicates, etc.).
   Manual CSV-based review is no longer the intended workflow.
 
+- **`fix-http-https-mismatches.mjs`** (former 2e) — one-off cleanup
+  that rewrote `http://` links to `https://` in `artist_harvested_links`
+  and `artist_links` and cleared false mismatch flags caused by scheme
+  differences alone. Already applied, and no longer needed in the
+  pipeline: the harvesters now write `https://` URLs, and 2d's
+  discrepancy check normalizes the scheme before comparing. Idempotent
+  and safe to re-run by hand if a stray `http://` link ever reappears.
+
+- **`clean-bandcamp-urls.mjs`** (former 2f) — one-off cleanup that
+  rewrote Bandcamp album/track/releases/follow links down to the
+  artist's core `https://<sub>.bandcamp.com` page (in both
+  `artist_links` and `artist_harvested_links`, preserving the pre-strip
+  value in `original_url`). Already applied, and no longer part of the
+  pipeline: `sync-bandcamp.mjs` (2b) resolves to the core artist page at
+  harvest time. Still idempotent and safe to run by hand for a one-off
+  fix. Flags: `--links-only`, `--harvested-only`, `--name="…"`,
+  `DRY_RUN=1`.
+
 - **`clean-linktree-bios.mjs`** — one-time backfill that extracted
   Linktree URLs embedded in bios and added them to `artist_links`
   (platform = `linktree`). `sync-soundcloud.mjs` (Phase 2a) now
@@ -1364,8 +1355,6 @@ npm run sync-discogs            # 2c
 npm run sync-linktree           # 2c (also bio + image)
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
 node scripts/integrate-harvested-links.mjs   # 2d
-node scripts/fix-http-https-mismatches.mjs   # 2e
-node scripts/clean-bandcamp-urls.mjs         # 2f
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios
