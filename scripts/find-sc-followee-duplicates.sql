@@ -1,3 +1,10 @@
+-- Ad-hoc diagnostic version — superseded by the "SC followee duplicates"
+-- report in the admin panel (/admin/reports), which runs this same
+-- lookup as a paginated JS join instead of a single SQL query, to avoid
+-- the Supabase SQL editor's upstream timeout on the two joins below.
+-- Route: src/app/api/admin/reports/sc-followee-duplicates/route.ts
+-- Kept here for ad-hoc use via a direct psql connection.
+--
 -- Find sc_followee artists whose SoundCloud permalink_url matches a URL
 -- already held by an approved artist (in any platform, via artist_links).
 --

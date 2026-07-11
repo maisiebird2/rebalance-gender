@@ -28,4 +28,11 @@ export const REPORTS: ReportDefinition[] = [
       "Every current harvest failure (one row per artist + service), with the artist name linked to their edit page. Columns: artist, URL, status, detail, service, occurred at.",
     endpoint: "/api/admin/reports/harvest-failures",
   },
+  {
+    slug: "sc-followee-duplicates",
+    title: "SC followee duplicates",
+    description:
+      "sc_followee artists whose SoundCloud URL matches a link already held by an approved artist — likely the same person, discovered a second time via the follow graph. Columns: SC followee, SoundCloud URL, approved artist, platform, approved URL — both names linked to their edit page.",
+    endpoint: "/api/admin/reports/sc-followee-duplicates",
+  },
 ];
