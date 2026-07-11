@@ -12,7 +12,8 @@
 //
 // Requires .env.local to have NEXT_PUBLIC_SUPABASE_URL and
 // SUPABASE_SECRET_KEY set (the secret key bypasses RLS so it can
-// write 'approved' rows directly). Run supabase_schema.sql first.
+// write 'approved' rows directly). The schema must already exist
+// (apply the supabase_migration_*.sql files first).
 //
 // Safe to run only once on an empty database — re-running will
 // create duplicate artists/links/locations since there's no

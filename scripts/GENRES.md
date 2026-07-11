@@ -19,7 +19,7 @@ and is exported so every other tool shares the exact same rules.
 
 ## Data model
 
-Three tables (see `schema.sql`):
+Three tables (inspect the live schema via read-only psql — see `.env.local` `SUPABASE_DB_URL`):
 
 | Table | Purpose |
 |---|---|
