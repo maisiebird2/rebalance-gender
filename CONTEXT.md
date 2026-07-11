@@ -161,6 +161,45 @@ Postgres expression). Two design decisions keep it fast even though the
   matches. Pagination is Previous/Next only; the UI doesn't show
   "N artists" or total pages.
 
+### Grid select and random sampling
+
+The homepage grid renders `ArtistCard`, which reads only a handful of
+fields, so it uses the lean `CARD_SELECT` (id, name, pronoun, genres,
+locations, aliases, images) rather than the full `ARTIST_SELECT` — it no
+longer joins or ships `enrichment` bios, `artist_links`, `bandcamp_albums`,
+or labels for the 24 tiles per page. `getRandomArtists()` samples in
+Postgres via the `random_approved_artist_ids()` RPC
+(`supabase_migration_random_approved_artists.sql`) instead of fetching
+every approved id and shuffling in Node; `hasMore` comes from the
+precomputed `approved_artist_count` in `site_stats`.
+
+### Planned page-load work (not yet implemented)
+
+Three follow-on backend changes were identified alongside the grid/sampling
+work above but not yet built. None removes any frontend functionality:
+
+- **Cache `getCountryOptions()`** — it is the only filter-options query
+  still not wrapped in `unstable_cache`. `getGenreOptions()` /
+  `getGenrePickerOptions()` cache their results (`revalidate: 600`), but
+  `getCountryOptions()` re-runs its `artist_locations`→`artists` join on
+  every homepage load. Wrap it the same way, with a tag so it can be
+  revalidated when locations change.
+- **Composite partial index on the approved subset** — add
+  `CREATE INDEX ... ON artists (name) WHERE directory_status = 'approved'
+  AND deleted = false`, mirroring the partial trigram index above. Every
+  ordered directory query filters on exactly those two conditions with
+  `ORDER BY name`, and the new `ORDER BY random()` sample scans the same
+  subset. A partial b-tree lets all of them touch only the ~1.5k directory
+  rows instead of merging the separate `idx_artists_directory_status` /
+  `idx_artists_deleted` indexes across the graph-node bloat.
+- **Precompute genre counts into `site_stats`** — `computeGenreOptions()`
+  pages through every `artist_genres` link and counts in JS on each cold
+  recompute (cached 600s, but expensive when it misses). Follow the
+  `approved_artist_count` pattern (`supabase_migration_site_stats.sql`,
+  refreshed by pg_cron): store per-genre approved counts and read them
+  directly, so the ≥3-approved-artists filter no longer scans the whole
+  junction table.
+
 ---
 
 ## Enrichment pipeline
