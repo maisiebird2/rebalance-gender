@@ -20,17 +20,26 @@
 //      reviewed" — distinct from 'not_eligible', which is reserved for
 //      artists a human has actually looked at and ruled out.
 //
-// For every artist touched — both source directory artists (via the
-// /resolve call) and newly-discovered followed artists (from the
-// followings collection) — the full SoundCloud user object is already
-// returned by the API at no extra cost and is written to
-// `artist_enrichment`: follower_count, track_count, bio, avatar URL
-// (upgraded to 500×500), plus the raw user object as JSONB for future
-// re-processing. Already-existing followed artists are not re-enriched
-// here; a dedicated enrichment pipeline handles those.
+// Source directory artists are NOT enriched here (as of 2026-07-11):
+// sync-soundcloud.mjs (Phase 2a) owns the full SoundCloud pull for
+// directory artists — bio, image, and staged links — so this builder
+// only resolves a source artist to get their urn (for the followings
+// call) and records follow-graph state on their soundcloud
+// `artist_enrichment` row (follow_graph_built_at / sync_error).
 //
-// Uses the OFFICIAL SoundCloud API (api.soundcloud.com), same OAuth
-// Client Credentials flow as sync-soundcloud.mjs.
+// Newly-discovered followed artists (from the followings collection,
+// which returns each followee's full user object at no extra API cost)
+// ARE enriched, minimally: only follower_count (to weed out non-artist /
+// low-signal accounts) and external_id go to `artist_enrichment`; the
+// bio goes to the `biographies` table (platform='soundcloud', kept for
+// cross-source deduplication); the full raw user object goes to
+// `api_response_cache` (namespace 'soundcloud_user') for future
+// re-processing. No track_count and no image for these non-directory
+// nodes. Already-existing followed artists are not re-enriched here.
+//
+// Uses the OFFICIAL SoundCloud API (api.soundcloud.com) via the shared
+// client in scripts/lib/soundcloud.mjs (OAuth Client Credentials flow),
+// the same client sync-soundcloud.mjs uses.
 // Requires SoundCloud API credentials (Client ID + Secret), which
 // requires a SoundCloud account on the Artist Pro plan:
 //   1. https://soundcloud.com/you/apps/new (while signed in)
@@ -67,6 +76,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanArtistName } from "./lib/name-utils.mjs";
+import { createSoundcloudClient, sleep, normalizeScUrl, cleanScUrl } from "./lib/soundcloud.mjs";
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -141,7 +151,10 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Shared SoundCloud API client (OAuth token + GET wrapper + followings
+// pagination) — see scripts/lib/soundcloud.mjs, shared with
+// sync-soundcloud.mjs (Phase 2a).
+const sc = createSoundcloudClient({ debug: DEBUG });
 
 // Wraps a Supabase call with retry logic for transient network errors
 // ("fetch failed", ECONNRESET, ETIMEDOUT). A large enrichment payload can
@@ -181,133 +194,11 @@ async function supabaseWithRetry(fn) {
   }
 }
 
-// ------------------------------------------------------------
-// SoundCloud OAuth (Client Credentials flow — app-only, public
-// resources). One token is fetched and reused for the whole run;
-// it's refreshed if a request comes back 401. Mirrors
-// sync-soundcloud.mjs.
-// ------------------------------------------------------------
-let cachedToken = null; // { accessToken, expiresAt }
-
-async function getAccessToken(forceRefresh = false) {
-  if (!forceRefresh && cachedToken && Date.now() < cachedToken.expiresAt - 30_000) {
-    return cachedToken.accessToken;
-  }
-
-  const basic = Buffer.from(`${SOUNDCLOUD_CLIENT_ID}:${SOUNDCLOUD_CLIENT_SECRET}`).toString(
-    "base64"
-  );
-
-  const res = await fetch("https://secure.soundcloud.com/oauth/token", {
-    method: "POST",
-    headers: {
-      Accept: "application/json; charset=utf-8",
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${basic}`,
-    },
-    body: "grant_type=client_credentials",
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to get SoundCloud access token (HTTP ${res.status}): ${text}`);
-  }
-
-  const data = await res.json();
-  cachedToken = {
-    accessToken: data.access_token,
-    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
-  };
-  return cachedToken.accessToken;
-}
-
-// ------------------------------------------------------------
-// Authenticated GET against the SoundCloud API. Accepts either a
-// path+query (prefixed with api.soundcloud.com) or a full URL (used
-// for `next_href` pagination cursors, which SoundCloud returns as
-// complete URLs already pointing at api.soundcloud.com). Retries
-// once on 401 (refreshes the token) and once on 429 (backs off, then
-// retries) — same behavior as sync-soundcloud.mjs.
-// ------------------------------------------------------------
-async function soundcloudGet(pathQueryOrUrl, { retry = true } = {}) {
-  const token = await getAccessToken();
-  const url = pathQueryOrUrl.startsWith("http")
-    ? pathQueryOrUrl
-    : `https://api.soundcloud.com${pathQueryOrUrl}`;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json; charset=utf-8",
-        Authorization: `OAuth ${token}`,
-      },
-    });
-
-    if (res.status === 401 && retry) {
-      await getAccessToken(true);
-      return soundcloudGet(pathQueryOrUrl, { retry: false });
-    }
-
-    if (res.status === 429) {
-      if (DEBUG) console.log("  [debug] 429 rate limited, backing off 5s");
-      await sleep(5000);
-      if (retry) return soundcloudGet(pathQueryOrUrl, { retry: false });
-      return { ok: false, status: 429, data: null };
-    }
-
-    if (!res.ok) {
-      return { ok: false, status: res.status, data: null };
-    }
-
-    const data = await res.json();
-    return { ok: true, status: res.status, data };
-  } catch (err) {
-    if (DEBUG) console.log(`  [debug] request failed: ${err?.message ?? err}`);
-    return { ok: false, status: null, data: null };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function resolveUser(scUrl) {
-  return soundcloudGet(`/resolve?url=${encodeURIComponent(scUrl)}`);
-}
-
-// ------------------------------------------------------------
-// Fetch up to `cap` followings for a user, following the API's
-// linked_partitioning `next_href` cursor until exhausted or the cap
-// is hit. Returns { ok, users, truncated }.
-// ------------------------------------------------------------
-async function getFollowings(urn, cap) {
-  const users = [];
-  let nextUrl = `/users/${encodeURIComponent(urn)}/followings?limit=200&linked_partitioning=true`;
-  let truncated = false;
-
-  while (nextUrl && users.length < cap) {
-    const res = await soundcloudGet(nextUrl);
-    if (!res.ok || !res.data) {
-      return { ok: users.length > 0, users, truncated: false, lastStatus: res.status };
-    }
-
-    const page = Array.isArray(res.data.collection) ? res.data.collection : [];
-    for (const u of page) {
-      users.push(u);
-      if (users.length >= cap) {
-        truncated = Boolean(res.data.next_href);
-        break;
-      }
-    }
-
-    nextUrl = users.length < cap ? res.data.next_href ?? null : null;
-    if (nextUrl) await sleep(200);
-  }
-
-  return { ok: true, users, truncated, lastStatus: 200 };
-}
+// The SoundCloud OAuth token flow, the authenticated GET wrapper, and
+// the followings pagination (getFollowings) now live in
+// scripts/lib/soundcloud.mjs, shared with sync-soundcloud.mjs — reached
+// through the `sc` client created above (sc.getAccessToken /
+// sc.soundcloudGet / sc.resolveUser / sc.getFollowings).
 
 // ------------------------------------------------------------
 // Supabase's REST API (PostgREST) caps any single unpaginated query
@@ -420,97 +311,18 @@ async function fetchProcessedArtistIds(sourceArtistIds) {
   return processed;
 }
 
-function normalizeScUrl(url) {
-  try {
-    const u = new URL(url);
-    u.search = "";
-    u.hash = "";
-    if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
-      u.pathname = u.pathname.slice(0, -1);
-    }
-    return u.toString().toLowerCase();
-  } catch {
-    return url.trim().toLowerCase();
-  }
-}
-
-// Strips tracking query strings/fragments from a SoundCloud profile URL
-// before it's written to artist_links, e.g.
-//   https://soundcloud.com/damacha?utm_medium=api&utm_campaign=social_sharing&utm_source=id_332561
-//   -> https://soundcloud.com/damacha
-// Unlike normalizeScUrl (used only for in-memory dedupe-key matching),
-// this preserves the original case/trailing slash exactly as SoundCloud
-// returned it, since this is the value that actually gets saved.
-function cleanScUrl(url) {
-  try {
-    const u = new URL(url);
-    u.search = "";
-    u.hash = "";
-    return u.toString();
-  } catch {
-    return url;
-  }
-}
-
-// Upsert enrichment data from a SoundCloud user object into
-// artist_enrichment. Called for both source artists (from /resolve)
-// and newly-created followed artists (from the followings collection)
-// — the data is already in hand from those API responses, so no
-// extra API calls are needed.
+// normalizeScUrl (in-memory dedupe key) and cleanScUrl (the value
+// actually saved to artist_links, tracking params stripped) now live in
+// scripts/lib/soundcloud.mjs, shared with sync-soundcloud.mjs.
 //
-// Deliberately does NOT write an image: this script discovers
-// non-directory follow-graph nodes (~100x more numerous than
-// directory artists), and images are only ever stored for
-// directory_status = 'approved' artists — see
-// supabase_migration_artist_images.sql and src/lib/enrich-images.ts.
-// If one of these artists is later approved into the directory,
-// sync-soundcloud.mjs's image-only pass picks up their avatar then
-// (see PIPELINE.md, "Image-only pass").
-async function upsertEnrichment(artistId, user) {
-  if (DRY_RUN) return { error: null };
-
-  const result = await supabaseWithRetry(() => supabase.from("artist_enrichment").upsert(
-    {
-      artist_id: artistId,
-      platform: "soundcloud",
-      external_id: user.id != null ? String(user.id) : null,
-      profile_image_url: null,
-      bio: typeof user.description === "string" && user.description.trim()
-        ? `SoundCloud bio: ${user.description.trim()}`
-        : null,
-      follower_count: user.followers_count ?? null,
-      track_count: user.track_count ?? null,
-      recent_tracks: null, // tracks not fetched in this script
-      last_synced_at: new Date().toISOString(),
-      sync_error: null,
-    },
-    { onConflict: "artist_id,platform" }
-  ));
-
-  // Raw payload → api_response_cache, not artist_enrichment.raw_data (that
-  // column was dropped — see supabase_migration_move_raw_data_to_cache.sql).
-  await cacheRawUser(artistId, user);
-  return result;
-}
-
-// Archive a raw SoundCloud user payload to api_response_cache (namespace
-// 'soundcloud_user', cache_key = artist_id). Best-effort: the blob is
-// re-fetchable archival only, so a write error is logged, not fatal.
-async function cacheRawUser(artistId, user) {
-  if (DRY_RUN) return;
-  const { error } = await supabaseWithRetry(() => supabase
-    .from("api_response_cache")
-    .upsert(
-      {
-        namespace: "soundcloud_user",
-        cache_key: String(artistId),
-        payload: user,
-        fetched_at: new Date().toISOString(),
-      },
-      { onConflict: "namespace,cache_key" }
-    ));
-  if (error) console.error(`  (cache raw_data for ${artistId} failed, non-fatal: ${error.message})`);
-}
+// Source-artist enrichment is no longer written here (as of 2026-07-11):
+// sync-soundcloud.mjs (Phase 2a) owns the full SoundCloud pull for
+// directory artists — bio, image, links — so this builder re-writing a
+// leaner enrichment row for the same approved source artists was pure
+// overlap. This script now only touches source artists to fetch their
+// followings and to record follow-graph state (follow_graph_built_at /
+// sync_error), never their enrichment. Followee enrichment is still
+// written below (from the free followings payload) — see main().
 
 // ------------------------------------------------------------
 // Main
@@ -527,7 +339,7 @@ async function main() {
 
   // Fail fast on bad credentials rather than burning through every
   // artist first.
-  await getAccessToken();
+  await sc.getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
   if (FORCE) {
@@ -563,6 +375,7 @@ async function main() {
   let edgesWritten = 0;
   let truncatedCount = 0;
   let enrichmentUpserted = 0;
+  let biosWritten = 0;
 
   for (const row of rows) {
     const sourceName = row.artists?.name ?? row.artist_id;
@@ -571,7 +384,7 @@ async function main() {
 
     sourcesProcessed++;
 
-    const userRes = await resolveUser(scUrl);
+    const userRes = await sc.resolveUser(scUrl);
     if (!userRes.ok || !userRes.data) {
       resolveFailed++;
       console.log(`✗ ${sourceName}: failed to resolve ${scUrl}`);
@@ -602,16 +415,13 @@ async function main() {
       continue;
     }
 
-    // The resolve response already contains the full user object for the
-    // source artist — upsert their enrichment at no extra API cost.
-    const { error: sourceEnrichError } = await upsertEnrichment(sourceArtistId, userRes.data);
-    if (sourceEnrichError) {
-      console.error(`  failed to upsert enrichment for ${sourceName}: ${sourceEnrichError.message}`);
-    } else {
-      enrichmentUpserted++;
-    }
+    // Source-artist enrichment is intentionally NOT written here anymore
+    // — sync-soundcloud.mjs (Phase 2a) owns the full SoundCloud pull for
+    // directory artists (bio + image + links). This builder only needs
+    // the resolved user for its urn (to fetch followings) and marks
+    // follow-graph state at the end of the loop.
 
-    const { ok, users, truncated } = await getFollowings(urn, FOLLOWINGS_CAP);
+    const { ok, users, truncated } = await sc.getFollowings(urn, FOLLOWINGS_CAP);
     if (!ok) {
       resolveFailed++;
       console.log(`✗ ${sourceName}: failed to fetch followings`);
@@ -658,11 +468,11 @@ async function main() {
 
     // ---- Pass 2: batch-insert new artists in chunks of 50 ---------------
     // Chunking keeps individual request payloads small. The raw SoundCloud
-    // payloads now go to api_response_cache (see cacheRawUser) rather than
-    // artist_enrichment.raw_data, so it's the cache upsert below that carries
-    // a full JSONB blob per row — 50+ blobs in one request can push hundreds
-    // of KB and drop the Supabase connection, so it's chunked alongside the
-    // artist/link/enrichment inserts.
+    // payloads go to api_response_cache (namespace 'soundcloud_user')
+    // rather than artist_enrichment.raw_data, so it's the cache upsert
+    // below that carries a full JSONB blob per row — 50+ blobs in one
+    // request can push hundreds of KB and drop the Supabase connection, so
+    // it's chunked alongside the artist/link/enrichment/bio inserts.
     // PostgreSQL returns INSERT rows in insertion order within each chunk,
     // so index i of insertedArtists maps to chunk[i].
     const DB_CHUNK_SIZE = 50;
@@ -688,6 +498,7 @@ async function main() {
 
           const newLinks = [];
           const newEnrichments = [];
+          const newBios = [];
           const newCacheRows = [];
 
           for (let i = 0; i < chunk.length; i++) {
@@ -703,23 +514,40 @@ async function main() {
               url: cleanScUrl(followed.permalink_url),
             });
 
+            // Followee enrichment is deliberately minimal (as of 2026-07-11):
+            // for a non-directory follow-graph node all we keep is
+            // follower_count — enough to weed out non-artist / low-signal
+            // accounts — plus external_id for identity. No image (images are
+            // directory-only), no track_count (unused for these nodes). The
+            // bio goes to the biographies table instead (see newBios below).
             newEnrichments.push({
               artist_id: artistId,
               platform: "soundcloud",
               external_id: followed.id != null ? String(followed.id) : null,
-              // No image — see upsertEnrichment()'s comment above:
-              // non-directory follow-graph nodes don't get images.
-              profile_image_url: null,
-              bio:
-                typeof followed.description === "string" && followed.description.trim()
-                  ? followed.description.trim()
-                  : null,
               follower_count: followed.followers_count ?? null,
-              track_count: followed.track_count ?? null,
-              recent_tracks: null,
               last_synced_at: new Date().toISOString(),
               sync_error: null,
             });
+
+            // Followee bio → biographies (platform='soundcloud'), same home
+            // as directory-artist / Discogs / Linktree bios. Kept for
+            // deduplication: comparing a followee's bio against bios from
+            // other sources (e.g. sync-hoer imports, which often arrive with
+            // no other platform links) helps match the same artist across
+            // sources when their names are spelled slightly differently. Raw
+            // description as-is — no cleanup pipeline here.
+            const followeeBio =
+              typeof followed.description === "string" && followed.description.trim()
+                ? followed.description.trim()
+                : null;
+            if (followeeBio) {
+              newBios.push({
+                artist_id: artistId,
+                platform: "soundcloud",
+                bio: followeeBio,
+                source_url: cleanScUrl(followed.permalink_url),
+              });
+            }
 
             // Raw payload → api_response_cache (namespace 'soundcloud_user',
             // cache_key = artist_id), replacing artist_enrichment.raw_data.
@@ -747,6 +575,23 @@ async function main() {
             console.error(`  failed to batch-upsert enrichments (chunk ${chunkStart}): ${enrichError.message}`);
           } else {
             enrichmentUpserted += newEnrichments.length;
+          }
+
+          // Followee bios → biographies (best-effort; a followee with no
+          // description contributes no row). Non-fatal like the cache write:
+          // the recommender/edges don't depend on it, and the bio is
+          // re-derivable from the cached raw payload.
+          if (newBios.length > 0) {
+            const { error: bioError } = await supabaseWithRetry(() =>
+              supabase
+                .from("biographies")
+                .upsert(newBios, { onConflict: "artist_id,platform" })
+            );
+            if (bioError) {
+              console.error(`  failed to batch-upsert followee bios (chunk ${chunkStart}, non-fatal): ${bioError.message}`);
+            } else {
+              biosWritten += newBios.length;
+            }
           }
 
           // Raw payloads → api_response_cache (best-effort archival; the blob
@@ -838,7 +683,8 @@ async function main() {
   console.log(`  capped (more remain):     ${truncatedCount}`);
   console.log(`  new artists created:      ${newArtistsCreated}`);
   console.log(`  follow edges ${DRY_RUN ? "(would be) written" : "written"}:    ${edgesWritten}`);
-  console.log(`  enrichment upserted:      ${DRY_RUN ? "(dry run — no writes)" : enrichmentUpserted}`);
+  console.log(`  followee enrichment:      ${DRY_RUN ? "(dry run — no writes)" : enrichmentUpserted}`);
+  console.log(`  followee bios:            ${DRY_RUN ? "(dry run — no writes)" : biosWritten}`);
 }
 
 main().catch((err) => {

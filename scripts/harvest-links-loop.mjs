@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // ============================================================
-// Phase 2c + 2d convergence loop — the orchestrator in miniature.
+// Phase 2 platform-sync convergence loop — the orchestrator in miniature.
 //
-// Runs the direct-link harvesters, then integrate-harvested-links,
-// in rounds, until a round produces no new links. Links beget links
+// Runs every platform harvester (SoundCloud 2a, Bandcamp 2b, the
+// direct-link harvesters 2c, and the HÖR seeder), then
+// integrate-harvested-links (2d), in rounds, until a round produces no
+// new links. Links beget links
 // (a Discogs page reveals a Linktree; integrating it gives the
 // Linktree harvester a new page to read), so one pass isn't enough —
 // but because every harvester tracks its processed state in the
@@ -79,7 +81,34 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // hoer_sync_state), so each round only ingests new artists/sets and the
 // loop still terminates. --approved gates only its enrichment, never its
 // seeding. See sync-hoer.mjs.
-const HARVESTERS = ["sync-hoer.mjs", "sync-discogs.mjs", "sync-linktree.mjs", "sync-bandcamp.mjs"];
+//
+// sync-soundcloud.mjs (Phase 2a) joined this loop on 2026-07-11 (was a
+// standalone pre-loop orchestrator stage). It stages the "Links" section
+// of each SoundCloud profile (web-profiles + bio URLs) into
+// artist_harvested_links like any other harvester, and SoundCloud links
+// are themselves discovered mid-loop (a HÖR page or Discogs page reveals
+// one, 2d promotes it, then this reads that profile), so it belongs in
+// the convergence loop rather than running once up front. The same
+// /resolve call also does the full directory-artist SoundCloud pull
+// (bio → artist_enrichment, image → artist_images, raw bio audit). It
+// tracks processed state in the DB (resolved_artists service
+// 'soundcloud-sync'), so each round only re-fetches artists whose
+// SoundCloud link arrived since the last round, and the loop still
+// terminates. Unlike sync-bandcamp it keeps --approved as its directory
+// gate rather than being hardwired approved-only, so the loop MUST
+// forward --approved (it does — see STAGE_ARGS) to keep it directory-
+// only; its non-directory sc_followee counterpart is handled separately
+// by build-soundcloud-follow-graph.mjs (Phase 7a), not here.
+// It runs early in the round because its web-profiles fan out to many
+// other platforms (Bandcamp/Spotify/Discogs/…) that later harvesters
+// in the same round then consume.
+const HARVESTERS = [
+  "sync-hoer.mjs",
+  "sync-soundcloud.mjs",
+  "sync-discogs.mjs",
+  "sync-linktree.mjs",
+  "sync-bandcamp.mjs",
+];
 const INTEGRATE = "integrate-harvested-links.mjs";
 
 // ------------------------------------------------------------

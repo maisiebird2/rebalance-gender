@@ -34,9 +34,10 @@ flowchart TD
         P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs · sync-linktree.mjs"]
         P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
         P2EF["2e/2f · Cleanup (one-off)<br/>fix-http-https-mismatches<br/>clean-bandcamp-urls"]
-        P2A --> P2D
+        P2A -->|"convergence loop<br/>harvest-links-loop.mjs"| P2D
         P2B -->|"convergence loop<br/>harvest-links-loop.mjs"| P2D
         P2C -->|"convergence loop<br/>harvest-links-loop.mjs"| P2D
+        P2D -. "new links reveal<br/>more SoundCloud pages" .-> P2A
         P2D -. "new links reveal<br/>more harvestable pages" .-> P2B
         P2D -. "new links reveal<br/>more links" .-> P2C
         P2D --> P2EF
@@ -61,7 +62,7 @@ flowchart TD
     style P2 fill:#eef2ff,stroke:#818cf8,stroke-width:1px,color:#4338ca;
     linkStyle default stroke:#6366f1,stroke-width:2px;
 ```
-*(Boxes with a bold border — Phase 1 and the Phase 2 harvest/promote stages (2a, 2b, 2c, 2d) — are run end-to-end by `orchestrate-platform-enrichment.mjs --approved`: 2a first, then 2b/2c/2d as a convergence loop (`harvest-links-loop.mjs`) until no new links appear. The 2e/2f cleanups are one-off and not orchestrated. Dashed arrows are as-needed, cross-phase, or manual-entry paths.)*
+*(Boxes with a bold border — Phase 1 and the Phase 2 harvest/promote stages (2a, 2b, 2c, 2d) — are run end-to-end by `orchestrate-platform-enrichment.mjs --approved`: `clean-artist-names` (Phase 1), then 2a/2b/2c/2d together as a single convergence loop (`harvest-links-loop.mjs`) until no new links appear. As of 2026-07-11 SoundCloud sync (2a) is a loop member too — it stages the "Links" section of each profile, and SoundCloud links are themselves discovered mid-loop — so it is no longer a separate pre-loop stage. The 2e/2f cleanups are one-off and not orchestrated. Dashed arrows are as-needed, cross-phase, or manual-entry paths.)*
 
 Artists enter the database through **two entry points**: the one-time
 bulk CSV load (Phase 0), and continuously via the website's
@@ -84,17 +85,20 @@ npm run orchestrate-platform-enrichment -- --approved
 ```
 
 It runs, in dependency order: `clean-artist-names` (Phase 1) →
-`sync-soundcloud` (2a — the merged SoundCloud sync stage) →
-`harvest-links-loop` (the 2b+2c+2d convergence loop). `sync-bandcamp`
-(2b — the merged discography + bio + location + image + links +
-genre-tags stage; see Phase 2b below) is now one of the loop's
-harvesters rather than a terminal step, so each round re-runs it as 2d
-promotes new Bandcamp links, and it converges alongside the other
-harvesters. Each stage tracks its own processed state in the database,
+`harvest-links-loop` (the 2a+2b+2c+2d convergence loop). As of
+2026-07-11 `sync-soundcloud` (2a) is one of the loop's harvesters, not
+a separate stage before it: it stages the "Links" section of every
+SoundCloud profile, and SoundCloud links surface mid-loop (a HÖR or
+Discogs page reveals one, 2d promotes it, the next round's 2a reads
+that profile), so it converges alongside the other harvesters.
+`sync-bandcamp` (2b — the merged discography + bio + location + image +
+links + genre-tags stage; see Phase 2b below) is likewise a loop
+harvester. Each stage tracks its own processed state in the database,
 so the orchestrator holds no state and is safe to re-run — a second
 run only touches artists with new data. Note that `store-images.mjs`
 (5b) is not part of this orchestrator; run it after the loop to pick
-up any Bandcamp images 2b just found (see "Typical full run order").
+up any SoundCloud/Bandcamp images 2a/2b just found (see "Typical full
+run order").
 
 `--approved` restricts every stage to directory artists
 (`directory_status = 'approved'`, excluding deleted). It is forwarded to
@@ -164,10 +168,12 @@ best-match guessing at all.
 2a pulls from SoundCloud in a single merged stage; 2b is the merged
 Bandcamp stage (`sync-bandcamp.mjs`, moved here from the former Phase 6
 on 2026-07-10); 2c is the direct-link harvesters; 2d promotes; 2e/2f
-clean up. 2b and 2c are both link harvesters, so they run inside the
-2d convergence loop (`harvest-links-loop.mjs`) — links beget links, and
-a Bandcamp page can reveal links just like a Discogs page can. (The
-label "2b" previously belonged to a retired SoundCloud harvester,
+clean up. 2a, 2b, and 2c are all link harvesters, so they all run
+inside the 2d convergence loop (`harvest-links-loop.mjs`) — links beget
+links, and a SoundCloud, Bandcamp, or Discogs page can each reveal
+links the others then read. (2a joined the loop on 2026-07-11; it had
+been a separate stage run once before the loop. The label "2b"
+previously belonged to a retired SoundCloud harvester,
 `harvest-soundcloud-links-and-bio.mjs`, whose work is now part of 2a;
 the slot is reused for Bandcamp.)
 
@@ -208,6 +214,31 @@ Two API calls per artist (`/resolve` + `/users/{urn}/web-profiles`)
 is the floor — SoundCloud has no endpoint that returns the user
 resource and web-profiles together — down from three under the old
 two-script version.
+
+**Runs inside the 2d convergence loop (since 2026-07-11).** 2a used to
+run once as a standalone stage before the loop. It now sits in
+`harvest-links-loop.mjs`'s `HARVESTERS` array alongside 2b/2c, because
+it both *stages* links (each profile's "Links" section →
+`artist_harvested_links`) and *consumes* them (it needs a `soundcloud`
+`artist_links` row to know which profile to fetch) — and SoundCloud
+links are discovered mid-loop (a HÖR seed or a Discogs page reveals one,
+2d promotes it, the next round's 2a reads that profile, whose
+web-profiles may reveal yet more links). Because it tracks processed
+state in the DB (`resolved_artists`, service `soundcloud-sync`), each
+round only re-fetches artists whose SoundCloud link arrived since the
+last round, so the loop still terminates. Unlike `sync-bandcamp` (2b),
+which is hardwired directory-only, 2a keeps `--approved` as its
+directory gate, so the loop/orchestrator must forward `--approved` (it
+does) to keep it directory-only; its non-directory `sc_followee`
+counterpart is handled entirely by `build-soundcloud-follow-graph.mjs`
+(Phase 7a), never here.
+
+**Shared SoundCloud client.** The OAuth token flow, the authenticated
+GET wrapper, and the SoundCloud-URL helpers live in
+`scripts/lib/soundcloud.mjs` (added 2026-07-11), shared with
+`build-soundcloud-follow-graph.mjs` (Phase 7a) — the two used to carry
+verbatim copies of that code. The lib knows how to talk to SoundCloud
+and normalize its URLs; each caller decides what to write.
 
 **Wrong-field URL guard:** before calling `/resolve`, the stored
 `artist_links.url` is checked against the `soundcloud.com` domain. A
@@ -537,13 +568,17 @@ DRY_RUN=1 npm run sync-linktree        # fetch + log, no writes
 `biographies` table, shared with `sync-discogs.mjs`) — no token needed
 (`linktr.ee` pages are public).
 
-#### `harvest-links-loop.mjs` — the 2b+2c+2d convergence loop
-Runs the link harvesters — the 2c direct-link harvesters plus 2b
-(`sync-bandcamp.mjs`, which stages the links from each Bandcamp
-sidebar) — then 2d, in rounds until a round produces no new staged or
-live links (links beget links: a Discogs page may reveal a Bandcamp
-URL, 2d promotes it, and the next round's 2b reads that Bandcamp page
-to reveal yet more links). Convergence is detected by row counts of
+#### `harvest-links-loop.mjs` — the 2a+2b+2c+2d convergence loop
+Runs every platform harvester — 2a (`sync-soundcloud.mjs`, which stages
+each profile's "Links" section), 2b (`sync-bandcamp.mjs`, the Bandcamp
+sidebar), the 2c direct-link harvesters (`sync-discogs.mjs`,
+`sync-linktree.mjs`), and the `sync-hoer.mjs` seeder — then 2d, in
+rounds until a round produces no new staged or live links (links beget
+links: a Discogs page may reveal a Bandcamp URL, a HÖR page a SoundCloud
+URL, 2d promotes it, and the next round's harvester reads that page to
+reveal yet more links). The `HARVESTERS` array is the extension point —
+2a was added to it on 2026-07-11 (it had been a standalone pre-loop
+stage). Convergence is detected by row counts of
 `artist_harvested_links` and `artist_links` before vs. after each
 round; because harvesters track state in the DB, each round only
 touches artists with new links. This loop is the skeleton for the
@@ -556,7 +591,7 @@ npm run harvest-links-loop -- --max-rounds=2
 DRY_RUN=1 npm run harvest-links-loop           # single round, no writes
 ```
 
-`--approved` restricts the loop to directory artists (`directory_status = 'approved'`, excluding deleted); it is forwarded to every child stage (the 2b/2c harvesters and 2d). `sync-bandcamp` is already directory-only, so the flag is a harmless no-op there.
+`--approved` restricts the loop to directory artists (`directory_status = 'approved'`, excluding deleted); it is forwarded to every child stage (the 2a/2b/2c harvesters and 2d). `sync-bandcamp` is already directory-only, so the flag is a harmless no-op there; `sync-soundcloud` (2a) relies on it (it keeps `--approved` as its directory gate), so forwarding it is what keeps 2a directory-only inside the loop.
 
 ### 2d. `integrate-harvested-links.mjs`
 Promotes rows from the `artist_harvested_links` staging table into
@@ -842,9 +877,41 @@ engine. Run after Phase 3 so MusicBrainz IDs are available.
 
 ### 7a. `build-soundcloud-follow-graph.mjs`
 For each approved directory artist with a SoundCloud link, fetches
-their followings and writes directed edges to `sc_follow_edges`.
-Also adds new artists discovered via followings to the `artists`
-table with `directory_status = 'sc_followee'`.
+their followings (who *they* follow, never who follows them) and writes
+directed edges to `sc_follow_edges`. Also adds new artists discovered
+via followings to the `artists` table with `directory_status =
+'sc_followee'`. This is the only handler of non-directory SoundCloud
+nodes — the Phase 2a sync is directory-only.
+
+**Does not enrich source (directory) artists (since 2026-07-11).** It
+resolves each source artist only to get their `urn` (for the followings
+call) and to record follow-graph state (`follow_graph_built_at` /
+`sync_error`) on their `artist_enrichment` row. `sync-soundcloud.mjs`
+(2a) owns the full SoundCloud pull for directory artists — bio, image,
+links — so this builder writing a leaner enrichment row for the same
+approved artists was pure overlap, now removed.
+
+**Followee enrichment is deliberately minimal.** Each followee's full
+user object comes free in the followings collection (no extra API
+call). From it, only `follower_count` (enough to weed out non-artist /
+low-signal accounts) and `external_id` go to `artist_enrichment` — no
+`track_count`, no image (images are directory-only). The followee's bio
+goes to the `biographies` table (`platform = 'soundcloud'`), the same
+home as directory-artist / Discogs / Linktree bios, and the full raw
+user object goes to `api_response_cache` (namespace `soundcloud_user`,
+`cache_key = artist_id`) for later re-processing.
+
+Followee bios are kept specifically for **cross-source
+deduplication**: comparing a followee's SoundCloud bio against bios from
+other sources (e.g. `sync-hoer` imports, which often arrive with no
+other platform links) helps match the same artist across sources when
+their names are spelled slightly differently — see Planned changes →
+"Bio-based cross-source dedup". Requires `supabase_migration_biographies.sql`
+to have been run.
+
+Uses the shared SoundCloud client in `scripts/lib/soundcloud.mjs`
+(OAuth + GET wrapper + followings pagination), shared with
+`sync-soundcloud.mjs`.
 
 ```bash
 npm run build-soundcloud-follow-graph
@@ -1282,9 +1349,9 @@ pipeline script or submit form touches it.
 
 ```bash
 npm run clean-artist-names
-npm run sync-soundcloud
-# Phase 2 link-harvest convergence loop (2b+2c+2d) —
+# Phase 2 platform-sync convergence loop (2a+2b+2c+2d) —
 # or run the whole loop at once with `npm run harvest-links-loop`
+npm run sync-soundcloud         # 2a (bio + image + staged links)
 npm run sync-discogs            # 2c
 npm run sync-linktree           # 2c (also bio + image)
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
@@ -1311,6 +1378,63 @@ npm run integrate-harvested-genres
 
 Agreed optimizations and cleanups. Items marked ✅ DONE are
 implemented; the rest are still open.
+
+### Move `sync-soundcloud` into the convergence loop; split non-directory SoundCloud into Phase 7a — ✅ DONE (2026-07-11)
+
+SoundCloud handling was two overlapping code paths: `sync-soundcloud.mjs`
+processed *every* artist with a SoundCloud link (directory + the ~100×
+more numerous non-directory `sc_followee` follow-graph nodes) as a
+standalone stage before the loop, while `build-soundcloud-follow-graph.mjs`
+*also* enriched those same followees for free from the followings
+payload. Untangled into a clean split:
+
+- **`sync-soundcloud.mjs` (2a) → directory harvester inside the loop.**
+  Added to `harvest-links-loop.mjs`'s `HARVESTERS` array; removed as a
+  separate `orchestrate-platform-enrichment.mjs` stage (the orchestrator
+  now collapses to `clean-artist-names` + the loop). It stages each
+  profile's "Links" section, and SoundCloud links surface mid-loop, so
+  it belongs in the convergence loop like 2b/2c. It keeps `--approved`
+  as its directory gate (the loop forwards it), so inside the loop it's
+  directory-only — the one source of truth for directory SoundCloud
+  data (bio + image + links).
+- **`build-soundcloud-follow-graph.mjs` (7a) → the only non-directory
+  SoundCloud handler.** It keeps followee node creation, edges, and the
+  free-from-the-payload followee enrichment, but (1) **stops enriching
+  approved source artists** (2a owns that — the overlap is removed), and
+  (2) **trims followee enrichment** to just `follower_count` +
+  `external_id`, with the bio going to the `biographies` table and no
+  `track_count` / image.
+- **A dedicated `enrich-soundcloud-followees.mjs` was considered and
+  deliberately NOT built.** There's no consumer for a blanket
+  links/bios sweep of the ~100–300K `sc_followee` nodes; followees only
+  need edges (for the recommender) plus the free basic enrichment they
+  already get. A full per-followee sync would be 2–3 API calls each for
+  data nothing reads.
+- **Shared `scripts/lib/soundcloud.mjs`.** The OAuth token flow, GET
+  wrapper, followings pagination, and SoundCloud-URL helpers — copied
+  verbatim in both scripts — moved into one shared module. The lib
+  knows how to talk to SoundCloud; each caller decides what to write.
+
+Known limitation (unchanged, noted for the record): the loop only
+bootstraps an artist from platforms that have a harvester, so an
+artist with e.g. only an Instagram link stays sparse until a link to a
+harvested platform is found some other way.
+
+### Bio-based cross-source dedup
+
+`build-soundcloud-follow-graph.mjs` (7a) now stores `sc_followee` bios
+in the `biographies` table (`platform = 'soundcloud'`), alongside
+directory-artist / Discogs / Linktree bios. The motivating use case:
+`sync-hoer` imports often arrive with a name and little else (no other
+platform links), so matching them to artists already in the DB is hard
+on names alone — especially when the same artist is spelled slightly
+differently across sources. Comparing bios across sources (`biographies`
+rows for the same or similar artist from `soundcloud` / `hoer` /
+`discogs` / `linktree`) is a signal for identifying those matches. Not
+yet built — this is the planned consumer that justifies keeping the
+otherwise-unused followee bios. Design open: fuzzy bio similarity vs.
+exact substring, and where the resulting merge/flag lands (a dedup
+review queue vs. `find-duplicates.mjs`).
 
 ### Merge the two SoundCloud scripts into one "SoundCloud sync" stage — ✅ DONE (2026-07-09)
 

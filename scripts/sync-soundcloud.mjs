@@ -163,6 +163,13 @@ import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+import {
+  createSoundcloudClient,
+  sleep,
+  SOUNDCLOUD_HOST_REGEX,
+  isSoundCloudUrl,
+  upgradeAvatarUrl,
+} from "./lib/soundcloud.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -248,7 +255,9 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Shared SoundCloud API client (OAuth token + GET wrapper) — see
+// scripts/lib/soundcloud.mjs, shared with build-soundcloud-follow-graph.mjs.
+const sc = createSoundcloudClient({ debug: DEBUG });
 
 // ------------------------------------------------------------
 // Processed-state tracking via resolved_artists (DB), not a cache
@@ -339,110 +348,10 @@ async function fetchArtistIdsWithSoundcloudImage() {
   return ids;
 }
 
-// ------------------------------------------------------------
-// Wrong-field URL guard — cheap pre-check before spending an API call.
-// A stored `soundcloud` link whose domain isn't actually soundcloud.com
-// (e.g. a Spotify/Instagram URL saved in the wrong field) can never
-// resolve; skip it and flag it instead of calling /resolve. See
-// scripts/PIPELINE.md, "Guard harvesters against wrong-field URLs".
-// ------------------------------------------------------------
-const SOUNDCLOUD_HOST_REGEX = /(^|\.)soundcloud\.com$/i;
-
-function isSoundCloudUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return SOUNDCLOUD_HOST_REGEX.test(url.hostname.toLowerCase());
-  } catch {
-    return false; // unparseable — also treated as a mismatch
-  }
-}
-
-// ------------------------------------------------------------
-// SoundCloud OAuth (Client Credentials — app-only, public resources).
-// One token is fetched and reused for the whole run; refreshed on 401.
-// ------------------------------------------------------------
-let cachedToken = null;
-
-async function getAccessToken(forceRefresh = false) {
-  if (!forceRefresh && cachedToken && Date.now() < cachedToken.expiresAt - 30_000) {
-    return cachedToken.accessToken;
-  }
-
-  const basic = Buffer.from(`${SOUNDCLOUD_CLIENT_ID}:${SOUNDCLOUD_CLIENT_SECRET}`).toString(
-    "base64"
-  );
-
-  const res = await fetch("https://secure.soundcloud.com/oauth/token", {
-    method: "POST",
-    headers: {
-      Accept: "application/json; charset=utf-8",
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${basic}`,
-    },
-    body: "grant_type=client_credentials",
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to get SoundCloud access token (HTTP ${res.status}): ${text}`);
-  }
-
-  const data = await res.json();
-  cachedToken = {
-    accessToken: data.access_token,
-    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
-  };
-  return cachedToken.accessToken;
-}
-
-async function soundcloudGet(pathAndQuery, { retry = true } = {}) {
-  const token = await getAccessToken();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const res = await fetch(`https://api.soundcloud.com${pathAndQuery}`, {
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json; charset=utf-8",
-        Authorization: `OAuth ${token}`,
-      },
-    });
-
-    if (res.status === 401 && retry) {
-      await getAccessToken(true);
-      return soundcloudGet(pathAndQuery, { retry: false });
-    }
-
-    if (res.status === 429) {
-      if (DEBUG) console.log("  [debug] 429 rate limited, backing off 5s");
-      await sleep(5000);
-      if (retry) return soundcloudGet(pathAndQuery, { retry: false });
-      return { ok: false, status: 429, data: null };
-    }
-
-    if (!res.ok) {
-      return { ok: false, status: res.status, data: null };
-    }
-
-    const data = await res.json();
-    return { ok: true, status: res.status, data };
-  } catch (err) {
-    if (DEBUG) console.log(`  [debug] request failed: ${err?.message ?? err}`);
-    return { ok: false, status: null, data: null };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// ------------------------------------------------------------
-// SoundCloud CDN avatar URLs default to a 100×100 "-large" variant.
-// Replacing the suffix with "-t500x500" gets the 500×500 version.
-// ------------------------------------------------------------
-function upgradeAvatarUrl(url) {
-  if (typeof url !== "string" || !url) return null;
-  return url.replace(/-large(\.\w+)$/, "-t500x500$1").replace(/-large$/, "-t500x500");
-}
+// Wrong-field URL guard (isSoundCloudUrl / SOUNDCLOUD_HOST_REGEX), the
+// OAuth token flow + authenticated GET wrapper (via the `sc` client
+// created above), and the avatar-URL upgrade all now live in
+// scripts/lib/soundcloud.mjs, shared with build-soundcloud-follow-graph.mjs.
 
 // ------------------------------------------------------------
 // gate.sc is a link-click tracker the SoundCloud *web client* wraps
@@ -652,7 +561,7 @@ export async function syncArtist(artist, opts = {}) {
 
   // -- 1. Resolve the profile (feeds both artist_enrichment and the
   // web-profiles/bio harvest below) --
-  const res = await soundcloudGet(`/resolve?url=${encodeURIComponent(scUrl)}`);
+  const res = await sc.resolveUser(scUrl);
 
   if (!res.ok || !res.data) {
     console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
@@ -741,7 +650,7 @@ export async function syncArtist(artist, opts = {}) {
   // available substitute for "what can we embed for them."
   let playlists = null;
   if (user.track_count === 0 && user.id != null) {
-    const playlistsRes = await soundcloudGet(
+    const playlistsRes = await sc.soundcloudGet(
       `/users/${user.id}/playlists?limit=200&linked_partitioning=1`
     );
     if (playlistsRes.ok && Array.isArray(playlistsRes.data?.collection ?? playlistsRes.data)) {
@@ -763,7 +672,7 @@ export async function syncArtist(artist, opts = {}) {
   // -- 3. web-profiles (the "Links" section) --
   const candidatesRaw = [];
   if (urn) {
-    const profilesRes = await soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
+    const profilesRes = await sc.soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
     if (profilesRes.ok && Array.isArray(profilesRes.data)) {
       if (debug) console.log("  [debug] web-profiles raw:", JSON.stringify(profilesRes.data));
       for (const p of profilesRes.data) {
@@ -1068,7 +977,7 @@ async function main() {
   if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status = 'approved')\n");
   if (STATUS_FILTER) console.log(`Filtering by directory_status: ${STATUS_FILTER}\n`);
 
-  await getAccessToken();
+  await sc.getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
   const processed = FORCE ? new Set() : await loadProcessedArtistIds();

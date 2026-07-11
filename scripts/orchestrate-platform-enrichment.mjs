@@ -13,34 +13,25 @@
 //                                           design (not restricted to
 //                                           approved), so --approved is
 //                                           NOT forwarded to it.
-//   2. sync-soundcloud.mjs                — the merged SoundCloud
-//                                           stage: profile data
-//                                           (followers, tracks, bio,
-//                                           image) for every
-//                                           SoundCloud link, plus
-//                                           staged other-platform
-//                                           links + raw bio from each
-//                                           SoundCloud "Links" section
-//                                           (one /resolve call feeds
-//                                           both). Replaces the former
-//                                           enrich-soundcloud.mjs (2a)
-//                                           + harvest-soundcloud-links-
-//                                           and-bio.mjs (2b) pair.
-//   3. harvest-links-loop.mjs             — the convergence loop:
-//                                           runs the link harvesters
-//                                           (sync-hoer, sync-discogs,
-//                                           sync-linktree, and sync-
-//                                           bandcamp / Phase 2b) +
-//                                           integrate-harvested-links in
-//                                           rounds until no new links
-//                                           appear, promoting staged
-//                                           links (from step 2 and from
-//                                           each round) into artist_links.
-//                                           These harvesters are inside
-//                                           the loop because the links
-//                                           they read are themselves
+//   2. harvest-links-loop.mjs             — the platform-sync
+//                                           convergence loop: runs every
+//                                           platform harvester —
+//                                           sync-soundcloud (2a),
+//                                           sync-bandcamp (2b), the
+//                                           direct-link harvesters
+//                                           sync-discogs/sync-linktree
+//                                           (2c), and the sync-hoer
+//                                           seeder — then
+//                                           integrate-harvested-links
+//                                           (2d) in rounds until no new
+//                                           links appear, promoting
+//                                           staged links into
+//                                           artist_links each round.
+//                                           Every harvester is inside the
+//                                           loop because the links it
+//                                           reads are themselves
 //                                           discovered mid-loop (a
-//                                           SoundCloud/Discogs page
+//                                           HÖR/SoundCloud/Discogs page
 //                                           reveals a Linktree, a Linktree
 //                                           a Bandcamp, …); each same page
 //                                           fetch also does that source's
@@ -52,6 +43,10 @@
 //                                           only re-fetches artists with
 //                                           new links and the loop
 //                                           converges.
+//
+// (SoundCloud sync was a standalone stage 2 here until 2026-07-11, when
+// it became a loop harvester like Bandcamp — so this orchestrator now
+// collapses to just the name cleanup plus the loop.)
 //
 // This is the same ordering as Phase 1 → Phase 2 of PIPELINE.md, wired
 // together so it can be launched (and, later, scheduled) with one flag.
@@ -146,12 +141,13 @@ export function orchestratePlatformEnrichment(opts = {}) {
     // artist's name regardless of directory_status, so --approved is not
     // forwarded to it.
     { script: "clean-artist-names.mjs", args: [] },
-    { script: "sync-soundcloud.mjs", args: [...common] },
-    // harvest-links-loop now runs sync-bandcamp (Phase 2b) as one of
-    // its harvesters, so there is no separate Bandcamp stage here — the
-    // loop keeps re-running it as new Bandcamp links surface, then
-    // converges. --approved is forwarded to the loop, which forwards it
-    // to every child (harvesters + integrate).
+    // harvest-links-loop now runs every platform harvester — sync-soundcloud
+    // (2a) and sync-bandcamp (2b) alongside the direct-link harvesters (2c)
+    // and the HÖR seeder — as loop members, so there is no separate
+    // SoundCloud or Bandcamp stage here anymore. The loop keeps re-running
+    // each harvester as new links for its platform surface, then converges.
+    // --approved is forwarded to the loop, which forwards it to every child
+    // (harvesters + integrate).
     {
       script: "harvest-links-loop.mjs",
       args: [...common, ...(maxRounds != null ? [`--max-rounds=${maxRounds}`] : [])],
