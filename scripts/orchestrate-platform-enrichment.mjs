@@ -28,27 +28,30 @@
 //                                           and-bio.mjs (2b) pair.
 //   3. harvest-links-loop.mjs             — the convergence loop:
 //                                           runs the link harvesters
-//                                           (Discogs + sync-bandcamp,
-//                                           Phase 2b) + integrate-
-//                                           harvested-links in rounds
-//                                           until no new links appear,
-//                                           promoting staged links
-//                                           (from step 2 and from each
-//                                           round) into artist_links.
-//                                           sync-bandcamp is inside the
-//                                           loop because Bandcamp links
-//                                           are themselves discovered
-//                                           mid-loop; the same page
-//                                           fetch also does the full
-//                                           Bandcamp profile pull
-//                                           (discography, bio, location,
-//                                           image, genre tags). It is
-//                                           already directory-only (it
-//                                           always filters
-//                                           directory_status =
-//                                           'approved') and replaces the
-//                                           former enrich-bandcamp.mjs
-//                                           (discography-only).
+//                                           (sync-hoer, sync-discogs,
+//                                           sync-linktree, and sync-
+//                                           bandcamp / Phase 2b) +
+//                                           integrate-harvested-links in
+//                                           rounds until no new links
+//                                           appear, promoting staged
+//                                           links (from step 2 and from
+//                                           each round) into artist_links.
+//                                           These harvesters are inside
+//                                           the loop because the links
+//                                           they read are themselves
+//                                           discovered mid-loop (a
+//                                           SoundCloud/Discogs page
+//                                           reveals a Linktree, a Linktree
+//                                           a Bandcamp, …); each same page
+//                                           fetch also does that source's
+//                                           full profile pull (bio, image,
+//                                           and — for Bandcamp —
+//                                           discography/location/genre
+//                                           tags). They track processed
+//                                           state in the DB, so each round
+//                                           only re-fetches artists with
+//                                           new links and the loop
+//                                           converges.
 //
 // This is the same ordering as Phase 1 → Phase 2 of PIPELINE.md, wired
 // together so it can be launched (and, later, scheduled) with one flag.

@@ -21,7 +21,15 @@
 export interface ArtistImageSource {
   storage_url: string | null;
   source_url: string;
+  platform?: string | null;
 }
+
+// Platforms captured into artist_images but deliberately held back from
+// the public display rotation. Linktree avatars are sometimes a logo or
+// event flyer rather than an artist photo, so sync-linktree.mjs stores
+// them (for durability / a possible future decision) but they don't
+// enter pickArtistImage's rotation. See scripts/PIPELINE.md, "sync-linktree".
+const DISPLAY_EXCLUDED_PLATFORMS = new Set(["linktree"]);
 
 /**
  * Deterministic 32-bit string hash (FNV-1a). Not cryptographic — just
@@ -50,8 +58,13 @@ export function pickArtistImage(
   date: Date = new Date()
 ): string | null {
   if (!images || images.length === 0) return null;
+  // Exclude platforms held back from the rotation (e.g. linktree). Filter
+  // rather than remove at the query layer so those rows stay available to
+  // every other consumer.
+  const displayable = images.filter((img) => !DISPLAY_EXCLUDED_PLATFORMS.has(img.platform ?? ""));
+  if (displayable.length === 0) return null;
   const dateKey = date.toISOString().slice(0, 10); // YYYY-MM-DD, UTC
-  const index = hashString(`${artistId}:${dateKey}`) % images.length;
-  const chosen = images[index];
+  const index = hashString(`${artistId}:${dateKey}`) % displayable.length;
+  const chosen = displayable[index];
   return chosen.storage_url ?? chosen.source_url ?? null;
 }

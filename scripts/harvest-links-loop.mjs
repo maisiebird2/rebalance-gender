@@ -44,8 +44,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
 
 // The harvester stage list — every script that stages new links into
-// artist_harvested_links. Add "harvest-links-linktree.mjs" here when
-// it exists.
+// artist_harvested_links.
+//
+// sync-linktree.mjs (Phase 2c) is a full member: a Linktree page exists
+// precisely to list an artist's other platforms, so it stages those into
+// artist_harvested_links like any other harvester, and because Linktree
+// links are themselves discovered mid-loop (a SoundCloud bio or Discogs
+// page reveals a linktr.ee URL, 2d promotes it, then this script can read
+// that page), it belongs in the convergence loop. It tracks processed
+// state in the DB (resolved_artists / harvest_failures, service
+// 'linktree-sync'), so each round only re-fetches artists whose Linktree
+// link arrived since the last round, and the loop still terminates
+// naturally. The same page fetch also captures the bio and (for approved
+// artists) the profile image — see sync-linktree.mjs / Phase 2c.
 //
 // sync-bandcamp.mjs (Phase 2b) is a full member of this loop: its
 // external-links sidebar is staged into artist_harvested_links like
@@ -68,7 +79,7 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // hoer_sync_state), so each round only ingests new artists/sets and the
 // loop still terminates. --approved gates only its enrichment, never its
 // seeding. See sync-hoer.mjs.
-const HARVESTERS = ["sync-hoer.mjs", "sync-discogs.mjs", "sync-bandcamp.mjs"];
+const HARVESTERS = ["sync-hoer.mjs", "sync-discogs.mjs", "sync-linktree.mjs", "sync-bandcamp.mjs"];
 const INTEGRATE = "integrate-harvested-links.mjs";
 
 // ------------------------------------------------------------
