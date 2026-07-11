@@ -23,10 +23,20 @@
 //     (an array — >1 author = a collaboration). /wp-json/wp/v2/posts
 //     with ?after=<date> gives incremental "only new sets since last run".
 //
-//   • Bio / portrait / socials / stage name = the SERVER-RENDERED
-//     /artist/<slug>/ page (not the API — the term's description/acf are
-//     empty). Parsed from raw HTML: h1.artist__title, div.artist__text,
-//     div.artist__image (inline background-image), div.artist__socials a.
+//   • Stage name / portrait / socials = the SERVER-RENDERED /artist/<slug>/
+//     page. Parsed from raw HTML: h1.artist__title, div.artist__image
+//     (inline background-image), div.artist__socials a. NOTE: the page has
+//     TWO .artist__socials blocks — a JS-template placeholder (empty hrefs)
+//     first, then the real one; parseArtistPage scans BOTH and keeps the
+//     non-empty hrefs.
+//
+//   • Bio = the WordPress USER record, /wp-json/wp/v2/users/<id>.description.
+//     An /artist/<slug>/ page is a WP *author archive*; its .artist__text div
+//     is an empty placeholder that JS fills client-side, so the bio is NEVER
+//     in the server HTML (the `ppma_author` TERM's description/acf are empty
+//     too — a different object; do not confuse the two). Phase 2 reads the
+//     user id from the page body class (author-<id>) and fetches the bio from
+//     the user API. Guest / orphan terms have no user archive → no bio.
 //
 // Fan-out (mirrors sync-discogs.mjs — one source, every concern it can
 // answer):
@@ -41,7 +51,7 @@
 //   set genres (post_tag)  → artist_harvested_genres (source_platform=
 //                            'hoer'); integrate-harvested-genres promotes
 //   multi-artist sets      → collaborations (source_platform='hoer')
-//   page bio               → biographies (platform='hoer') +
+//   user bio (users API)   → biographies (platform='hoer') +
 //                            artist_harvested_bios (raw audit trail)
 //   page portrait          → artist_images (platform='hoer'); store-
 //                            images.mjs re-hosts it
@@ -50,6 +60,11 @@
 //                            THIS is why sync-hoer is a real convergence-
 //                            loop member: a HÖR page reveals an Instagram/
 //                            SoundCloud link the other harvesters feed on.
+//   full per-artist blob   → api_response_cache (namespace 'hoer-artist',
+//                            key = slug): the raw WP user record + parsed
+//                            page fields + ids. Durable harvest store so
+//                            un-extracted fields can be mined later without
+//                            re-scraping (same role as 'discogs-artist').
 //
 // State lives in the DATABASE (project rule — no cache files):
 //   • resolved_artists / harvest_failures, service = 'hoer-sync'
@@ -64,8 +79,8 @@
 //   0. Enumerate ppma_author → seed new artists + hoer links.
 //   1. Crawl posts?after=<cursor> → stage genres, collaboration edges;
 //      advance the cursor.
-//   2. Scrape /artist/<slug>/ for artists not yet scraped → name, bio,
-//      portrait, socials.
+//   2. Scrape /artist/<slug>/ for artists not yet scraped → name, portrait,
+//      socials, ids; fetch the bio from the WP users API; park the blob.
 //
 // --approved (forwarded by harvest-links-loop.mjs) restricts Phases 1–2
 // to directory artists (directory_status='approved'). Phase 0 seeding is
@@ -79,6 +94,7 @@
 //   node scripts/sync-hoer.mjs --limit=20      # cap posts (Phase 1) and artists (Phase 2) — for testing
 //   node scripts/sync-hoer.mjs --name="charlotte"  # Phase 2 only for artists whose name matches
 //   node scripts/sync-hoer.mjs --force         # re-scrape artist pages already done
+//   node scripts/sync-hoer.mjs --backfill      # revisit ALL artists; write only bio + socials + cache blob
 //   node scripts/sync-hoer.mjs --debug         # verbose per-item logging
 //   DRY_RUN=1 node scripts/sync-hoer.mjs       # fetch + log, no DB writes (cursor not advanced)
 //
@@ -104,6 +120,12 @@ const HOER_ORIGIN = "https://hoer.live";
 const args = process.argv.slice(2);
 const DEBUG = args.includes("--debug");
 const FORCE = args.includes("--force");
+// --backfill: revisit artists already scraped and write ONLY the fields
+// that a plain re-run would otherwise leave untouched or churn — the bio
+// (now sourced from the WP user API) and socials (block-selection fix) —
+// plus the api_response_cache harvest blob. Name/portrait writes are
+// skipped (already correct; re-writing just bumps timestamps / re-hosts).
+const BACKFILL = args.includes("--backfill");
 // --approved: restrict enrichment (Phases 1-2) to directory artists.
 // Seeding (Phase 0) always runs regardless — see module header.
 const APPROVED_ONLY = args.includes("--approved");
@@ -362,11 +384,19 @@ function parseArtistPage(html) {
   );
   const stageName = stageNameRaw ? htmlToText(stageNameRaw).trim() : null;
 
-  const bioRaw = firstMatch(
+  // WordPress user id. The /artist/<slug>/ page is a WP *author archive*;
+  // the numeric user id is in the <body> class (`author-<id>`). It keys the
+  // REST record where the bio actually lives — the page's own .artist__text
+  // is an empty placeholder filled client-side by JS, so it is NEVER in the
+  // server HTML we fetch (that is why an earlier version harvested 0 bios).
+  // The bio itself is fetched in Phase 2 (async); see scrapeArtists().
+  // Guest / orphan ppma_author terms have no author archive → no id → no bio.
+  // NB: `author-<slug>` (e.g. author-2hot2play) also appears in the body
+  // class; the trailing \b keeps \d+ from matching its leading digits.
+  const wpUserId = firstMatch(
     html,
-    /<div\b[^>]*class="[^"]*\bartist__text\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+    /<body\b[^>]*\bclass="[^"]*\bauthor-(\d+)\b[^"]*"/i
   );
-  const bio = bioRaw ? htmlToText(bioRaw) : null;
 
   // Portrait: an .artist__image div with inline background-image (class
   // and style can appear in either order). Absent div = no portrait.
@@ -379,16 +409,25 @@ function parseArtistPage(html) {
     if (um) imageUrl = largestImageUrl(decodeEntities(um[2]));
   }
 
-  // Socials: anchors inside .artist__socials.
-  const socialsBlock = firstMatch(
-    html,
-    /<div\b[^>]*class="[^"]*\bartist__socials\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i
-  );
+  // Socials: anchors inside .artist__socials. The page has TWO such blocks:
+  // a JS-template placeholder (all href="") that appears FIRST, then the
+  // real server-rendered block. Scan ALL blocks and keep only non-empty
+  // hrefs (the placeholder's empties never match href="([^"]+)"), deduping
+  // across blocks. An earlier version took only the first block → 0 socials.
   const socials = [];
-  if (socialsBlock) {
+  const seenSocial = new Set();
+  const socialsBlockRe =
+    /<div\b[^>]*class="[^"]*\bartist__socials\b[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  let socialsBlock;
+  while ((socialsBlock = socialsBlockRe.exec(html)) !== null) {
     const re = /href="([^"]+)"/gi;
     let m;
-    while ((m = re.exec(socialsBlock)) !== null) socials.push(decodeEntities(m[1]));
+    while ((m = re.exec(socialsBlock[1])) !== null) {
+      const href = decodeEntities(m[1]);
+      if (!href.trim() || seenSocial.has(href)) continue;
+      seenSocial.add(href);
+      socials.push(href);
+    }
   }
 
   // Location: best-effort only (rendered as a generic .btn with no
@@ -401,7 +440,7 @@ function parseArtistPage(html) {
   );
   const location = locRaw ? htmlToText(locRaw) || null : null;
 
-  return { stageName, bio, imageUrl, socials, location };
+  return { stageName, wpUserId, imageUrl, socials, location };
 }
 
 // WordPress serves resized derivatives like Name-1024x1024.jpeg; strip a
@@ -528,7 +567,10 @@ async function enumerateAndSeed() {
   const termIdToArtist = new Map(); // ppma_author id -> artistId
   for (const t of real) {
     const a = slugToArtist.get(String(t.slug).toLowerCase());
-    if (a && !a.deleted) termIdToArtist.set(t.id, a.artistId);
+    if (a && !a.deleted) {
+      termIdToArtist.set(t.id, a.artistId);
+      a.ppmaAuthorId = t.id; // stamp onto the entry for the Phase 2 cache blob
+    }
   }
 
   return { termIdToArtist, slugToArtist };
@@ -747,7 +789,7 @@ async function scrapeArtists(slugToArtist) {
     if (a.deleted) continue;
     if (APPROVED_ONLY && a.status !== "approved") continue;
     if (NAME_FILTER && !(a.name ?? "").toLowerCase().includes(NAME_FILTER.toLowerCase())) continue;
-    if (!FORCE && processed.has(a.artistId)) {
+    if (!FORCE && !BACKFILL && processed.has(a.artistId)) {
       const failedUrl = failureUrls.get(a.artistId);
       if (!(failedUrl != null && failedUrl !== a.url)) continue; // still processed → skip
     }
@@ -758,7 +800,8 @@ async function scrapeArtists(slugToArtist) {
 
   console.log(
     `Phase 2 (pages): ${targets.length} artist page(s) to scrape` +
-      (skippedProcessed > 0 && !FORCE ? ` (${skippedProcessed} already done)` : "") +
+      (skippedProcessed > 0 && !FORCE && !BACKFILL ? ` (${skippedProcessed} already done)` : "") +
+      (BACKFILL ? ", backfill (bio + socials + cache blob only)" : "") +
       (APPROVED_ONLY ? ", approved only" : "") +
       "."
   );
@@ -800,10 +843,28 @@ async function scrapeArtists(slugToArtist) {
     const html = await res.text();
     const parsed = parseArtistPage(html);
 
+    // Bio lives on the WP *user* record and is injected into the page by
+    // JS at runtime — it is NOT in the server HTML. Fetch it from the REST
+    // API keyed by the id parsed from the page. No id (guest/orphan term)
+    // or no user record → no bio. The full user record is also parked in
+    // the api_response_cache blob below for future mining.
+    let wpUser = null;
+    let bio = null;
+    if (parsed.wpUserId) {
+      const { ok, data } = await hoerJson(`/wp-json/wp/v2/users/${parsed.wpUserId}`);
+      if (ok && data && !Array.isArray(data)) {
+        wpUser = data;
+        const rawDesc = typeof data.description === "string" ? data.description : "";
+        // htmlToText decodes entities + strips WP markup; normalize CRLF first.
+        const text = rawDesc ? htmlToText(rawDesc.replace(/\r\n?/g, "\n")) : "";
+        bio = text || null;
+      }
+    }
+
     if (DRY_RUN) {
       if (DEBUG)
         console.log(
-          `~ ${t.slug}: name=${parsed.stageName ?? "—"}, bio=${parsed.bio ? "yes" : "no"}, ` +
+          `~ ${t.slug}: name=${parsed.stageName ?? "—"}, bio=${bio ? "yes" : "no"}, ` +
             `image=${parsed.imageUrl ? "yes" : "no"}, socials=${parsed.socials.length}`
         );
       stats.ok++;
@@ -816,8 +877,10 @@ async function scrapeArtists(slugToArtist) {
       console.error(`  (${t.slug}: ${label} failed: ${err?.message ?? err})`);
     };
 
-    // Stage name → artists.name (replaces the seed placeholder).
-    if (parsed.stageName) {
+    // Stage name → artists.name (replaces the seed placeholder). Skipped in
+    // --backfill: names were captured on the original run and re-writing
+    // them is churn (this run targets bio + socials + the cache blob).
+    if (!BACKFILL && parsed.stageName) {
       const { error } = await supabase
         .from("artists")
         .update({ name: parsed.stageName })
@@ -827,11 +890,12 @@ async function scrapeArtists(slugToArtist) {
     }
 
     // Bio → biographies (platform='hoer') + artist_harvested_bios (raw).
-    if (parsed.bio) {
+    // Source is the WP user record (fetched above), not the page HTML.
+    if (bio) {
       const { error: bioErr } = await supabase
         .from("biographies")
         .upsert(
-          { artist_id: artistId, platform: "hoer", bio: parsed.bio, source_url: pageUrl },
+          { artist_id: artistId, platform: "hoer", bio, source_url: pageUrl },
           { onConflict: "artist_id,platform" }
         );
       if (bioErr) writeFailed("biography", bioErr);
@@ -839,14 +903,16 @@ async function scrapeArtists(slugToArtist) {
       const { error: rawErr } = await supabase
         .from("artist_harvested_bios")
         .upsert(
-          { artist_id: artistId, source_platform: "hoer", source_url: pageUrl, raw_bio: parsed.bio },
+          { artist_id: artistId, source_platform: "hoer", source_url: pageUrl, raw_bio: bio },
           { onConflict: "artist_id,source_platform" }
         );
       if (rawErr) writeFailed("raw bio audit", rawErr);
     }
 
     // Portrait → artist_images (platform='hoer'); store-images.mjs re-hosts.
-    if (parsed.imageUrl) {
+    // Skipped in --backfill (already captured; re-writing bumps fetched_at
+    // and can re-trigger re-hosting).
+    if (!BACKFILL && parsed.imageUrl) {
       const { error } = await supabase.from("artist_images").upsert(
         {
           artist_id: artistId,
@@ -858,7 +924,7 @@ async function scrapeArtists(slugToArtist) {
       );
       if (error) writeFailed("artist_images", error);
       else stats.images++;
-    } else {
+    } else if (!parsed.imageUrl) {
       stats.noImage++;
     }
 
@@ -889,13 +955,51 @@ async function scrapeArtists(slugToArtist) {
       else stats.links += ins?.length ?? 0;
     }
 
+    // Durable harvest blob → api_response_cache (namespace 'hoer-artist',
+    // key = slug). HÖR exposes no single per-artist API payload, so we
+    // assemble one: the raw WP user record + the fields parsed from the page
+    // + the ids (WP user id, ppma_author term id). This lets any field we
+    // don't extract yet be mined later without re-scraping — the same durable
+    // "park the whole payload" role sync-discogs.mjs uses for 'discogs-artist'.
+    // Keyed on slug (universal + stable, matches artist_links.handle); the
+    // WP user id isn't universal (guest/orphan terms lack one). See
+    // supabase_migration_api_response_cache.sql.
+    {
+      const payload = {
+        slug: t.slug,
+        wp_user_id: parsed.wpUserId ? Number(parsed.wpUserId) : null,
+        ppma_author_id: t.ppmaAuthorId ?? null,
+        canonical_url: pageUrl,
+        extracted: {
+          stageName: parsed.stageName ?? null,
+          bio,
+          imageUrl: parsed.imageUrl ?? null,
+          socials: parsed.socials,
+          location: parsed.location ?? null,
+        },
+        wp_user: wpUser,
+      };
+      const { error } = await supabase
+        .from("api_response_cache")
+        .upsert(
+          {
+            namespace: "hoer-artist",
+            cache_key: t.slug,
+            payload,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: "namespace,cache_key" }
+        );
+      if (error) writeFailed("cache blob", error);
+    }
+
     if (allWritesOk) {
       await clearFailure(supabase, { artistId, service: STATE_SERVICE });
       await markProcessed(artistId);
       stats.ok++;
       if (DEBUG)
         console.log(
-          `✓ ${t.slug}: ${parsed.stageName ?? "(no name)"}${parsed.bio ? ", bio" : ""}` +
+          `✓ ${t.slug}: ${parsed.stageName ?? "(no name)"}${bio ? ", bio" : ""}` +
             `${parsed.imageUrl ? ", image" : ""}${candidates.length ? `, ${candidates.length} social(s)` : ""}`
         );
     } else {
