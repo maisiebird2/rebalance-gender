@@ -221,7 +221,6 @@ CREATE TABLE IF NOT EXISTS "public"."artist_enrichment" (
     "follower_count" integer,
     "track_count" integer,
     "recent_tracks" "jsonb",
-    "raw_data" "jsonb",
     "last_synced_at" timestamp with time zone,
     "sync_error" "text",
     "bio_sanitized" "text",

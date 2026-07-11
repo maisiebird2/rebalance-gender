@@ -107,8 +107,9 @@
 //     rather than shipping a field that would silently always be
 //     empty.
 //   - Release credits/about text. Captured opportunistically into
-//     raw_data when a redirected track/album page happens to have
-//     it, but not promoted to a first-class column — flagged as a
+//     the archived page blob (api_response_cache, namespace
+//     'bandcamp_page') when a redirected track/album page happens to
+//     have it, but not promoted to a first-class column — flagged as a
 //     future collaboration-signal enhancement, same status Discogs'
 //     members/groups fields have in PIPELINE.md.
 //
@@ -744,15 +745,6 @@ export async function syncArtist(artist, opts = {}) {
         track_count: albums.length || null,
         recent_tracks: null,
         playlists: null,
-        raw_data: {
-          location: sidebar.location,
-          band_name: sidebar.bandName,
-          links: sidebar.links,
-          tags: sidebar.tags,
-          about: sidebar.about,
-          credits: sidebar.credits,
-          final_url: finalUrl,
-        },
         last_synced_at: new Date().toISOString(),
         sync_error: null,
       },
@@ -764,6 +756,31 @@ export async function syncArtist(artist, opts = {}) {
       await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
       await sleep(300);
       return { status: "failed_write" };
+    }
+
+    // Raw scraped page fields → api_response_cache (namespace 'bandcamp_page',
+    // cache_key = artist_id), not artist_enrichment.raw_data (dropped — see
+    // supabase_migration_move_raw_data_to_cache.sql). Best-effort archival:
+    // re-fetchable, so a failure here is logged but doesn't fail the sync.
+    const { error: cacheError } = await supabase.from("api_response_cache").upsert(
+      {
+        namespace: "bandcamp_page",
+        cache_key: String(artistId),
+        payload: {
+          location: sidebar.location,
+          band_name: sidebar.bandName,
+          links: sidebar.links,
+          tags: sidebar.tags,
+          about: sidebar.about,
+          credits: sidebar.credits,
+          final_url: finalUrl,
+        },
+        fetched_at: new Date().toISOString(),
+      },
+      { onConflict: "namespace,cache_key" }
+    );
+    if (cacheError) {
+      console.error(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
     }
 
     // Image → artist_images (artist_id, platform), not

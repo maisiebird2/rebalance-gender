@@ -31,7 +31,7 @@ flowchart TD
         direction TB
         P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
         P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
-        P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs<br/>(linktree planned)"]
+        P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs · sync-linktree.mjs"]
         P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
         P2EF["2e/2f · Cleanup (one-off)<br/>fix-http-https-mismatches<br/>clean-bandcamp-urls"]
         P2A --> P2D
@@ -407,8 +407,11 @@ everything that resource answers:
   (deduped against existing aliases and the artist's own name; never a
   wholesale delete+insert, so human-entered aliases are preserved).
   Discogs `aliases` — *separate* personas/side-projects — are
-  deliberately **not** written, since collapsing a different identity
-  into one directory entry is usually wrong.
+  deliberately **not** written to `artist_aliases`, since collapsing a
+  different identity into one directory entry is usually wrong. They are
+  not discarded, though: the full response (below) retains them for
+  possible later use — see Planned changes → "Harvest Discogs `aliases`
+  from the stored blobs".
 - **Real name** (`realname`) → `artist_legal_names` (`platform =
   'discogs'`), a **private** table with no public read (see
   `supabase_migration_artist_legal_names.sql`) — shared with HÖR's
@@ -427,6 +430,17 @@ everything that resource answers:
   related Discogs artist is also in our DB (matched via its own Discogs
   link) — mirrors `enrich-musicbrainz.mjs`. This is the
   recommendation-engine payoff of the expanded sync.
+- **The full raw response** → `api_response_cache` (namespace
+  `discogs-artist`, cache_key = the numeric Discogs id), upserted on
+  every successful fetch and part of the same all-writes-succeeded gate
+  as the concerns above. This table has **no TTL** (2026-07-10 — see
+  MATCHING.md → "Response cache"), so the blob persists as a durable
+  archive: any field the fan-out doesn't extract yet — `aliases`,
+  `images`, `data_quality`, … — can be mined later without re-calling
+  the rate-limited API. There is no `artist_id` column; a blob is
+  reconnected to its artist by parsing the Discogs id out of the
+  artist's `artist_links` (`platform = 'discogs'`) row — the same
+  `discogsIdToArtist` map the script already builds for collaborations.
 
 Because it still stages links, it stays a full member of the 2c/2d
 convergence loop. Processed state uses a **new** `resolved_artists`
@@ -458,11 +472,70 @@ Developers → "Generate new token").
 `supabase_migration_biographies.sql` (new bios table), and
 `supabase_migration_artist_legal_names.sql` (private real/legal-name table).
 
-Still planned: `harvest-links-linktree.mjs` (or, following this pattern,
-a `sync-linktree.mjs`). Bandcamp link harvesting is done — folded into
-`sync-bandcamp.mjs` (2b) rather than built as a separate 2c script,
-since it's the same page fetch as the discography scrape; 2b runs in
-this same convergence loop.
+Bandcamp link harvesting is done — folded into `sync-bandcamp.mjs` (2b)
+rather than built as a separate 2c script, since it's the same page
+fetch as the discography scrape; 2b runs in this same convergence loop.
+
+#### `sync-linktree.mjs` — ✅ Linktree sync (2026-07-10)
+
+The Linktree analog of `sync-soundcloud.mjs` / `sync-bandcamp.mjs`. For
+each artist with a `linktree` link in `artist_links`, it fetches the
+`linktr.ee` page once and fans the result out:
+
+- **External links** → staged into `artist_harvested_links`
+  (`source_platform = 'linktree'`); promoted by 2d as usual. A Linktree
+  page exists precisely to list an artist's other platforms, and those
+  links are themselves discovered mid-loop, so this is a full member of
+  the 2c/2d convergence loop (`harvest-links-loop.mjs`).
+- **Bio / tagline** → `biographies` (`platform = 'linktree'`) + the raw
+  text into `artist_harvested_bios` (audit trail). Genres are **not**
+  parsed from it here — Linktree taglines often carry genre hints
+  ("HARD TECHNO/HARD MUSIC DJ AND PRODUCER"), but pulling genres from
+  freeform bios is a deliberate future cross-platform pass over
+  `artist_harvested_bios`, not bolted onto this script.
+- **Profile image** → `artist_images` (`platform = 'linktree'`),
+  approved-only (checked inside `syncArtist`, since Linktree links get
+  attached to non-directory `sc_followee` nodes too), re-hosted by
+  `store-images.mjs` (5b). Deliberately **held back from the public
+  display rotation** for now — a Linktree avatar is sometimes a logo or
+  event flyer, not an artist photo — via the `platform = 'linktree'`
+  exclusion in `src/lib/artist-images.ts` (`DISPLAY_EXCLUDED_PLATFORMS`).
+  Still captured/re-hosted so the decision can be revisited.
+
+**Link classification — the Linktree-specific twist.** Unlike the
+curated "my links" lists the other harvesters read, a Linktree commonly
+holds dozens of one-off links (event tickets, merch, a single release).
+Classifying those as `other` would flood staging and, worse, let 2d
+promote one arbitrary junk `other` link (since `other` *is* a
+`platforms` key). So a recognized domain gets its canonical platform
+key, and **every unrecognized domain is staged under its bare domain**
+(e.g. `dice.fm`) as `parsed_platform`, never `other`. 2d only promotes
+rows whose `parsed_platform` is a `platforms` key, so bare-domain rows
+stay staged and un-promoted until that domain is added to the known
+list — then a 2d re-run promotes the already-gathered backlog.
+
+**Wrong-field guard + failures.** The stored link's host is checked
+against `linktr.ee` before any fetch; a mismatch is flagged
+(`harvest_failures`, service `linktree-sync`) and marked processed, with
+the same link-changed cross-check the other syncs use. Parsing reads the
+`__NEXT_DATA__` JSON blob (`linktr.ee` is a Next.js app that SSRs the
+profile data), with HTML fallbacks (`og:description`, the
+`ugc.production.linktr.ee` avatar, body anchors). No token, no headless
+browser. Every run also writes `sync-linktree-failures-<ts>.csv` one
+level up from the repo.
+
+```bash
+npm run sync-linktree
+npm run sync-linktree -- --approved    # directory artists only
+npm run sync-linktree -- --limit=20    # test run
+npm run sync-linktree -- --force       # re-process all
+npm run sync-linktree -- --debug       # log every link classified
+DRY_RUN=1 npm run sync-linktree        # fetch + log, no writes
+```
+
+**Migration to run first:** `supabase_migration_biographies.sql` (the
+`biographies` table, shared with `sync-discogs.mjs`) — no token needed
+(`linktr.ee` pages are public).
 
 #### `harvest-links-loop.mjs` — the 2b+2c+2d convergence loop
 Runs the link harvesters — the 2c direct-link harvesters plus 2b
@@ -1198,9 +1271,10 @@ pipeline script or submit form touches it.
   `service`) holding the *current* failure for that pair, cleared on
   the next success. Written by `sync-soundcloud.mjs`
   (service = `soundcloud-sync`), `sync-bandcamp.mjs`
-  (service = `bandcamp-sync`), and, as of 2026-07-10, `sync-discogs.mjs`
-  (service = `discogs-sync`); adopting it in the remaining Phase 2
-  harvester (Linktree, when built) is still open.
+  (service = `bandcamp-sync`), `sync-discogs.mjs`
+  (service = `discogs-sync`), and, as of 2026-07-10, `sync-linktree.mjs`
+  (service = `linktree-sync`) — so every Phase 2 harvester now writes to
+  it.
 
 ---
 
@@ -1212,6 +1286,7 @@ npm run sync-soundcloud
 # Phase 2 link-harvest convergence loop (2b+2c+2d) —
 # or run the whole loop at once with `npm run harvest-links-loop`
 npm run sync-discogs            # 2c
+npm run sync-linktree           # 2c (also bio + image)
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
 node scripts/integrate-harvested-links.mjs   # 2d
 node scripts/fix-http-https-mismatches.mjs   # 2e
@@ -1392,8 +1467,13 @@ that implement it:
 
 ```
 Phase 2c:
-  harvest-links-discogs.mjs     ✅ BUILT (2026-07-03) — see Phase 2c
-  harvest-links-linktree.mjs    see below
+  harvest-links-discogs.mjs     ✅ BUILT (2026-07-03), then ✅ replaced by
+                                sync-discogs.mjs (2026-07-10) — see Phase 2c
+  harvest-links-linktree.mjs    ✅ DONE (2026-07-10) — built as
+                                sync-linktree.mjs (following the sync-*
+                                pattern) rather than a link-only harvester,
+                                since the same page fetch also yields the
+                                bio and profile image. See Phase 2c.
   harvest-links-bandcamp.mjs    ✅ DONE (2026-07-09) — folded into
                                 sync-bandcamp.mjs (Phase 2b) instead of
                                 built as a separate script, since it's
@@ -1519,7 +1599,15 @@ token — the full directory in ~25 minutes. Before building, run
 stored Discogs links are valid (the CSV-derived ones were
 best-effort).
 
-### New harvester: `harvest-links-linktree.mjs`
+### New harvester: `harvest-links-linktree.mjs` — ✅ DONE (2026-07-10, built as `sync-linktree.mjs`)
+
+Built as `sync-linktree.mjs` (Phase 2c above), following the `sync-*`
+pattern rather than a link-only harvester: the same page fetch also
+captures the bio (→ `biographies` + `artist_harvested_bios`) and the
+profile image (→ `artist_images`, approved-only, held out of the display
+rotation for now). Links unrecognized by the classifier are staged under
+their bare domain (never `other`) so 2d retains-but-promotes-known-only.
+The original rationale below stands.
 
 Artists with an `artist_links` row for `linktree` (extracted from
 SoundCloud bios by 2a, or submitted/edited directly) already have a
@@ -1539,6 +1627,84 @@ SoundCloud and Spotify.
 `artist_links` only — see `scripts/migrate-linktree-to-links.ts` for
 the one-time migration. This harvester should read its seed URLs from
 `artist_links` (platform = `linktree`), not from `artists`.)
+
+### Move `artist_enrichment.raw_data` into `api_response_cache` — ✅ DONE (2026-07-10)
+
+`raw_data` stored the full raw API/page payload per enrichment row.
+It was written in three places (`sync-soundcloud.mjs`,
+`sync-bandcamp.mjs`, `build-soundcloud-follow-graph.mjs`) and read
+only by the ad-hoc diagnostic `scripts/find-sc-followee-duplicates.sql`
+(never by the app) — just-in-case archival, which is exactly
+`api_response_cache`'s contract (re-fetchable memoization: "safe to
+delete, we'd just re-fetch"). Two concrete costs of leaving it where
+it was:
+
+- The website's queries select `artist_enrichment(*)`, so every
+  artist page load dragged the full raw blob over the wire unused.
+- `build-soundcloud-follow-graph.mjs` chunks its inserts to 50 rows
+  specifically because `raw_data` blobs push request payloads large
+  enough to drop the Supabase connection.
+
+Built: the three writers now upsert into `api_response_cache` directly
+— namespace `soundcloud_user` (sync-soundcloud + follow-graph) and
+`bandcamp_page` (sync-bandcamp), **cache_key = `artist_id`** (1:1 with
+the enrichment row it replaced; namespace carries the platform so an
+artist's SoundCloud and Bandcamp blobs don't collide). These writes are
+best-effort/non-fatal — the blob is re-fetchable, so a cache-write
+error is logged but doesn't fail the sync. The follow-graph builder now
+carries the blob in the cache upsert (chunked to 50) rather than in the
+enrichment rows, which are now small. `supabase_migration_move_raw_data_to_cache.sql`
+copies existing blobs over (guarded + idempotent) and drops the column;
+`find-sc-followee-duplicates.sql` was repointed to read the SoundCloud
+permalink from `api_response_cache` (namespace `soundcloud_user`).
+Schema snapshots updated. NOTE: unlike the original plan's aside, the
+column was **not** "read by nothing" — the followee-dedup diagnostic
+read it, hence the query port.
+
+Explicitly **not** moving, for the record (assessed 2026-07-10):
+`artist_enrichment.recent_tracks` and `.playlists` are product data
+rendered on the artist page (track embeds, zero-upload playlist
+fallback), and `pending_artist_links.api_data` is per-candidate
+review evidence read by the review export. Keep `api_response_cache`
+strictly for content that can be truncated without losing anything.
+
+### Harvest Discogs `aliases` from the stored blobs
+
+`sync-discogs.mjs` deliberately skips the Discogs `aliases` field (a
+list of *separate* personas/side-projects, each `{ name, id,
+resource_url }`) — folding a distinct identity into an artist's
+`artist_aliases` would be wrong. But since 2026-07-10 the **full**
+`GET /artists/{id}` response is retained in `api_response_cache`
+(namespace `discogs-artist`, cache_key = numeric Discogs id, no TTL),
+so those aliases are already sitting in the database. They can be mined
+in a later pass **without any new API calls** — read the blobs, don't
+re-fetch.
+
+Sketch of that future script:
+
+1. Read every `api_response_cache` row where `namespace =
+   'discogs-artist'`, paginating (PostgREST caps unpaginated reads at
+   1000 — see the `fetchAll` helper already in `sync-discogs.mjs`).
+2. Build the Discogs-id → `artist_id` map from `artist_links`
+   (`platform = 'discogs'`), exactly as `discogsIdToArtist` is built
+   today, to attach each blob back to an artist (the cache table has no
+   `artist_id` column by design).
+3. For each blob, walk `payload.aliases[]`. Each alias carries its own
+   Discogs `id`/`resource_url`, so the *right* home is almost certainly
+   **not** `artist_aliases` but a relationship: if the aliased Discogs
+   artist is also in our DB (look its id up in the same map), record a
+   `collaborations`-style "related identity" edge (or a dedicated
+   `artist_related_identities` table if we want to distinguish "is a
+   side-project of" from "collaborated with"); if it isn't in our DB,
+   either skip it or stage the `resource_url` as a discovery lead.
+4. Track processed state in the DB per the project convention — a new
+   `resolved_artists` service (e.g. `discogs-aliases`), not a cache file.
+
+Open design question to settle before building: whether alias links
+become `collaborations` edges (simplest, reuses the recommender
+signal) or a new relationship kind. Decide when we pick this up. The
+same blob-mining pattern also unlocks `images` and `data_quality`
+later, should we want them.
 
 ### Related cleanups to fold in
 
@@ -1589,7 +1755,13 @@ the one-time migration. This harvester should read its seed URLs from
   `pending_artist_links` (via `alreadyResolved()`), and its `.cache/`
   disk-JSON response cache was moved into the `api_response_cache` table
   (`supabase_migration_api_response_cache.sql`; see MATCHING.md → "Response
-  cache (DB-backed)").
+  cache (DB-backed)"). **As of 2026-07-10 that table has no TTL** — the
+  read-side `CACHE_TTL_DAYS` cutoff and the commented age-based purge were
+  both removed so it can double as a durable blob store (a stored payload
+  is a permanent hit; force a refetch by deleting the row). `sync-discogs.mjs`
+  now also writes it (namespace `discogs-artist`) — see Phase 2c. Any future
+  cleanup of the ephemeral search namespaces must be `namespace <>`-scoped so
+  those durable rows survive.
 
   Still open: the genre harvesters' `.cache/` directories.
 - Replace the `.cache/` disk caches used by the genre harvesters with

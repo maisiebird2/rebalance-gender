@@ -849,7 +849,6 @@ export async function syncArtist(artist, opts = {}) {
         track_count: user.track_count ?? null,
         recent_tracks: null,
         playlists,
-        raw_data: user,
         last_synced_at: new Date().toISOString(),
         sync_error: null,
       },
@@ -863,6 +862,24 @@ export async function syncArtist(artist, opts = {}) {
       await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
       await sleep(300);
       return { status: "failed_write" };
+    }
+
+    // Raw /resolve payload → api_response_cache (namespace 'soundcloud_user',
+    // cache_key = artist_id), not artist_enrichment.raw_data (that column was
+    // dropped — see supabase_migration_move_raw_data_to_cache.sql). Best-effort
+    // archival: the blob is re-fetchable, so a write error here is logged but
+    // doesn't fail the sync or block marking the artist processed.
+    const { error: cacheError } = await supabase.from("api_response_cache").upsert(
+      {
+        namespace: "soundcloud_user",
+        cache_key: String(artistId),
+        payload: user,
+        fetched_at: new Date().toISOString(),
+      },
+      { onConflict: "namespace,cache_key" }
+    );
+    if (cacheError) {
+      console.error(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
     }
 
     // Booking/management/contact — best-effort, doesn't fail the sync.

@@ -469,7 +469,7 @@ function cleanScUrl(url) {
 async function upsertEnrichment(artistId, user) {
   if (DRY_RUN) return { error: null };
 
-  return supabaseWithRetry(() => supabase.from("artist_enrichment").upsert(
+  const result = await supabaseWithRetry(() => supabase.from("artist_enrichment").upsert(
     {
       artist_id: artistId,
       platform: "soundcloud",
@@ -481,12 +481,35 @@ async function upsertEnrichment(artistId, user) {
       follower_count: user.followers_count ?? null,
       track_count: user.track_count ?? null,
       recent_tracks: null, // tracks not fetched in this script
-      raw_data: user,
       last_synced_at: new Date().toISOString(),
       sync_error: null,
     },
     { onConflict: "artist_id,platform" }
   ));
+
+  // Raw payload → api_response_cache, not artist_enrichment.raw_data (that
+  // column was dropped — see supabase_migration_move_raw_data_to_cache.sql).
+  await cacheRawUser(artistId, user);
+  return result;
+}
+
+// Archive a raw SoundCloud user payload to api_response_cache (namespace
+// 'soundcloud_user', cache_key = artist_id). Best-effort: the blob is
+// re-fetchable archival only, so a write error is logged, not fatal.
+async function cacheRawUser(artistId, user) {
+  if (DRY_RUN) return;
+  const { error } = await supabaseWithRetry(() => supabase
+    .from("api_response_cache")
+    .upsert(
+      {
+        namespace: "soundcloud_user",
+        cache_key: String(artistId),
+        payload: user,
+        fetched_at: new Date().toISOString(),
+      },
+      { onConflict: "namespace,cache_key" }
+    ));
+  if (error) console.error(`  (cache raw_data for ${artistId} failed, non-fatal: ${error.message})`);
 }
 
 // ------------------------------------------------------------
@@ -634,9 +657,12 @@ async function main() {
     }
 
     // ---- Pass 2: batch-insert new artists in chunks of 50 ---------------
-    // Chunking keeps individual request payloads small (enrichment rows
-    // carry a full raw_data JSONB blob each — 50+ rows in one request can
-    // push hundreds of KB and drop the Supabase connection).
+    // Chunking keeps individual request payloads small. The raw SoundCloud
+    // payloads now go to api_response_cache (see cacheRawUser) rather than
+    // artist_enrichment.raw_data, so it's the cache upsert below that carries
+    // a full JSONB blob per row — 50+ blobs in one request can push hundreds
+    // of KB and drop the Supabase connection, so it's chunked alongside the
+    // artist/link/enrichment inserts.
     // PostgreSQL returns INSERT rows in insertion order within each chunk,
     // so index i of insertedArtists maps to chunk[i].
     const DB_CHUNK_SIZE = 50;
@@ -662,6 +688,7 @@ async function main() {
 
           const newLinks = [];
           const newEnrichments = [];
+          const newCacheRows = [];
 
           for (let i = 0; i < chunk.length; i++) {
             const { followed, normalized } = chunk[i];
@@ -690,9 +717,17 @@ async function main() {
               follower_count: followed.followers_count ?? null,
               track_count: followed.track_count ?? null,
               recent_tracks: null,
-              raw_data: followed,
               last_synced_at: new Date().toISOString(),
               sync_error: null,
+            });
+
+            // Raw payload → api_response_cache (namespace 'soundcloud_user',
+            // cache_key = artist_id), replacing artist_enrichment.raw_data.
+            newCacheRows.push({
+              namespace: "soundcloud_user",
+              cache_key: String(artistId),
+              payload: followed,
+              fetched_at: new Date().toISOString(),
             });
           }
 
@@ -712,6 +747,17 @@ async function main() {
             console.error(`  failed to batch-upsert enrichments (chunk ${chunkStart}): ${enrichError.message}`);
           } else {
             enrichmentUpserted += newEnrichments.length;
+          }
+
+          // Raw payloads → api_response_cache (best-effort archival; the blob
+          // is re-fetchable, so a failure here doesn't block edge-building).
+          const { error: cacheError } = await supabaseWithRetry(() =>
+            supabase
+              .from("api_response_cache")
+              .upsert(newCacheRows, { onConflict: "namespace,cache_key" })
+          );
+          if (cacheError) {
+            console.error(`  failed to batch-cache raw_data (chunk ${chunkStart}, non-fatal): ${cacheError.message}`);
           }
         }
       } else {

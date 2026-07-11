@@ -3,7 +3,10 @@
 --
 -- Table/column names per supabase_schema_current.sql:
 --   artists.directory_status (enum artist_status: 'sc_followee', 'approved', ...)
---   artist_enrichment.raw_data (jsonb) -> 'permalink_url'
+--   api_response_cache.payload (jsonb) -> 'permalink_url'  (namespace 'soundcloud_user',
+--     cache_key = artist_id::text — this is where the raw SoundCloud user payload
+--     lives since artist_enrichment.raw_data was moved out; see
+--     supabase_migration_move_raw_data_to_cache.sql)
 --   artist_links.url, artist_links.not_found (tombstone flag — excluded per project convention)
 --
 -- URL normalization: lowercased, strip scheme + "www.", strip trailing slash,
@@ -13,18 +16,19 @@ WITH followees AS (
   SELECT
     a.id                          AS followee_id,
     a.name                        AS followee_name,
-    ae.raw_data ->> 'permalink_url' AS permalink_url,
+    c.payload ->> 'permalink_url' AS permalink_url,
     lower(
       regexp_replace(
-        regexp_replace(ae.raw_data ->> 'permalink_url', '^https?://(www\.)?', ''),
+        regexp_replace(c.payload ->> 'permalink_url', '^https?://(www\.)?', ''),
         '/+$', ''
       )
     ) AS norm_url
   FROM artists a
-  JOIN artist_enrichment ae ON ae.artist_id = a.id
+  JOIN api_response_cache c
+    ON c.namespace = 'soundcloud_user'
+   AND c.cache_key = a.id::text
   WHERE a.directory_status = 'sc_followee'
-    AND ae.platform = 'soundcloud'          -- avoid detoasting raw_data for every other platform row
-    AND ae.raw_data ->> 'permalink_url' IS NOT NULL
+    AND c.payload ->> 'permalink_url' IS NOT NULL
 ),
 approved_links AS (
   SELECT
