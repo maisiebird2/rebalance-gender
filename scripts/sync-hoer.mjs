@@ -157,6 +157,22 @@ async function throttle() {
   lastCall = Date.now();
 }
 
+// ------------------------------------------------------------
+// Compact progress reporting. On an interactive terminal it rewrites a
+// single line (carriage return) so a long run shows a live counter; when
+// output is piped to a file/log it prints a fresh line each time instead
+// (callers already rate-limit how often they call it, e.g. every N items).
+// progressDone() ends the live line so the following summary sits clean.
+// ------------------------------------------------------------
+const IS_TTY = Boolean(process.stdout.isTTY);
+function progress(msg) {
+  if (IS_TTY) process.stdout.write(`\r${msg}[K`);
+  else console.log(msg);
+}
+function progressDone() {
+  if (IS_TTY) process.stdout.write("\n");
+}
+
 const UA = "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile enrichment)";
 
 async function hoerFetch(url, { retried = false } = {}) {
@@ -411,8 +427,10 @@ async function enumerateAndSeed() {
     }
     if (!Array.isArray(data) || data.length === 0) break;
     terms.push(...data);
+    progress(`  Phase 0: reading roster… ${terms.length} term(s)`);
     if (data.length < 100) break;
   }
+  progressDone();
 
   // 0b. Filter obvious junk terms (empty name AND zero posts — e.g. the
   // 'testtest'/'otyydrt' placeholder terms).
@@ -433,7 +451,10 @@ async function enumerateAndSeed() {
 
   let seeded = 0;
   let seedFailed = 0;
+  let checked = 0;
   for (const t of real) {
+    if (++checked % 100 === 0 || seeded % 50 === 49)
+      progress(`  Phase 0: seeding… ${checked}/${real.length} checked, ${seeded} new artist(s)`);
     const slug = String(t.slug).toLowerCase();
     if (existingSlugs.has(slug)) continue;
     if (DRY_RUN) {
@@ -475,6 +496,7 @@ async function enumerateAndSeed() {
     existingSlugs.add(slug);
     seeded++;
   }
+  progressDone();
 
   console.log(
     `Phase 0 (roster): ${terms.length} ppma_author term(s), ${real.length} real ` +
@@ -614,8 +636,10 @@ async function crawlSets(termIdToArtist, slugToArtist) {
         break outer;
       }
     }
+    progress(`  Phase 1: crawling sets… ${postCount} read (page ${page})`);
     if (data.length < 100) break;
   }
+  progressDone();
 
   // Stage genres in chunks.
   let stagedGenres = 0;
@@ -633,8 +657,14 @@ async function crawlSets(termIdToArtist, slugToArtist) {
 
   // Collaboration edges (each shared set = +1 to collab_count).
   let collabEdges = 0;
-  if (!DRY_RUN) {
-    for (const [a, b] of collabPairs) if (await upsertCollab(a, b)) collabEdges++;
+  if (!DRY_RUN && collabPairs.length) {
+    let done = 0;
+    for (const [a, b] of collabPairs) {
+      if (await upsertCollab(a, b)) collabEdges++;
+      if (++done % 50 === 0)
+        progress(`  Phase 1: writing collab edges… ${done}/${collabPairs.length}`);
+    }
+    progressDone();
   }
 
   // Advance the cursor — but NOT when --limit truncated the crawl (we'd
@@ -735,7 +765,13 @@ async function scrapeArtists(slugToArtist) {
 
   const stats = { name: 0, bios: 0, images: 0, links: 0, noImage: 0, failed: 0, ok: 0 };
 
+  let done = 0;
   for (const t of targets) {
+    if (++done % 10 === 0 || done === targets.length)
+      progress(
+        `  Phase 2: scraping pages… ${done}/${targets.length} — ` +
+          `${stats.ok} ok, ${stats.images} image(s), ${stats.failed} failed`
+      );
     const artistId = t.artistId;
     const pageUrl = t.url || `${HOER_ORIGIN}/artist/${t.slug}/`;
     let res;
@@ -873,6 +909,7 @@ async function scrapeArtists(slugToArtist) {
       });
     }
   }
+  progressDone();
 
   console.log(
     `Phase 2 result: ${stats.ok} page(s) ok — ${stats.name} name(s), ${stats.bios} bio(s), ` +
