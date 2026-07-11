@@ -386,9 +386,10 @@ harvested. A URL that isn't a real Bandcamp artist subdomain (e.g. a
 saved `bandcamp.com/search?...` link) is rejected before any fetch —
 see the wrong-field guard in the script header. Not harvested: fan/
 supporter counts (loaded client-side, not in the static HTML) and
-release credits text (captured opportunistically into `raw_data`, not
-promoted to a column — a future collaboration-signal enhancement, same
-status as Discogs' `members`/`groups`).
+release credits text (captured opportunistically into the archived page
+blob in `api_response_cache`, namespace `bandcamp_page`, not promoted to
+a column — a future collaboration-signal enhancement, same status as
+Discogs' `members`/`groups`).
 
 **Runs inside the 2d convergence loop.** Because 2b both *stages*
 links (its sidebar → `artist_harvested_links`) and *consumes* links (it
@@ -1784,6 +1785,13 @@ permalink from `api_response_cache` (namespace `soundcloud_user`).
 Schema snapshots updated. NOTE: unlike the original plan's aside, the
 column was **not** "read by nothing" — the followee-dedup diagnostic
 read it, hence the query port.
+
+Migration applied live 2026-07-10 and verified: 134,576 / 134,588
+SoundCloud blobs copied (the 12 uncopied rows had a NULL `raw_data` and
+were already excluded by the diagnostic's `IS NOT NULL` filter, so no
+regression), 580 / 580 Bandcamp, column dropped. Optional follow-up to
+reclaim the toasted blob space early: `VACUUM (ANALYZE) artist_enrichment;`
+(autovacuum handles it otherwise).
 
 Explicitly **not** moving, for the record (assessed 2026-07-10):
 `artist_enrichment.recent_tracks` and `.playlists` are product data

@@ -127,12 +127,19 @@ Behaviour worth knowing:
   as a hit regardless of age and is refreshed only by an upsert over the
   same key (delete a row to force a refetch); `--dry-run` reads the cache
   but writes nothing. Run `supabase_migration_api_response_cache.sql`
-  once before first use. The table also doubles as a durable harvest
-  store — `sync-discogs.mjs` parks the full Discogs artist response here
-  under namespace `discogs-artist` (cache_key = numeric Discogs id) so
-  unextracted fields (`aliases`, `images`, ...) can be mined later without
-  re-calling the API. Any manual cleanup of the ephemeral search
-  namespaces must be scoped by `namespace` so those durable rows survive.
+  once before first use. The table also doubles as a durable archival
+  store under its own namespaces: `sync-discogs.mjs` parks the full
+  Discogs artist response under `discogs-artist` (cache_key = numeric
+  Discogs id) so unextracted fields (`aliases`, `images`, ...) can be
+  mined later without re-calling the API; and the raw enrichment payloads
+  that used to live in `artist_enrichment.raw_data` now live here under
+  `soundcloud_user` / `bandcamp_page` (cache_key = `artist_id`), written
+  by `sync-soundcloud.mjs`, `sync-bandcamp.mjs`, and
+  `build-soundcloud-follow-graph.mjs` (see PIPELINE.md → "Move
+  `artist_enrichment.raw_data`…"; `find-sc-followee-duplicates.sql` reads
+  the SoundCloud permalink back from `soundcloud_user`). Any manual
+  cleanup of the ephemeral search namespaces (lastfm/mb/spotify) must be
+  scoped by `namespace` so these durable archival rows survive.
 - **Rate limits**: Last.fm ~4 req/s, MusicBrainz 1 req/s (strict),
   Spotify 10 req/s. A full run over ~1,450 artists is dominated by the
   MusicBrainz throttle.
