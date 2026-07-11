@@ -9,15 +9,18 @@
 --   a local .cache/ directory of JSON files. Per the project rule "write to
 --   the database, not cache files", that memoization now lives here instead.
 --
---   This is a pure response cache: it stores raw API payloads keyed by
---   (namespace, cache_key) so repeat lookups skip the rate-limited external
---   call. It does NOT track "what has been processed" — that has always been
---   derived from pending_artist_links (see alreadyResolved() in the script).
+--   This stores raw API payloads keyed by (namespace, cache_key) so repeat
+--   lookups skip the rate-limited external call. It does NOT track "what has
+--   been processed" — that has always been derived from pending_artist_links
+--   (see alreadyResolved() in the script).
 --
---   Rows older than the script's CACHE_TTL_DAYS are treated as misses and
---   refetched; the script upserts a fresh payload + fetched_at on write, so
---   stale rows are naturally overwritten rather than accumulating. An
---   optional periodic cleanup is provided at the bottom.
+--   There is NO TTL / expiry. Rows are durable: consumers treat any stored
+--   payload as a hit regardless of age, and refresh a row only by upserting a
+--   new payload over the same (namespace, cache_key). This lets the table
+--   double as a permanent harvest store — e.g. sync-discogs.mjs parks the full
+--   Discogs artist response here (namespace 'discogs-artist') so fields it
+--   doesn't yet extract can be mined later without re-calling the API. Do not
+--   add a blanket age-based purge; it would delete those durable payloads.
 --
 -- Safe to re-run (IF NOT EXISTS / idempotent GRANT).
 
@@ -29,7 +32,7 @@ CREATE TABLE IF NOT EXISTS "public"."api_response_cache" (
   PRIMARY KEY ("namespace", "cache_key")
 );
 
--- Supports the TTL filter (fetched_at >= cutoff) and any age-based cleanup.
+-- Kept for ad-hoc inspection / ordering by recency. No TTL depends on it.
 CREATE INDEX IF NOT EXISTS "api_response_cache_fetched_at_idx"
   ON "public"."api_response_cache" ("fetched_at");
 
@@ -40,7 +43,9 @@ ALTER TABLE "public"."api_response_cache" ENABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON TABLE "public"."api_response_cache" TO "service_role";
 
--- Optional: purge entries older than 30 days. Safe to run anytime; the
--- script refetches on miss. Uncomment to run manually or wire to a cron job.
--- DELETE FROM "public"."api_response_cache"
---  WHERE "fetched_at" < now() - interval '30 days';
+-- NOTE: intentionally NO age-based purge. If you ever need to trim the
+-- ephemeral search-cache namespaces (lastfm/mb/spotify), scope the delete by
+-- namespace so durable harvest payloads are preserved, e.g.:
+--   DELETE FROM "public"."api_response_cache"
+--    WHERE "fetched_at" < now() - interval '90 days'
+--      AND "namespace" <> 'discogs-artist';

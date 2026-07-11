@@ -91,17 +91,16 @@ const err  = (msg, ...a) => console.error(fmt('ERROR',  msg), ...a)
 // than on disk, so the pipeline keeps all state in the database (see
 // supabase_migration_api_response_cache.sql). This is a fetch cache only —
 // "what has been processed" is still derived from pending_artist_links via
-// alreadyResolved(). Rows older than CACHE_TTL_DAYS count as misses and are
-// refetched. cacheGet returns the stored payload, or null on miss / stale / error.
-const CACHE_TTL_DAYS = 30
+// alreadyResolved(). There is no TTL: any stored payload counts as a hit
+// regardless of age, and a row is refreshed only by upserting a new payload
+// over it (cacheSet). To force a refetch, delete the row. cacheGet returns the
+// stored payload, or null on miss / error.
 async function cacheGet(ns, key) {
-  const cutoff = new Date(Date.now() - CACHE_TTL_DAYS * 86_400_000).toISOString()
   const { data, error } = await supabase
     .from('api_response_cache')
     .select('payload')
     .eq('namespace', ns)
     .eq('cache_key', key)
-    .gte('fetched_at', cutoff)
     .maybeSingle()
   if (error) { warn(`Cache read failed (${ns}): ${error.message}`); return null }
   return data ? data.payload : null

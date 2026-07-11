@@ -33,6 +33,12 @@
 //                                     Discogs artist is also in our DB
 //                                     (matched via its own Discogs link).
 //                                     Mirrors enrich-musicbrainz.mjs.
+//   - The FULL raw response        → api_response_cache (namespace
+//                                     'discogs-artist', cache_key = numeric
+//                                     Discogs id). A durable, TTL-less blob so
+//                                     fields we don't extract yet (`aliases`,
+//                                     `images`, `data_quality`, ...) can be
+//                                     mined later without re-calling the API.
 //
 // Because it stages links like any harvester, it is a full member of
 // the 2c/2d convergence loop (harvest-links-loop.mjs).
@@ -553,6 +559,28 @@ async function main() {
       allWritesOk = false;
       console.error(`  (${name}: ${label} failed: ${err?.message ?? err})`);
     };
+
+    // ---- Full response → api_response_cache (durable blob) ----
+    // Park the entire artist payload keyed by its Discogs id so fields we
+    // don't extract yet (e.g. `aliases`, `images`, `data_quality`) can be
+    // mined later without re-calling the rate-limited API. The table has no
+    // TTL, so these rows persist. Keyed on the numeric Discogs id (stable
+    // across old-format URL rewrites), not artist_id, so it doubles as a
+    // by-id response cache. See supabase_migration_api_response_cache.sql.
+    if (!DRY_RUN) {
+      const { error } = await supabase
+        .from("api_response_cache")
+        .upsert(
+          {
+            namespace: "discogs-artist",
+            cache_key: String(discogsId),
+            payload: data,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: "namespace,cache_key" }
+        );
+      if (error) writeFailed("cache blob", error);
+    }
 
     // ---- Links → artist_harvested_links (staged) ----
     const urls = Array.isArray(data.urls) ? data.urls : [];

@@ -123,11 +123,16 @@ Behaviour worth knowing:
   old `.cache/` disk-JSON cache (2026-07-05) to satisfy the project rule
   "write to the database, not cache files". It's a fetch cache only —
   "what has been processed" is still derived from `pending_artist_links`
-  via `alreadyResolved()`. Entries older than `CACHE_TTL_DAYS` (30) count
-  as misses and are refetched/overwritten; `--dry-run` reads the cache
+  via `alreadyResolved()`. There is **no TTL**: any stored payload counts
+  as a hit regardless of age and is refreshed only by an upsert over the
+  same key (delete a row to force a refetch); `--dry-run` reads the cache
   but writes nothing. Run `supabase_migration_api_response_cache.sql`
-  once before first use. Optional cleanup: delete rows older than 30 days
-  (query included, commented, in the migration).
+  once before first use. The table also doubles as a durable harvest
+  store — `sync-discogs.mjs` parks the full Discogs artist response here
+  under namespace `discogs-artist` (cache_key = numeric Discogs id) so
+  unextracted fields (`aliases`, `images`, ...) can be mined later without
+  re-calling the API. Any manual cleanup of the ephemeral search
+  namespaces must be scoped by `namespace` so those durable rows survive.
 - **Rate limits**: Last.fm ~4 req/s, MusicBrainz 1 req/s (strict),
   Spotify 10 req/s. A full run over ~1,450 artists is dominated by the
   MusicBrainz throttle.
