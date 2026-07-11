@@ -1,6 +1,6 @@
 -- Migration: site_stats table + daily approved-artist-count refresh
--- Append this to supabase_schema_current.sql and run against your live
--- Supabase database (SQL Editor). Safe to re-run (idempotent).
+-- Run against your live Supabase database (SQL Editor). Safe to re-run
+-- (idempotent).
 --
 -- Purpose: keep a cheap, precomputed count of directory ("approved")
 -- artists so the homepage reads ONE row instead of counting on every

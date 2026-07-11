@@ -1,5 +1,5 @@
 -- Migration: add mb_gender to artists, add songkick + tidal platforms
--- Append this to supabase_schema.sql and run against your live Supabase database.
+-- Run against your live Supabase database.
 
 -- 1. New column on artists to store gender as returned by MusicBrainz
 --    (e.g. 'Female', 'Male', 'Non-binary'). Kept separate from any

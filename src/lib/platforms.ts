@@ -4,7 +4,7 @@ import type { Platform } from "./types";
 /**
  * Fetches every profile-link category from the `platforms` lookup
  * table (replaces the old hardcoded LINK_FIELDS/PLATFORM_LABELS
- * lists — see supabase_schema.sql "replace the link_platform enum"
+ * lists — see the "replace the link_platform enum"
  * migration). Accepts either the anon or admin Supabase client since
  * `platforms` is publicly readable.
  */

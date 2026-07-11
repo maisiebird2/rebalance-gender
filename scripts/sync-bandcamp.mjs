@@ -13,6 +13,8 @@
 //   reason to keep probing)
 //     -> discography (album/track grid)      -> artist_bandcamp_albums
 //     -> bio text (#bio-text)                -> artist_enrichment.bio
+//                                                + biographies
+//                                                  (platform='bandcamp')
 //                                                + artist_harvested_bios
 //                                                  (raw audit trail)
 //     -> location (#band-name-location .location) -> artist_locations
@@ -653,8 +655,9 @@ async function fetchAllBandcampLinks() {
 // ------------------------------------------------------------
 // syncArtist — the single per-artist unit. Fetches one artist's
 // Bandcamp page and fans the result out to artist_bandcamp_albums,
-// artist_enrichment, artist_harvested_bios, artist_harvested_links,
-// artist_harvested_genres, and (best-effort) artist_locations.
+// artist_enrichment, biographies, artist_harvested_bios,
+// artist_harvested_links, artist_harvested_genres, and (best-effort)
+// artist_locations.
 // Returns a status object the CLI loop uses for its summary tallies.
 //
 // opts.artistIdsWithLocation — a mutable Set<artist_id> the caller
@@ -835,6 +838,23 @@ export async function syncArtist(artist, opts = {}) {
         { onConflict: "artist_id,source_platform" }
       );
       if (bioError) noteWriteFailure("artist_harvested_bios", bioError.message);
+
+      // Display-ready bio → biographies (platform='bandcamp'), the
+      // one-bio-per-artist-per-platform home. Same pattern as sync-discogs: raw
+      // text stays in artist_harvested_bios (above) as an audit trail, the
+      // display bio lands here. Bandcamp's scraped bio is already plain text, so
+      // it's the same string in both — no "Bandcamp bio:" prefix, since platform
+      // is its own column here (unlike the shared artist_enrichment.bio field).
+      const { error: biographyError } = await supabase.from("biographies").upsert(
+        {
+          artist_id: artistId,
+          platform: "bandcamp",
+          bio: sidebar.bio,
+          source_url: bcUrl,
+        },
+        { onConflict: "artist_id,platform" }
+      );
+      if (biographyError) noteWriteFailure("biographies", biographyError.message);
     }
 
     if (candidates.length > 0) {

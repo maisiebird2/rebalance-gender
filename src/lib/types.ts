@@ -1,4 +1,5 @@
-// TypeScript types mirroring supabase_schema.sql
+// TypeScript types mirroring the Supabase public schema (inspect live via
+// read-only psql — see .env.local SUPABASE_DB_URL)
 
 export type ArtistStatus =
   | "approved"

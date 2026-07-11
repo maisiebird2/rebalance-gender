@@ -1,7 +1,7 @@
 -- Migration: site_content table — editable, singleton text blocks
 -- (e.g. the public /about page) managed from the admin panel.
--- Append this to supabase_schema_current.sql and run against your live
--- Supabase database (SQL Editor). Safe to re-run (idempotent).
+-- Run against your live Supabase database (SQL Editor). Safe to re-run
+-- (idempotent).
 --
 -- Reads are public (anon) so pages like /about can render the copy;
 -- writes go through the service/secret key (admin panel) which bypasses
