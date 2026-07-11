@@ -94,7 +94,7 @@
 //   node scripts/sync-hoer.mjs --limit=20      # cap posts (Phase 1) and artists (Phase 2) — for testing
 //   node scripts/sync-hoer.mjs --name="charlotte"  # Phase 2 only for artists whose name matches
 //   node scripts/sync-hoer.mjs --force         # re-scrape artist pages already done
-//   node scripts/sync-hoer.mjs --backfill      # revisit ALL artists; write only bio + socials + cache blob
+//   node scripts/sync-hoer.mjs --backfill      # write only bio + socials + cache blob; resumable (skips already-blobbed)
 //   node scripts/sync-hoer.mjs --debug         # verbose per-item logging
 //   DRY_RUN=1 node scripts/sync-hoer.mjs       # fetch + log, no DB writes (cursor not advanced)
 //
@@ -125,6 +125,8 @@ const FORCE = args.includes("--force");
 // (now sourced from the WP user API) and socials (block-selection fix) —
 // plus the api_response_cache harvest blob. Name/portrait writes are
 // skipped (already correct; re-writing just bumps timestamps / re-hosts).
+// Resumable: artists that already have a 'hoer-artist' blob are skipped, so
+// a re-run only does what's left. --force with --backfill re-does all.
 const BACKFILL = args.includes("--backfill");
 // --approved: restrict enrichment (Phases 1-2) to directory artists.
 // Seeding (Phase 0) always runs regardless — see module header.
@@ -784,11 +786,39 @@ async function scrapeArtists(slugToArtist) {
   // processed on a 404 is retried automatically once its hoer link changes.
   const failureUrls = await loadFailureUrls(supabase, { service: STATE_SERVICE });
 
+  // Backfill resume guard: slugs that already have a 'hoer-artist' cache
+  // blob were handled by an earlier --backfill pass, so skip them on a
+  // resume (--backfill re-targets EVERYONE otherwise). --force overrides,
+  // re-doing all. Only loaded when it can apply (paginated; PK has no id
+  // column, so order by cache_key). Blob cache_key == slug (lowercased).
+  const blobbedSlugs = new Set();
+  if (BACKFILL && !FORCE) {
+    let last = "";
+    while (true) {
+      const { data, error } = await supabase
+        .from("api_response_cache")
+        .select("cache_key")
+        .eq("namespace", "hoer-artist")
+        .gt("cache_key", last)
+        .order("cache_key", { ascending: true })
+        .limit(PAGE_SIZE);
+      if (error) throw error;
+      for (const r of data ?? []) blobbedSlugs.add(r.cache_key);
+      if ((data?.length ?? 0) < PAGE_SIZE) break;
+      last = data[data.length - 1].cache_key;
+    }
+  }
+
   let targets = [];
+  let skippedBlobbed = 0;
   for (const [slug, a] of slugToArtist) {
     if (a.deleted) continue;
     if (APPROVED_ONLY && a.status !== "approved") continue;
     if (NAME_FILTER && !(a.name ?? "").toLowerCase().includes(NAME_FILTER.toLowerCase())) continue;
+    if (BACKFILL && !FORCE && blobbedSlugs.has(slug)) {
+      skippedBlobbed++;
+      continue; // already backfilled in an earlier pass → skip
+    }
     if (!FORCE && !BACKFILL && processed.has(a.artistId)) {
       const failedUrl = failureUrls.get(a.artistId);
       if (!(failedUrl != null && failedUrl !== a.url)) continue; // still processed → skip
@@ -801,7 +831,8 @@ async function scrapeArtists(slugToArtist) {
   console.log(
     `Phase 2 (pages): ${targets.length} artist page(s) to scrape` +
       (skippedProcessed > 0 && !FORCE && !BACKFILL ? ` (${skippedProcessed} already done)` : "") +
-      (BACKFILL ? ", backfill (bio + socials + cache blob only)" : "") +
+      (BACKFILL ? `, backfill (bio + socials + cache blob only)` : "") +
+      (skippedBlobbed > 0 ? ` — ${skippedBlobbed} already blobbed, skipped` : "") +
       (APPROVED_ONLY ? ", approved only" : "") +
       "."
   );
