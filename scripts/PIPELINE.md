@@ -209,7 +209,11 @@ resource). This stage calls it once and fans the result out:
   the old 2b.
 - **Raw bio** — the full, unparsed bio text is kept in
   `artist_harvested_bios` as a raw-bio audit trail, alongside the
-  parsed/cleaned bio that reaches the live `artist_enrichment.bio`.
+  parsed/cleaned bio that reaches the live `artist_enrichment.bio` and
+  `biographies` (`platform = 'soundcloud'`, the one-bio-per-artist-per-
+  platform home shared with Bandcamp/Discogs). See
+  `supabase_migration_backfill_soundcloud_bandcamp_bios.sql` for the
+  one-time backfill of pre-existing bios out of `artist_harvested_bios`.
 
 Two API calls per artist (`/resolve` + `/users/{urn}/web-profiles`)
 is the floor — SoundCloud has no endpoint that returns the user
@@ -381,9 +385,12 @@ discography —
 - **Discography** — album/track grid → `artist_bandcamp_albums` (the
   numeric IDs feed Bandcamp's embedded player). Same scrape
   `enrich-bandcamp.mjs` did.
-- **Bio** → `artist_enrichment` (`platform = 'bandcamp'`), plus the
-  raw bio into `artist_harvested_bios` as an audit trail (same pattern
-  SoundCloud's bio gets).
+- **Bio** → `artist_enrichment` (`platform = 'bandcamp'`) and
+  `biographies` (`platform = 'bandcamp'`, the one-bio-per-artist-per-
+  platform home), plus the raw bio into `artist_harvested_bios` as an
+  audit trail (same pattern SoundCloud's bio gets). Bandcamp's scraped
+  bio is already plain text, so the same string lands in `biographies`
+  and `artist_harvested_bios`.
 - **Profile image** → as of 2026-07-09, `artist_images` (`artist_id`,
   `platform='bandcamp'`), not `artist_enrichment.profile_image_url`
   (explicitly nulled there instead). Written as a raw `source_url`
@@ -480,9 +487,11 @@ everything that resource answers:
 - **Profile text** (`profile`) → `biographies` (new table; `platform =
   'discogs'`), with Discogs `[a=]`/`[url=]`/`[b]` markup stripped to
   plain text; the raw text also goes to `artist_harvested_bios` as an
-  audit trail (same as SoundCloud/Bandcamp). `biographies` is the new
-  one-bio-per-artist-per-platform home for bios; SoundCloud/Bandcamp
-  bios will be backfilled into it later.
+  audit trail (same as SoundCloud/Bandcamp). `biographies` is the
+  one-bio-per-artist-per-platform home for bios. SoundCloud (2a) and
+  Bandcamp (2b) now write it directly too; their pre-existing bios were
+  backfilled out of `artist_harvested_bios` by
+  `supabase_migration_backfill_soundcloud_bandcamp_bios.sql`.
 - **Group membership** (`members`/`groups`) → `collaborations` (the
   renamed, platform-neutral `mb_collaborations`; `source_platform =
   'discogs'`), one undirected edge per pair, but **only** when the
@@ -527,8 +536,7 @@ Requires `DISCOGS_TOKEN` in `.env.local` (discogs.com → Settings →
 Developers → "Generate new token").
 
 **Migrations to run first** (Supabase SQL editor):
-`supabase_migration_collaborations.sql` (rename + `source_platform`),
-`supabase_migration_biographies.sql` (new bios table), and
+`supabase_migration_collaborations.sql` (rename + `source_platform`) and
 `supabase_migration_artist_legal_names.sql` (private real/legal-name table).
 
 Bandcamp link harvesting is done — folded into `sync-bandcamp.mjs` (2b)
@@ -592,9 +600,7 @@ npm run sync-linktree -- --debug       # log every link classified
 DRY_RUN=1 npm run sync-linktree        # fetch + log, no writes
 ```
 
-**Migration to run first:** `supabase_migration_biographies.sql` (the
-`biographies` table, shared with `sync-discogs.mjs`) — no token needed
-(`linktr.ee` pages are public).
+No token needed (`linktr.ee` pages are public).
 
 #### `harvest-links-loop.mjs` — the 2a+2b+2c+2d convergence loop
 Runs every platform harvester — 2a (`sync-soundcloud.mjs`, which stages
@@ -913,8 +919,7 @@ deduplication**: comparing a followee's SoundCloud bio against bios from
 other sources (e.g. `sync-hoer` imports, which often arrive with no
 other platform links) helps match the same artist across sources when
 their names are spelled slightly differently — see Planned changes →
-"Bio-based cross-source dedup". Requires `supabase_migration_biographies.sql`
-to have been run.
+"Bio-based cross-source dedup".
 
 Uses the shared SoundCloud client in `scripts/lib/soundcloud.mjs`
 (OAuth + GET wrapper + followings pagination), shared with

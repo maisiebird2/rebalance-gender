@@ -8,7 +8,7 @@
 -- Find sc_followee artists whose SoundCloud permalink_url matches a URL
 -- already held by an approved artist (in any platform, via artist_links).
 --
--- Table/column names per supabase_schema_current.sql:
+-- Table/column names per the live schema (read-only psql via .env.local SUPABASE_DB_URL):
 --   artists.directory_status (enum artist_status: 'sc_followee', 'approved', ...)
 --   api_response_cache.payload (jsonb) -> 'permalink_url'  (namespace 'soundcloud_user',
 --     cache_key = artist_id::text — this is where the raw SoundCloud user payload

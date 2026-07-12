@@ -63,6 +63,16 @@
 // trail (old 2b staged it there too, but nothing consumed it — this
 // keeps that behavior, now as a deliberate audit record rather than a
 // dead end).
+// Two API calls per artist is the floor — SoundCloud has no endpoint
+// that returns the user resource and web-profiles together — down
+// from three under the old two-script version. The bio fans out three
+// ways: the parsed/cleaned bio goes to the live artist_enrichment.bio
+// (same as old 2a) and to biographies (platform = 'soundcloud', the
+// one-bio-per-artist-per-platform home shared with sync-discogs/-
+// bandcamp), while the full raw bio text is additionally kept in
+// artist_harvested_bios as a raw-bio audit trail (old 2b staged it
+// there too, but nothing consumed it — this keeps that behavior, now
+// as a deliberate audit record rather than a dead end).
 //
 // Wrong-field URL guard: before spending an API call, the stored
 // artist_links.url is checked against soundcloud.com. A stored link
@@ -601,7 +611,8 @@ async function fetchAllSoundCloudLinks() {
 // ------------------------------------------------------------
 // syncArtist — the single per-artist unit. Resolves one artist from
 // SoundCloud and fans the result out to artist_enrichment (profile
-// data + bio), artist_images (avatar, approved artists only), and
+// data + bio), biographies (cleaned bio, platform='soundcloud'),
+// artist_images (avatar, approved artists only), and
 // artist_harvested_links/artist_harvested_bios (staged links + raw
 // bio). Returns a status object the CLI loop uses for its summary
 // tallies; a future event-triggered caller (single artist, on
@@ -1042,6 +1053,32 @@ export async function syncArtist(artist, opts = {}) {
         writeFailDetail = writeFailDetail
           ? `${writeFailDetail}; artist_harvested_bios upsert failed: ${bioError.message}`
           : `artist_harvested_bios upsert failed: ${bioError.message}`;
+      }
+    }
+
+    // Cleaned, display-ready bio → biographies (platform='soundcloud'), the
+    // one-bio-per-artist-per-platform home. Same pattern as sync-discogs: the
+    // raw text stays in artist_harvested_bios (above) as an audit trail, the
+    // parsed text lands here. No "SoundCloud bio:" prefix — platform is its own
+    // column here (unlike the shared artist_enrichment.bio field). Only written
+    // when we have a non-generic parsed bio; a generic description leaves the
+    // seeded backfill row untouched.
+    if (bio) {
+      const { error: biographyError } = await supabase.from("biographies").upsert(
+        {
+          artist_id: artistId,
+          platform: "soundcloud",
+          bio,
+          source_url: scUrl,
+        },
+        { onConflict: "artist_id,platform" }
+      );
+      if (biographyError) {
+        console.error(`  failed to save biography: ${biographyError.message}`);
+        writeFailed = true;
+        writeFailDetail = writeFailDetail
+          ? `${writeFailDetail}; biographies upsert failed: ${biographyError.message}`
+          : `biographies upsert failed: ${biographyError.message}`;
       }
     }
 

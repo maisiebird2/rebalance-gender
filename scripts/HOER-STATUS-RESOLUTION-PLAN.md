@@ -116,7 +116,7 @@ Notes:
   dump shows only that one index; the separate `alias_search` migration is on a
   different column). Re-verify against the live DB before running.
 - After this lands, `normalizeName` in `lib/hoer-resolve.mjs` must reproduce this
-  exact expression, and `supabase_schema_current.sql` gets re-dumped.
+  exact expression.
 
 ---
 

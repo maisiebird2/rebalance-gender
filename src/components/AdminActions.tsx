@@ -13,6 +13,7 @@ export default function AdminActions({ artistId, currentStatus }: Props) {
   const [authed, setAuthed] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [done, setDone] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -31,19 +32,43 @@ export default function AdminActions({ artistId, currentStatus }: Props) {
     </span>
   );
 
+  if (confirming) {
+    return (
+      <span className="flex items-center gap-2">
+        <span className="text-sm text-amber-700 dark:text-amber-400">Mark as not eligible?</span>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => {
+            startTransition(async () => {
+              await quickMarkNotEligible(artistId);
+              setDone(true);
+            });
+          }}
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-400 dark:hover:bg-amber-900"
+        >
+          {isPending ? "Saving…" : "Confirm"}
+        </button>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => setConfirming(false)}
+          className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
       disabled={isPending}
-      onClick={() => {
-        startTransition(async () => {
-          await quickMarkNotEligible(artistId);
-          setDone(true);
-        });
-      }}
+      onClick={() => setConfirming(true)}
       className="rounded-md border border-amber-300 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
     >
-      {isPending ? "Saving…" : "Not eligible"}
+      Not eligible
     </button>
   );
 }
