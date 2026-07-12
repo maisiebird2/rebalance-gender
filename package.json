@@ -37,6 +37,9 @@
     "migrate-linktree-to-links": "tsx scripts/migrate-linktree-to-links.ts",
     "lookup-soundcloud-by-name": "tsx scripts/lookup-soundcloud-by-name.ts",
     "other-links-domain-counts": "node scripts/other-links-domain-counts.mjs",
+    "report-hoer-internal-dupes": "node scripts/report-hoer-internal-dupes.mjs",
+    "resolve-hoer-status": "node scripts/resolve-hoer-status.mjs",
+    "apply-hoer-dupe-review": "node scripts/apply-hoer-dupe-review.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
