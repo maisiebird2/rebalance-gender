@@ -456,8 +456,14 @@ async function main() {
       followedMeta.push({ followed, normalized });
 
       if (!scUrlToArtistId.has(normalized)) {
+        // The `name` is the artist's SoundCloud display name = `username` (the
+        // large name on the profile). `full_name` is a separate optional field
+        // (often a real/legal name or junk shown beneath it) and is deliberately
+        // NOT used here — capturing it was the earlier bug that
+        // scripts/backfill-sc-followee-names.mjs repairs. The "Unknown …" default
+        // only guards the (essentially nonexistent) blank-username case, since
+        // artists.name is NOT NULL.
         const name =
-          cleanArtistName(typeof followed.full_name === "string" ? followed.full_name : "") ||
           cleanArtistName(typeof followed.username === "string" ? followed.username : "") ||
           "Unknown SoundCloud artist";
 

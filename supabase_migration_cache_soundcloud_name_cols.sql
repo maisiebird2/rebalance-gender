@@ -1,0 +1,32 @@
+-- Migration: TEMPORARY generated `username` column for the sc_followee backfill
+-- Run this once in the Supabase SQL editor, BEFORE running
+-- scripts/backfill-sc-followee-names.mjs. Drop it afterward with
+-- supabase_migration_drop_cache_soundcloud_name_cols.sql.
+--
+-- Why:
+--
+--   The backfill recomputes each sc_followee's name from its cached SoundCloud
+--   payload's `username`. Reading it out of the `payload` JSONB via
+--   payload->>'username' detoasts the large object for every one of the ~135k
+--   rows, which trips statement_timeout — the same problem the permalink_url
+--   generated column solved for the duplicates query.
+--
+--   This STORED generated column materializes username as a small text value so
+--   the backfill reads it with no detoast. It is NOT meant to be permanent —
+--   unlike permalink_url (which a query depends on), nothing reads it outside
+--   the one-off backfill, so drop it once that has run.
+--
+--   Only `username` is materialized, not `full_name`: username is SoundCloud's
+--   primary display name and is effectively always present (in a 12k-row sample
+--   exactly one row had a blank username — and its full_name was blank too), so
+--   the ingest's full_name fallback never actually helps here.
+--
+-- Note: ADD COLUMN ... GENERATED ... STORED rewrites the table under an ACCESS
+-- EXCLUSIVE lock (it detoasts every payload once to compute the stored value).
+-- Run during low traffic so the harvest/sync scripts that write this table
+-- aren't blocked mid-write.
+--
+-- Safe to re-run (IF NOT EXISTS).
+
+ALTER TABLE "public"."api_response_cache"
+  ADD COLUMN IF NOT EXISTS "username" text GENERATED ALWAYS AS ("payload"->>'username') STORED;
