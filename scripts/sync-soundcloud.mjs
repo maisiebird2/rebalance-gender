@@ -8,13 +8,15 @@
 // same call returning the same user resource. This stage makes that
 // call once per artist and fans the result out to both concerns:
 //
-//   GET /resolve?url=<profile url>
+//   GET /resolve?url=<profile url>   (first sync only)
 //     -> the user's resource: follower/track counts, avatar, numeric
 //        id, urn, and the full, untruncated `description` (bio) text.
 //        Bio/follower/track data written to artist_enrichment
 //        (platform = 'soundcloud'); the avatar goes to artist_images
 //        (platform = 'soundcloud') instead — see "Image handling"
-//        below.
+//        below. On re-runs the same resource is fetched by the stored
+//        numeric id instead (GET /users/{id}), skipping /resolve — see
+//        "Fetch by stored id on re-runs" below.
 //   GET /users/{urn}/web-profiles
 //     -> the "Links" section: an array of { service, url, title, ... }
 //        pointing at the artist's other platforms. Staged into
@@ -27,10 +29,35 @@
 //        endpoint for a user's reposts, so playlists are the best
 //        available fallback content for the artist page's widget.
 //
-// Two API calls per artist is the floor — SoundCloud has no endpoint
-// that returns the user resource and web-profiles together — down
-// from three under the old two-script version. The bio path is also
-// unified: the parsed/cleaned bio goes to the live
+// Fetch by stored id on re-runs: the first successful sync records the
+// user's numeric id in artist_enrichment.external_id. On any later run
+// for that artist (a --force re-sync, a link-changed retry, the
+// image-only pass, or --links-only), main() preloads those ids and
+// syncArtist fetches the user resource by id — GET /users/{id} —
+// instead of GET /resolve?url=<profile-url>. Same resource, same cost,
+// but it skips the resolve step and is immune to the artist renaming
+// their profile URL (the id never changes, whereas a rename breaks the
+// stored URL and would 404 a resolve). Resolve-by-URL only runs on the
+// first sync, when no id exists yet — which is also the only path where
+// the wrong-field guard below is meaningful (a stored id means the URL
+// already resolved cleanly once). If a fetch-by-id itself 404s (the
+// account was deleted/recreated, so the stored id is now stale), it
+// falls back to resolving the current URL once, so an account move
+// recovers automatically rather than being stuck on the dead id.
+//
+// --links-only refresh: re-fetches ONLY the web-profiles "Links"
+// section (from the stored id, one API call, no /resolve) and re-stages
+// the harvested links, for every already-synced artist matching the
+// filters. Skips the user resource, bio, image, and playlists, and
+// touches no completion/failure state — a links refresh doesn't change
+// main-sync completeness, so there's nothing to mark done or un-stick;
+// failures are logged and tallied only. See main()'s LINKS_ONLY branch
+// and syncArtist's linksOnly path.
+//
+// Two API calls per artist is the floor for a full sync — SoundCloud
+// has no endpoint that returns the user resource and web-profiles
+// together — down from three under the old two-script version. The bio
+// path is also unified: the parsed/cleaned bio goes to the live
 // artist_enrichment.bio (same as old 2a), while the full raw bio text
 // is additionally kept in artist_harvested_bios as a raw-bio audit
 // trail (old 2b staged it there too, but nothing consumed it — this
@@ -122,6 +149,7 @@
 //   node scripts/sync-soundcloud.mjs --name=jeanne      # filter source artists by name
 //   node scripts/sync-soundcloud.mjs --status=sc_followee
 //                                                        # only artists with this directory_status
+//   node scripts/sync-soundcloud.mjs --links-only       # refresh just the web-profiles "Links" for already-synced artists (1 call each, no /resolve)
 //   node scripts/sync-soundcloud.mjs --debug            # log raw API responses + every candidate link found
 //   DRY_RUN=1 node scripts/sync-soundcloud.mjs          # fetch + log, no DB writes
 //
@@ -185,6 +213,12 @@ const DEBUG = args.includes("--debug");
 // SoundCloud link (mostly unvetted sc_followee follow-graph nodes).
 // Forwarded verbatim by the orchestrator/loop scripts.
 const APPROVED_ONLY = args.includes("--approved");
+// --links-only: refresh just the web-profiles "Links" section for
+// already-synced artists (those with a stored SoundCloud id), one API
+// call each and no /resolve. Skips the user resource, bio, image, and
+// playlists; touches no completion/failure state. See main()'s
+// LINKS_ONLY branch and syncArtist's linksOnly path.
+const LINKS_ONLY = args.includes("--links-only");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const nameArg = args.find((a) => a.startsWith("--name="));
@@ -348,6 +382,41 @@ async function fetchArtistIdsWithSoundcloudImage() {
   return ids;
 }
 
+// ------------------------------------------------------------
+// Numeric SoundCloud user ids for a SPECIFIC set of artists, from the
+// external_id a prior successful sync stored in artist_enrichment
+// (platform='soundcloud'). Scoped by artist_id via chunked .in()
+// queries (which ride the (artist_id, platform) unique index) rather
+// than paging through the whole enrichment table — that table carries a
+// row per follow-graph node too (100x the directory) and is far too
+// large to scan in full. Called with just the artists a run is about to
+// process, so re-runs can fetch the user resource by id (/users/{id})
+// instead of re-resolving the profile URL — see syncArtist's fetch
+// step. Artists without a stored id (never synced, or synced before
+// external_id existed) simply aren't in the map and fall back to
+// resolve-by-URL. Returns Map<artist_id, id-string>.
+// ------------------------------------------------------------
+async function fetchScUserIdsForArtists(artistIds) {
+  const CHUNK = 500;
+  const map = new Map();
+  const ids = [...new Set(artistIds)];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("artist_enrichment")
+      .select("artist_id, external_id")
+      .eq("platform", "soundcloud")
+      .not("external_id", "is", null)
+      .in("artist_id", batch);
+    if (error) throw error;
+    for (const r of data ?? []) {
+      const id = r.external_id != null ? String(r.external_id).trim() : "";
+      if (id) map.set(r.artist_id, id);
+    }
+  }
+  return map;
+}
+
 // Wrong-field URL guard (isSoundCloudUrl / SOUNDCLOUD_HOST_REGEX), the
 // OAuth token flow + authenticated GET wrapper (via the `sc` client
 // created above), and the avatar-URL upgrade all now live in
@@ -452,6 +521,49 @@ function normalizeUrl(rawUrl, platform) {
 }
 
 // ------------------------------------------------------------
+// Classify + normalize + dedupe raw candidate links (from web-profiles
+// and/or bio scanning) into the { rawUrl, source, platform, parsedUrl }
+// rows staged to artist_harvested_links. Shared by the full sync and
+// the --links-only refresh path.
+// ------------------------------------------------------------
+function buildCandidates(candidatesRaw) {
+  const seen = new Set();
+  const candidates = [];
+  for (const { rawUrl, source } of candidatesRaw) {
+    const platform = classify(rawUrl);
+    if (!platform) continue;
+    const parsedUrl = normalizeUrl(rawUrl, platform);
+    const dedupeKey = `${platform}|${parsedUrl}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    candidates.push({ rawUrl, source, platform, parsedUrl });
+  }
+  return candidates;
+}
+
+// ------------------------------------------------------------
+// Upsert staged candidate links into artist_harvested_links (Phase 2d,
+// integrate-harvested-links.mjs, promotes them to artist_links later).
+// Idempotent — ignoreDuplicates on (artist_id, parsed_url). Shared by
+// the full sync and --links-only. Returns { error } (null on success or
+// when there's nothing to write).
+// ------------------------------------------------------------
+async function stageHarvestedLinks(supabaseClient, { artistId, scUrl, candidates }) {
+  if (candidates.length === 0) return { error: null };
+  return supabaseClient.from("artist_harvested_links").upsert(
+    candidates.map((c) => ({
+      artist_id: artistId,
+      source_platform: "soundcloud",
+      source_url: scUrl,
+      raw_url: c.rawUrl,
+      parsed_platform: c.platform,
+      parsed_url: c.parsedUrl,
+    })),
+    { onConflict: "artist_id,parsed_url", ignoreDuplicates: true }
+  );
+}
+
+// ------------------------------------------------------------
 // Supabase pagination — PostgREST caps unpaginated queries at 1000
 // rows; fetch in pages until a short page signals the end.
 // ------------------------------------------------------------
@@ -499,17 +611,36 @@ async function fetchAllSoundCloudLinks() {
 // preloads once (see loadArtistIdsWithLinktreeLink) and passes in, so
 // a run processing many artists doesn't re-query it per artist.
 //
-// opts.imageOnly — when true, does the wrong-field guard + /resolve
-// call and the image write ONLY, skipping playlists, web-profiles,
-// and every bio/link write, and leaving resolved_artists('soundcloud-
-// sync') untouched. For artists whose main sync already succeeded but
-// who are missing a soundcloud artist_images row (typically: approved
-// after their non-directory main sync already ran) — see main() and
-// the module header's "Image handling" section.
+// opts.imageOnly — when true, fetches the user resource and does the
+// image write ONLY, skipping playlists, web-profiles, and every
+// bio/link write, and leaving resolved_artists('soundcloud-sync')
+// untouched. For artists whose main sync already succeeded but who are
+// missing a soundcloud artist_images row (typically: approved after
+// their non-directory main sync already ran) — see main() and the
+// module header's "Image handling" section.
+//
+// opts.linksOnly — when true, re-fetches ONLY the web-profiles "Links"
+// section (from the stored numeric id, one API call, no /resolve) and
+// re-stages the harvested links, skipping the user resource, bio,
+// image, and playlists. Requires artist.scUserId. Touches no
+// completion or failure state — a links refresh doesn't change
+// main-sync completeness. See main()'s --links-only branch.
+//
+// artist.scUserId — the numeric SoundCloud user id from a prior sync
+// (artist_enrichment.external_id, preloaded by main()). When present,
+// the user resource is fetched by id instead of by resolving scUrl:
+// skips /resolve and is immune to the artist renaming their profile
+// URL (the id never changes). null/absent falls back to resolve-by-URL.
 // ------------------------------------------------------------
 export async function syncArtist(artist, opts = {}) {
-  const { debug = false, dryRun = false, artistIdsWithLinktree = new Set(), imageOnly = false } = opts;
-  const { artistId, name, scUrl, directoryStatus } = artist;
+  const {
+    debug = false,
+    dryRun = false,
+    artistIdsWithLinktree = new Set(),
+    imageOnly = false,
+    linksOnly = false,
+  } = opts;
+  const { artistId, name, scUrl, scUserId = null, directoryStatus } = artist;
   const isApproved = directoryStatus === "approved";
 
   // Records a failure and, only for statuses that should stop being
@@ -540,28 +671,102 @@ export async function syncArtist(artist, opts = {}) {
     await recordFailure(supabase, { artistId, service: IMAGE_STATE_SERVICE, status, detail, url: scUrl });
   }
 
-  // -- Wrong-field URL guard: skip before spending an API call --
-  if (!isSoundCloudUrl(scUrl)) {
-    console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
-    if (imageOnly) {
-      await failImage("wrong_field_url", "stored soundcloud link does not resolve to a soundcloud.com domain");
-      return { status: "skipped_wrong_field" };
+  // -- Links-only refresh: re-fetch just the web-profiles "Links"
+  // section from the stored id and re-stage harvested links. One API
+  // call, no /resolve, and none of the user-resource/bio/image/playlist
+  // work. Requires a stored id (an artist without one was never fully
+  // synced, so there's nothing to refresh). Deliberately leaves
+  // resolved_artists and harvest_failures untouched — a links refresh
+  // doesn't change main-sync completeness, and there's no state to
+  // un-stick later (the next --links-only run just retries), so
+  // failures are logged + tallied only. --
+  if (linksOnly) {
+    if (!scUserId) {
+      if (debug) console.log(`  [debug] ${name}: --links-only but no stored SoundCloud id — skipped`);
+      return { status: "links_skipped_no_id" };
     }
-    // Marked processed, same reasoning as a 404: a domain mismatch
-    // doesn't fix itself on retry, so recording a fresh harvest_failures
-    // row for it every single run forever is pure waste. main()'s
-    // loadFailureUrls cross-check un-sticks this artist automatically
-    // once a human corrects the link.
-    await fail("wrong_field_url", {
-      detail: "stored soundcloud link does not resolve to a soundcloud.com domain",
-      markDone: true,
-    });
-    return { status: "skipped_wrong_field" };
+    const urn = `soundcloud:users:${scUserId}`;
+    const profilesRes = await sc.soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
+    if (!profilesRes.ok || !Array.isArray(profilesRes.data)) {
+      console.log(`✗ ${name}: links-only — web-profiles fetch failed (HTTP ${profilesRes.status ?? "timeout"})`);
+      await sleep(300);
+      return { status: "links_failed", httpStatus: profilesRes.status };
+    }
+    if (debug) console.log("  [debug] web-profiles raw:", JSON.stringify(profilesRes.data));
+    const candidatesRaw = [];
+    for (const p of profilesRes.data) {
+      if (typeof p?.url === "string" && p.url.trim()) {
+        candidatesRaw.push({ rawUrl: p.url.trim(), source: `web-profiles:${p.service ?? "?"}` });
+      }
+    }
+    const candidates = buildCandidates(candidatesRaw);
+    if (!dryRun && candidates.length > 0) {
+      const { error: insertError } = await stageHarvestedLinks(supabase, { artistId, scUrl, candidates });
+      if (insertError) {
+        console.log(`✗ ${name}: links-only — artist_harvested_links upsert failed: ${insertError.message}`);
+        await sleep(300);
+        return { status: "links_failed" };
+      }
+    }
+    const linksNote = candidates.length > 0 ? ` — ${candidates.map((c) => c.platform).join(", ")}` : "";
+    console.log(`✓ ${name}: links-only — ${candidates.length} link(s)${linksNote}`);
+    await sleep(300);
+    return {
+      status: "links_synced",
+      linksFound: candidates.length,
+      linksByPlatform: candidates.reduce((acc, c) => {
+        acc[c.platform] = (acc[c.platform] ?? 0) + 1;
+        return acc;
+      }, {}),
+    };
   }
 
-  // -- 1. Resolve the profile (feeds both artist_enrichment and the
-  // web-profiles/bio harvest below) --
-  const res = await sc.resolveUser(scUrl);
+  // -- 1. Fetch the user resource (feeds both artist_enrichment and the
+  // web-profiles/bio harvest below). With a stored numeric id from a
+  // prior sync, fetch it directly by id (/users/{id}) — skips /resolve
+  // and is immune to the artist renaming their profile URL. Only a
+  // first-time sync (no stored id) resolves by URL, which is the sole
+  // path where the wrong-field guard is meaningful: a stored id means
+  // the URL already resolved cleanly once. --
+  let res;
+  if (scUserId) {
+    if (debug) console.log(`  [debug] ${name}: fetching by stored id ${scUserId} (skipping /resolve)`);
+    res = await sc.getUserById(scUserId);
+  } else {
+    if (debug) console.log(`  [debug] ${name}: resolving by URL (no stored id yet)`);
+    // Wrong-field URL guard: skip before spending an API call. A stored
+    // link whose domain isn't soundcloud.com (a data-entry mistake) can
+    // never resolve.
+    if (!isSoundCloudUrl(scUrl)) {
+      console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
+      if (imageOnly) {
+        await failImage("wrong_field_url", "stored soundcloud link does not resolve to a soundcloud.com domain");
+        return { status: "skipped_wrong_field" };
+      }
+      // Marked processed, same reasoning as a 404: a domain mismatch
+      // doesn't fix itself on retry, so recording a fresh
+      // harvest_failures row for it every single run forever is pure
+      // waste. main()'s loadFailureUrls cross-check un-sticks this
+      // artist automatically once a human corrects the link.
+      await fail("wrong_field_url", {
+        detail: "stored soundcloud link does not resolve to a soundcloud.com domain",
+        markDone: true,
+      });
+      return { status: "skipped_wrong_field" };
+    }
+    res = await sc.resolveUser(scUrl);
+  }
+
+  // Stored-id 404 fallback: a definitive 404 means the id itself is
+  // stale (the account was deleted/recreated), but the current link may
+  // now point at a live account — resolve it once so an account move
+  // recovers automatically, the same way --force used to before the
+  // fetch-by-id change. Only for a 404 (transient failures just retry
+  // next run) and only when the URL is a real soundcloud.com link.
+  if (scUserId && !res.ok && res.status === 404 && isSoundCloudUrl(scUrl)) {
+    if (debug) console.log(`  [debug] ${name}: stored id ${scUserId} returned 404, falling back to resolve-by-URL`);
+    res = await sc.resolveUser(scUrl);
+  }
 
   if (!res.ok || !res.data) {
     console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
@@ -704,17 +909,7 @@ export async function syncArtist(artist, opts = {}) {
     }
   }
 
-  const seen = new Set();
-  const candidates = [];
-  for (const { rawUrl, source } of candidatesRaw) {
-    const platform = classify(rawUrl);
-    if (!platform) continue;
-    const parsedUrl = normalizeUrl(rawUrl, platform);
-    const dedupeKey = `${platform}|${parsedUrl}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    candidates.push({ rawUrl, source, platform, parsedUrl });
-  }
+  const candidates = buildCandidates(candidatesRaw);
 
   // -- 5. Parse the bio through the cleanup pipeline for the LIVE
   // artist_enrichment.bio field (booking/management/contact/linktree
@@ -821,19 +1016,7 @@ export async function syncArtist(artist, opts = {}) {
 
     // Staged links (web-profiles + bio URLs).
     if (candidates.length > 0) {
-      const { error: insertError } = await supabase
-        .from("artist_harvested_links")
-        .upsert(
-          candidates.map((c) => ({
-            artist_id: artistId,
-            source_platform: "soundcloud",
-            source_url: scUrl,
-            raw_url: c.rawUrl,
-            parsed_platform: c.platform,
-            parsed_url: c.parsedUrl,
-          })),
-          { onConflict: "artist_id,parsed_url", ignoreDuplicates: true }
-        );
+      const { error: insertError } = await stageHarvestedLinks(supabase, { artistId, scUrl, candidates });
       if (insertError) {
         console.error(`  failed to save harvested links: ${insertError.message}`);
         writeFailed = true;
@@ -980,6 +1163,81 @@ async function main() {
   await sc.getAccessToken();
   console.log("SoundCloud API token acquired.\n");
 
+  // --links-only: refresh just the web-profiles "Links" section for
+  // every matching artist that has a stored id — one API call each, no
+  // /resolve. Ignores resolved_artists state (a refresh is meant to
+  // re-run) and touches no completion/failure state; see syncArtist's
+  // linksOnly branch. Respects --approved / --name / --status / --limit
+  // via the same fetchAllSoundCloudLinks() the normal path uses.
+  if (LINKS_ONLY) {
+    const matchingLinks = await fetchAllSoundCloudLinks();
+    // Resolve stored ids in chunks and keep only the artists that have
+    // one, short-circuiting once LIMIT rows are collected — a bare
+    // --limit test run shouldn't scan every matching artist's
+    // enrichment row just to throw most away.
+    const CHUNK = 500;
+    const idMap = new Map();
+    const linkRows = [];
+    let scanned = 0;
+    for (let i = 0; i < matchingLinks.length && (!LIMIT || linkRows.length < LIMIT); i += CHUNK) {
+      const batch = matchingLinks.slice(i, i + CHUNK);
+      const batchMap = await fetchScUserIdsForArtists(batch.map((r) => r.artist_id));
+      for (const row of batch) {
+        scanned++;
+        const id = batchMap.get(row.artist_id);
+        if (!id) continue;
+        idMap.set(row.artist_id, id);
+        linkRows.push(row);
+        if (LIMIT && linkRows.length >= LIMIT) break;
+      }
+    }
+    const skippedNoId = scanned - linkRows.length;
+    console.log(
+      `--links-only: refreshing ${linkRows.length} artist(s) with a stored SoundCloud id` +
+        (skippedNoId > 0 ? ` (${skippedNoId} of ${scanned} scanned had none — never fully synced)` : "") +
+        "\n"
+    );
+
+    let attempted = 0;
+    let linksSynced = 0;
+    let linksFailed = 0;
+    let totalLinksFound = 0;
+    const byPlatform = {};
+    for (const row of linkRows) {
+      const name = row.artists?.name ?? row.artist_id;
+      attempted++;
+      const result = await syncArtist(
+        {
+          artistId: row.artist_id,
+          name,
+          scUrl: row.url,
+          scUserId: idMap.get(row.artist_id) ?? null,
+          directoryStatus: row.artists?.directory_status,
+        },
+        { debug: DEBUG, dryRun: DRY_RUN, linksOnly: true }
+      );
+      if (result.status === "links_synced") {
+        linksSynced++;
+        totalLinksFound += result.linksFound ?? 0;
+        for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
+          byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
+        }
+      } else if (result.status === "links_failed") {
+        linksFailed++;
+      }
+    }
+
+    console.log(`\nDone${DRY_RUN ? " (dry run)" : ""} (links-only).`);
+    console.log(`  attempted:         ${attempted}`);
+    console.log(`  ${DRY_RUN ? "would refresh" : "refreshed"}:  ${linksSynced}`);
+    console.log(`  failed:            ${linksFailed}`);
+    console.log(`  total links found: ${totalLinksFound}`);
+    for (const [platform, count] of Object.entries(byPlatform).sort((a, b) => b[1] - a[1])) {
+      console.log(`    ${platform}: ${count}`);
+    }
+    return;
+  }
+
   const processed = FORCE ? new Set() : await loadProcessedArtistIds();
   if (FORCE) {
     console.log("--force: bypassing resolved_artists state\n");
@@ -1061,6 +1319,14 @@ async function main() {
     imageOnlyRows = imageOnlyRows.slice(0, LIMIT);
   }
 
+  // Stored SoundCloud ids for just the artists this run will process
+  // (main sync + image-only). Re-runs fetch the user resource by id
+  // instead of re-resolving the profile URL — scoped to the working
+  // set, never the whole enrichment table.
+  const scUserIdByArtist = await fetchScUserIdsForArtists(
+    [...rows, ...imageOnlyRows].map((r) => r.artist_id)
+  );
+
   console.log(
     `Found ${links.length} SoundCloud link(s)` +
       (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
@@ -1088,7 +1354,13 @@ async function main() {
     attempted++;
 
     const result = await syncArtist(
-      { artistId: row.artist_id, name, scUrl: row.url, directoryStatus: row.artists?.directory_status },
+      {
+        artistId: row.artist_id,
+        name,
+        scUrl: row.url,
+        scUserId: scUserIdByArtist.get(row.artist_id) ?? null,
+        directoryStatus: row.artists?.directory_status,
+      },
       { debug: DEBUG, dryRun: DRY_RUN, artistIdsWithLinktree }
     );
 
@@ -1121,7 +1393,13 @@ async function main() {
     imageOnlyAttempted++;
 
     const result = await syncArtist(
-      { artistId: row.artist_id, name, scUrl: row.url, directoryStatus: row.artists?.directory_status },
+      {
+        artistId: row.artist_id,
+        name,
+        scUrl: row.url,
+        scUserId: scUserIdByArtist.get(row.artist_id) ?? null,
+        directoryStatus: row.artists?.directory_status,
+      },
       { debug: DEBUG, dryRun: DRY_RUN, imageOnly: true }
     );
 

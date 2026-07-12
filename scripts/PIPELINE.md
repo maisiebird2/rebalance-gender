@@ -216,6 +216,30 @@ is the floor — SoundCloud has no endpoint that returns the user
 resource and web-profiles together — down from three under the old
 two-script version.
 
+**Fetch by stored id on re-runs (since 2026-07-11).** The first
+successful sync records the user's numeric id in
+`artist_enrichment.external_id`. Any later run for that artist (a
+`--force` re-sync, a link-changed retry, the image-only pass, or
+`--links-only`) fetches the same user resource by id — `GET
+/users/{id}` — instead of `GET /resolve?url=<profile-url>`: same
+resource and cost, but it skips the resolve step and is immune to the
+artist renaming their profile URL (the id never changes; a rename
+breaks the stored URL and would 404 a resolve). `main()` loads those
+ids scoped to just the artists a run will touch (chunked `.in()`
+queries on the `(artist_id, platform)` index), never scanning the
+whole enrichment table. Resolve-by-URL only runs on a first sync, when
+no id exists yet — which is also the only path where the wrong-field
+guard is meaningful (a stored id means the URL already resolved once).
+
+**`--links-only` refresh (since 2026-07-11).** Re-fetches *only* the
+web-profiles "Links" section (from the stored id, one API call, no
+`/resolve`) and re-stages the harvested links, for every matching
+already-synced artist. Skips the user resource, bio, image, and
+playlists, and touches no completion/failure state — a links refresh
+doesn't change main-sync completeness, so there's nothing to mark done
+or un-stick; failures are logged and tallied only. Respects
+`--approved` / `--name` / `--status` / `--limit`.
+
 **Runs inside the 2d convergence loop (since 2026-07-11).** 2a used to
 run once as a standalone stage before the loop. It now sits in
 `harvest-links-loop.mjs`'s `HARVESTERS` array alongside 2b/2c, because
@@ -241,8 +265,10 @@ GET wrapper, and the SoundCloud-URL helpers live in
 verbatim copies of that code. The lib knows how to talk to SoundCloud
 and normalize its URLs; each caller decides what to write.
 
-**Wrong-field URL guard:** before calling `/resolve`, the stored
-`artist_links.url` is checked against the `soundcloud.com` domain. A
+**Wrong-field URL guard:** on a first sync (resolve-by-URL; a re-run
+with a stored id bypasses the URL entirely), before calling `/resolve`
+the stored `artist_links.url` is checked against the `soundcloud.com`
+domain. A
 mismatch (e.g. a Spotify URL saved in the SoundCloud field) is
 skipped without spending an API call, logged to `harvest_failures`
 (below), and — same as a 404 — marked processed in `resolved_artists`:
@@ -1460,14 +1486,21 @@ processed state over to the new `soundcloud-sync` service (see
 "Utility / diagnostic scripts") before a bulk `sync-soundcloud.mjs`
 run, otherwise it re-fetches everyone from scratch.
 
-### Skip `/resolve` on re-runs using the stored user ID
+### Skip `/resolve` on re-runs using the stored user ID — ✅ DONE (2026-07-11)
 
-`sync-soundcloud.mjs` already stores each artist's numeric SoundCloud
-user ID in `artist_enrichment`. Re-runs (or a links-only refresh) can
-call `/users/{urn}/web-profiles` and `/users/{id}` directly from the
-stored ID instead of re-resolving the profile URL: 1 call per artist
-for a links refresh, and immune to resolve failures when an artist
-renames their profile URL.
+`sync-soundcloud.mjs` stores each artist's numeric SoundCloud user id
+in `artist_enrichment.external_id` on the first successful sync. Built:
+re-runs now fetch the user resource by that id (`GET /users/{id}`)
+instead of re-resolving the profile URL (`GET /resolve?url=…`) — same
+resource and cost, but immune to resolve failures when an artist
+renames their profile URL (the id never changes). A new `--links-only`
+flag does a 1-call-per-artist links refresh (`GET
+/users/{urn}/web-profiles` only, urn built from the stored id),
+re-staging harvested links without re-fetching bio/profile/image. Ids
+are loaded scoped to just the artists a run will touch (chunked `.in()`
+queries), never by scanning the whole enrichment table. See Phase 2a →
+"Fetch by stored id on re-runs" and "`--links-only` refresh" above for
+the full description.
 
 ### Generalize `store-images.mjs` (5b) to all image sources — ✅ DONE (2026-07-09)
 

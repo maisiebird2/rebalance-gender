@@ -66,6 +66,7 @@ describe("createSoundcloudClient", () => {
     expect(typeof client.getAccessToken).toBe("function");
     expect(typeof client.soundcloudGet).toBe("function");
     expect(typeof client.resolveUser).toBe("function");
+    expect(typeof client.getUserById).toBe("function");
     expect(typeof client.getFollowings).toBe("function");
   });
 });
