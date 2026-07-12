@@ -96,7 +96,7 @@ export function cleanScUrl(url) {
 // the OAuth Client Credentials token (fetched once, reused for the run,
 // refreshed on 401) and the GET wrapper (timeout, 401 refresh, 429
 // backoff). Returns { getAccessToken, soundcloudGet, resolveUser,
-// getFollowings }.
+// getUserById, getFollowings }.
 //
 //   opts.debug — when true, logs raw request failures / rate-limit
 //                backoffs (matches the old inline --debug behavior).
@@ -196,6 +196,18 @@ export function createSoundcloudClient({ debug = false } = {}) {
     return soundcloudGet(`/resolve?url=${encodeURIComponent(scUrl)}`);
   }
 
+  // Fetch the same user resource resolveUser returns, but by the stable
+  // numeric id (or urn) instead of the profile URL. Once an artist's id
+  // has been stored (from a prior resolve), re-runs can call this and
+  // skip /resolve entirely — one fewer thing to go wrong, and immune to
+  // resolve failures when the artist later renames their profile URL
+  // (the id never changes). Accepts a raw numeric id, a numeric string,
+  // or a `soundcloud:users:<id>` urn — all valid path segments for
+  // /users/{id}. Returns the same { ok, status, data } shape.
+  function getUserById(idOrUrn) {
+    return soundcloudGet(`/users/${encodeURIComponent(idOrUrn)}`);
+  }
+
   // Fetch up to `cap` followings for a user, following the API's
   // linked_partitioning `next_href` cursor until exhausted or the cap
   // is hit. Returns { ok, users, truncated, lastStatus }.
@@ -226,5 +238,5 @@ export function createSoundcloudClient({ debug = false } = {}) {
     return { ok: true, users, truncated, lastStatus: 200 };
   }
 
-  return { getAccessToken, soundcloudGet, resolveUser, getFollowings };
+  return { getAccessToken, soundcloudGet, resolveUser, getUserById, getFollowings };
 }
