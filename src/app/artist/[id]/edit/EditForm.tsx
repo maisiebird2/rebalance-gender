@@ -47,6 +47,7 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmNotEligible, setConfirmNotEligible] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   // ── Field state ───────────────────────────────────────────────
@@ -301,16 +302,39 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
                 {pendingAction === "approve" ? "Approving…" : "Save and approve"}
               </button>
             )}
-            {artist.directory_status !== "not_eligible" && (
-              <button
-                type="button"
-                onClick={handleSaveAndMarkNotEligible}
-                disabled={isPending}
-                className="rounded-md border border-amber-300 px-5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
-              >
-                {pendingAction === "not_eligible" ? "Saving…" : "Not eligible"}
-              </button>
-            )}
+            {artist.directory_status !== "not_eligible" &&
+              (!confirmNotEligible ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmNotEligible(true)}
+                  disabled={isPending}
+                  className="rounded-md border border-amber-300 px-5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+                >
+                  Not eligible
+                </button>
+              ) : (
+                <div className="flex items-center gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 dark:border-amber-800 dark:bg-amber-950">
+                  <span className="text-sm text-amber-700 dark:text-amber-400">
+                    Mark as not eligible?
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={handleSaveAndMarkNotEligible}
+                    className="rounded-md bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    {pendingAction === "not_eligible" ? "Saving…" : "Yes, mark not eligible"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => setConfirmNotEligible(false)}
+                    className="rounded-md px-3 py-1 text-sm font-medium text-amber-700 hover:underline dark:text-amber-400"
+                  >
+                    No, cancel
+                  </button>
+                </div>
+              ))}
             <a
               href={`/artist/${artist.id}`}
               className="rounded-md px-5 py-2 text-sm font-medium text-gray-600 hover:underline dark:text-gray-300"

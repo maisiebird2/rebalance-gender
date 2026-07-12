@@ -47,6 +47,74 @@ function KindTag({ kind }: { kind: SubmissionKind }) {
   );
 }
 
+const CONFIRM_TONES = {
+  red: {
+    box: "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950",
+    prompt: "text-red-700 dark:text-red-300",
+    confirm: "bg-red-600 text-white hover:bg-red-700",
+    cancel: "text-red-700 hover:underline dark:text-red-300",
+  },
+  amber: {
+    box: "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950",
+    prompt: "text-amber-700 dark:text-amber-400",
+    confirm: "bg-amber-600 text-white hover:bg-amber-700",
+    cancel: "text-amber-700 hover:underline dark:text-amber-400",
+  },
+} as const;
+
+/**
+ * A button that swaps into an inline "prompt? [confirm] [Cancel]" group when
+ * clicked, so destructive quick-actions require a second click to fire.
+ */
+function ConfirmButton({
+  label,
+  prompt,
+  confirmLabel,
+  tone,
+  onConfirm,
+  disabled,
+  className,
+}: {
+  label: string;
+  prompt: string;
+  confirmLabel: string;
+  tone: keyof typeof CONFIRM_TONES;
+  onConfirm: () => void;
+  disabled: boolean;
+  className: string;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const t = CONFIRM_TONES[tone];
+
+  if (!confirming) {
+    return (
+      <button onClick={() => setConfirming(true)} disabled={disabled} className={className}>
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <span className={`flex items-center gap-2 rounded-md border px-3 py-1.5 ${t.box}`}>
+      <span className={`text-sm font-medium ${t.prompt}`}>{prompt}</span>
+      <button
+        onClick={onConfirm}
+        disabled={disabled}
+        className={`rounded-md px-3 py-1 text-sm font-medium disabled:opacity-50 ${t.confirm}`}
+      >
+        {confirmLabel}
+      </button>
+      <button
+        onClick={() => setConfirming(false)}
+        disabled={disabled}
+        className={`px-2 py-1 text-sm font-medium disabled:opacity-50 ${t.cancel}`}
+      >
+        Cancel
+      </button>
+    </span>
+  );
+}
+
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "numeric",
@@ -271,18 +339,24 @@ function SubmissionCard({
             className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50">
             Approve
           </button>
-          <button
-            onClick={onReject}
+          <ConfirmButton
+            label="Reject"
+            prompt={`Reject ${artist.name}?`}
+            confirmLabel="Yes, reject"
+            tone="red"
+            onConfirm={onReject}
             disabled={busy}
-            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950">
-            Reject
-          </button>
-          <button
-            onClick={onNotEligible}
+            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950"
+          />
+          <ConfirmButton
+            label="Not eligible"
+            prompt={`Mark ${artist.name} not eligible?`}
+            confirmLabel="Yes, not eligible"
+            tone="amber"
+            onConfirm={onNotEligible}
             disabled={busy}
-            className="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950">
-            Not eligible
-          </button>
+            className="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+          />
         </div>
       </div>
     </div>
@@ -356,12 +430,15 @@ function RevisionCard({
             className="rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50">
             Apply &amp; approve
           </button>
-          <button
-            onClick={onReject}
+          <ConfirmButton
+            label="Reject"
+            prompt={`Reject ${revision.artist.name}?`}
+            confirmLabel="Yes, reject"
+            tone="red"
+            onConfirm={onReject}
             disabled={busy}
-            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950">
-            Reject
-          </button>
+            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950"
+          />
         </div>
       </div>
     </div>
