@@ -35,18 +35,23 @@ export const PAGE_SIZE = 24;
 
 /**
  * Normalizes a search string to match the `name_search` generated column:
- * strips accents (NFD decompose + remove combining marks), lowercases,
- * and removes spaces. Must stay in sync with the Postgres expression:
- *   lower(replace(unaccent(name), ' ', ''))
+ * strips accents (NFD decompose + remove combining marks), lowercases, and
+ * removes every character that isn't [a-z0-9] (spaces AND punctuation). Must
+ * stay in sync with the Postgres expression:
+ *   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
+ * Stripping punctuation is what lets a query like "A.mo" match the artist
+ * whose name_search is "amo"; if this only stripped spaces, the period in the
+ * query would never match the punctuation-free stored key.
  */
 function normalizeSearch(s: string): string {
-  // NFD decomposes e.g. "é" into "e" + combining acute; the regex then
-  // strips all combining diacritical marks (U+0300-U+036F).
+  // NFD decomposes e.g. "é" into "e" + combining acute; the first regex
+  // strips all combining diacritical marks (U+0300-U+036F), then the second
+  // removes anything that isn't a lowercase letter or digit.
   return s
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
-    .replace(/\s+/g, "");
+    .replace(/[^a-z0-9]/g, "");
 }
 
 // Shared select string: pulls the artist plus all joined relations
