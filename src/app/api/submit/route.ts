@@ -115,7 +115,14 @@ export async function POST(request: NextRequest) {
     !!user ||
     (email ? await getEmailStatus(supabase, email) === "verified" : false);
 
-  const initialStatus = skipVerification ? "pending" : "unverified";
+  // A logged-in (admin) submission is trusted and lands directly in the public
+  // directory as "approved". Verified-email submissions from anonymous users
+  // still queue as "pending" for review; unverified emails start "unverified".
+  const initialStatus = user
+    ? "approved"
+    : skipVerification
+      ? "pending"
+      : "unverified";
 
   // ── 5. Resolve pronouns ─────────────────────────────────────────────────────
   let pronounId: number | null = null;
