@@ -257,6 +257,82 @@ export async function saveArtist(
       !existingImageUrls.has(resolvedUrls.get(l)!)
   );
 
+  // ── 7b. Prune images for platforms whose link was removed ─────
+  // Removing a platform link (or marking it not-found) should also drop
+  // any profile image harvested from that platform — otherwise a stale
+  // photo from a now-removed profile keeps showing, since pickArtistImage
+  // rotates over whatever artist_images rows exist regardless of links.
+  // The form submits an entry for every platform, so a platform absent
+  // from the surviving links genuinely means it was cleared. Mirror
+  // scripts/prune-artist-images.mjs: remove the re-hosted Storage object,
+  // delete the row, then clear that platform's image-harvest failures so
+  // a later re-added link isn't treated as pre-failed.
+  const survivingLinkPlatforms = new Set(
+    links.filter((l) => !l.not_found && l.url?.trim()).map((l) => l.platform)
+  );
+
+  const { data: currentImages } = await admin
+    .from("artist_images")
+    .select("platform, storage_path")
+    .eq("artist_id", artistId);
+
+  const imagesToRemove = (currentImages ?? []).filter(
+    (img) => !survivingLinkPlatforms.has(img.platform as string)
+  );
+
+  if (imagesToRemove.length > 0) {
+    const removedPlatforms = imagesToRemove.map((img) => img.platform as string);
+
+    // 1. Re-hosted Storage objects (storage_path is null for rows that
+    //    predate re-hosting — nothing to remove for those).
+    const storagePaths = imagesToRemove
+      .map((img) => img.storage_path as string | null)
+      .filter((p): p is string => Boolean(p));
+    if (storagePaths.length > 0) {
+      const { error: storageErr } = await admin.storage
+        .from("artist-images")
+        .remove(storagePaths);
+      // A Storage hiccup shouldn't abort the save — deleting the row
+      // below is what actually hides the image; log the orphaned object
+      // for later cleanup (prune-artist-images.mjs).
+      if (storageErr) {
+        console.error(
+          `[saveArtist] Failed to remove Storage objects for ${artistId}:`,
+          storageErr.message
+        );
+      }
+    }
+
+    // 2. artist_images rows.
+    const { error: imgDelErr } = await admin
+      .from("artist_images")
+      .delete()
+      .eq("artist_id", artistId)
+      .in("platform", removedPlatforms);
+    if (imgDelErr) return { error: `Image cleanup error: ${imgDelErr.message}` };
+
+    // 3. Lingering image-harvest failures for those platforms, so a
+    //    re-added link can be retried cleanly. Services are named
+    //    image-<harvester>:<platform> (see enrich-images.ts,
+    //    store-images.mjs, prune-artist-images.mjs).
+    const removedServices = removedPlatforms.flatMap((p) => [
+      `image-enrich:${p}`,
+      `image-sync:${p}`,
+      `image-store:${p}`,
+    ]);
+    const { error: failErr } = await admin
+      .from("harvest_failures")
+      .delete()
+      .eq("artist_id", artistId)
+      .in("service", removedServices);
+    if (failErr) {
+      console.error(
+        `[saveArtist] Failed to clear image harvest_failures for ${artistId}:`,
+        failErr.message
+      );
+    }
+  }
+
   // ── 8. Upsert SoundCloud bio in enrichment ────────────────────
   if (bio !== null) {
     let bio_sanitized: string;
