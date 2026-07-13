@@ -2,7 +2,7 @@
 // ============================================================
 // Artist image pruning.
 //
-// Two independent purge modes, exactly one required per run:
+// Three independent purge modes, exactly one required per run:
 //
 //   --platform=<platform>   Every image that came from one platform —
 //                            for the case a platform objects to being
@@ -25,21 +25,35 @@
 //                            batch of demotions, or periodically, to
 //                            sweep those up.
 //
-// Both modes do the same three things: remove the re-hosted Storage
+//   --orphaned-links         Every image whose platform the artist no
+//                            longer has a (real, non-not_found) link
+//                            for. saveArtist now prunes these inline
+//                            when a link is removed during an edit
+//                            (see src/app/artist/[id]/edit/actions.ts,
+//                            step 7b); this is the batch backfill for
+//                            images orphaned by edits made before that
+//                            existed. A row is orphaned when there is
+//                            no artist_links row for the same
+//                            (artist_id, platform) with a non-null url
+//                            and not_found = false.
+//
+// All modes do the same three things: remove the re-hosted Storage
 // object(s), delete the artist_images row(s), and clear any lingering
 // harvest_failures rows for the affected image-harvesting services
 // (image-enrich:<platform>, image-sync:<platform>, image-store:
 // <platform>) so nothing looks pre-failed later. --platform clears
 // those services globally (nothing should be harvesting that platform
-// at all anymore); --non-directory clears them only for the specific
-// artists just pruned (other artists' failures for the same platform
-// are unrelated and left alone).
+// at all anymore); --non-directory and --orphaned-links clear them
+// only for the specific artist+platform pairs just pruned (other
+// artists' — or the same artist's other platforms' — failures are
+// unrelated and left alone).
 //
 // Usage (from the rebalance-gender/ folder):
 //
 //   node scripts/prune-artist-images.mjs --platform=bandcamp
 //   node scripts/prune-artist-images.mjs --non-directory
-//   DRY_RUN=1 node scripts/prune-artist-images.mjs --non-directory   # preview, no deletes
+//   node scripts/prune-artist-images.mjs --orphaned-links
+//   DRY_RUN=1 node scripts/prune-artist-images.mjs --orphaned-links   # preview, no deletes
 //
 // Requires .env.local with NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY.
 // ============================================================
@@ -59,14 +73,17 @@ const args = process.argv.slice(2);
 const platformArg = args.find((a) => a.startsWith("--platform="));
 const PLATFORM = platformArg ? platformArg.slice("--platform=".length).trim() : null;
 const NON_DIRECTORY = args.includes("--non-directory");
+const ORPHANED = args.includes("--orphaned-links");
 
-if (Boolean(PLATFORM) === NON_DIRECTORY) {
-  // Both false, or both true — either way, ambiguous.
+const modeCount = Number(Boolean(PLATFORM)) + Number(NON_DIRECTORY) + Number(ORPHANED);
+if (modeCount !== 1) {
+  // None, or more than one — either way, ambiguous.
   console.error(
-    "Specify exactly one of --platform=<platform> or --non-directory.\n" +
+    "Specify exactly one of --platform=<platform>, --non-directory, or --orphaned-links.\n" +
       "Examples:\n" +
       "  node scripts/prune-artist-images.mjs --platform=bandcamp\n" +
-      "  node scripts/prune-artist-images.mjs --non-directory"
+      "  node scripts/prune-artist-images.mjs --non-directory\n" +
+      "  node scripts/prune-artist-images.mjs --orphaned-links"
   );
   process.exit(1);
 }
@@ -113,11 +130,39 @@ const BUCKET = "artist-images";
 const SUPABASE_PAGE_SIZE = 1000;
 
 // ------------------------------------------------------------
-// Every artist_images row matching whichever mode was selected
+// The set of (artist_id, platform) pairs an artist still has a real
+// link for — a non-null url that isn't marked not_found. This is the
+// same "surviving link" definition saveArtist uses to decide which
+// images to keep. Returned as a Set of `${artist_id}:${platform}`.
+//
+// Only fetched for the artists that actually have images, in small
+// id-chunks: an artist has at most ~two dozen platform links, so a
+// 40-id chunk stays well under PostgREST's 1000-row cap without inner
+// pagination, and keeps the ?in=(...) URL short.
+// ------------------------------------------------------------
+async function fetchSurvivingLinkKeys(artistIds) {
+  const keys = new Set();
+  const CHUNK = 40;
+  for (let i = 0; i < artistIds.length; i += CHUNK) {
+    const chunk = artistIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("artist_links")
+      .select("artist_id, platform")
+      .in("artist_id", chunk)
+      .eq("not_found", false)
+      .not("url", "is", null);
+    if (error) throw error;
+    for (const l of data) keys.add(`${l.artist_id}:${l.platform}`);
+  }
+  return keys;
+}
+
+// ------------------------------------------------------------
+// The artist_images rows to prune for whichever mode was selected
 // (paginated — PostgREST caps unpaginated queries at 1000 rows).
 // ------------------------------------------------------------
 async function fetchRowsToPrune() {
-  const allRows = [];
+  const allImages = [];
   let from = 0;
   while (true) {
     let query = supabase
@@ -131,24 +176,49 @@ async function fetchRowsToPrune() {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Non-directory: NOT (directory_status = 'approved' AND deleted =
-    // false). Filtered client-side rather than a cross-table .or()
-    // filter — artist_images is small, and this avoids relying on a
-    // PostgREST filter shape (OR across an embedded resource) nothing
-    // else in this codebase exercises.
-    const page = PLATFORM
-      ? data
-      : data.filter((r) => r.artists?.directory_status !== "approved" || r.artists?.deleted === true);
-
-    allRows.push(...page);
+    allImages.push(...data);
     if (data.length < SUPABASE_PAGE_SIZE) break;
     from += SUPABASE_PAGE_SIZE;
   }
-  return allRows;
+
+  if (PLATFORM) return allImages;
+
+  if (NON_DIRECTORY) {
+    // NOT (directory_status = 'approved' AND deleted = false). Filtered
+    // client-side rather than a cross-table .or() filter — artist_images
+    // is small, and this avoids relying on a PostgREST filter shape (OR
+    // across an embedded resource) nothing else in this codebase exercises.
+    return allImages.filter(
+      (r) => r.artists?.directory_status !== "approved" || r.artists?.deleted === true
+    );
+  }
+
+  // ORPHANED: keep only rows whose (artist_id, platform) has no
+  // surviving link.
+  const artistIds = Array.from(new Set(allImages.map((r) => r.artist_id)));
+  const survivingKeys = await fetchSurvivingLinkKeys(artistIds);
+  return allImages.filter((r) => !survivingKeys.has(`${r.artist_id}:${r.platform}`));
+}
+
+// Group a set of rows into platform → [artist_id, ...]. Used by the
+// per-pair modes (--non-directory could delete by artist_id alone, but
+// --orphaned-links must scope to the exact platform too, or it would
+// delete an artist's surviving images).
+function groupArtistIdsByPlatform(rows) {
+  const byPlatform = new Map();
+  for (const r of rows) {
+    if (!byPlatform.has(r.platform)) byPlatform.set(r.platform, []);
+    byPlatform.get(r.platform).push(r.artist_id);
+  }
+  return byPlatform;
 }
 
 async function main() {
-  const modeLabel = PLATFORM ? `platform "${PLATFORM}"` : "non-directory artists";
+  const modeLabel = PLATFORM
+    ? `platform "${PLATFORM}"`
+    : NON_DIRECTORY
+    ? "non-directory artists"
+    : "orphaned platform links";
   console.log(DRY_RUN ? `DRY RUN — no deletes (${modeLabel})\n` : `Pruning images for ${modeLabel}\n`);
 
   const rows = await fetchRowsToPrune();
@@ -164,7 +234,9 @@ async function main() {
   if (DRY_RUN) {
     for (const row of rows.slice(0, 20)) {
       const label = row.artists?.name ?? row.artist_id;
-      const statusNote = PLATFORM ? "" : ` (${row.artists?.directory_status ?? "?"}${row.artists?.deleted ? ", deleted" : ""})`;
+      const statusNote = NON_DIRECTORY
+        ? ` (${row.artists?.directory_status ?? "?"}${row.artists?.deleted ? ", deleted" : ""})`
+        : "";
       console.log(`  would remove: ${label} — ${row.platform}${statusNote}${row.storage_path ? ` [${row.storage_path}]` : ""}`);
     }
     if (rows.length > 20) console.log(`  … and ${rows.length - 20} more`);
@@ -184,24 +256,51 @@ async function main() {
   }
 
   // 2. artist_images rows.
-  let deleteQuery = supabase.from("artist_images").delete({ count: "exact" });
   if (PLATFORM) {
-    deleteQuery = deleteQuery.eq("platform", PLATFORM);
-  } else {
+    const { error: deleteError, count } = await supabase
+      .from("artist_images")
+      .delete({ count: "exact" })
+      .eq("platform", PLATFORM);
+    if (deleteError) {
+      console.error(`Failed to delete artist_images rows: ${deleteError.message}`);
+      process.exit(1);
+    }
+    console.log(`Deleted ${count ?? rows.length} artist_images row(s).`);
+  } else if (NON_DIRECTORY) {
     const artistIds = Array.from(new Set(rows.map((r) => r.artist_id)));
-    deleteQuery = deleteQuery.in("artist_id", artistIds);
     // Rows are already scoped to non-directory artists by the fetch
     // above; re-filtering by artist_id here (rather than re-deriving
     // the same OR condition against a live join) is simpler and safe
     // since between fetch and delete nothing else could have made
     // these artists approved again in the same run.
+    const { error: deleteError, count } = await supabase
+      .from("artist_images")
+      .delete({ count: "exact" })
+      .in("artist_id", artistIds);
+    if (deleteError) {
+      console.error(`Failed to delete artist_images rows: ${deleteError.message}`);
+      process.exit(1);
+    }
+    console.log(`Deleted ${count ?? rows.length} artist_images row(s).`);
+  } else {
+    // ORPHANED: delete exactly the orphaned (artist_id, platform) pairs,
+    // batched one delete per platform. Deleting by artist_id alone would
+    // take out that artist's surviving images too.
+    let total = 0;
+    for (const [platform, artistIds] of groupArtistIdsByPlatform(rows)) {
+      const { error: deleteError, count } = await supabase
+        .from("artist_images")
+        .delete({ count: "exact" })
+        .eq("platform", platform)
+        .in("artist_id", artistIds);
+      if (deleteError) {
+        console.error(`Failed to delete artist_images rows for ${platform}: ${deleteError.message}`);
+        process.exit(1);
+      }
+      total += count ?? artistIds.length;
+    }
+    console.log(`Deleted ${total} artist_images row(s).`);
   }
-  const { error: deleteError, count } = await deleteQuery;
-  if (deleteError) {
-    console.error(`Failed to delete artist_images rows: ${deleteError.message}`);
-    process.exit(1);
-  }
-  console.log(`Deleted ${count ?? rows.length} artist_images row(s).`);
 
   // 3. Lingering harvest_failures for the affected image-harvesting
   // services — scope depends on mode (see module header).
@@ -215,7 +314,7 @@ async function main() {
     } else if (failuresCount) {
       console.log(`Cleared ${failuresCount} harvest_failures row(s) for this platform's image services.`);
     }
-  } else {
+  } else if (NON_DIRECTORY) {
     const artistIds = Array.from(new Set(rows.map((r) => r.artist_id)));
     const { error: failuresError, count: failuresCount } = await supabase
       .from("harvest_failures")
@@ -226,6 +325,31 @@ async function main() {
       console.error(`Failed to clear harvest_failures rows: ${failuresError.message}`);
     } else if (failuresCount) {
       console.log(`Cleared ${failuresCount} harvest_failures row(s) for these artists' image services.`);
+    }
+  } else {
+    // ORPHANED: clear only the image-harvest failures for each pruned
+    // (artist, platform) pair, so a re-added link retries cleanly while
+    // the same artist's still-linked platforms keep any real failures.
+    let cleared = 0;
+    for (const [platform, artistIds] of groupArtistIdsByPlatform(rows)) {
+      const services = [
+        `image-enrich:${platform}`,
+        `image-sync:${platform}`,
+        `image-store:${platform}`,
+      ];
+      const { error: failuresError, count: failuresCount } = await supabase
+        .from("harvest_failures")
+        .delete({ count: "exact" })
+        .in("artist_id", artistIds)
+        .in("service", services);
+      if (failuresError) {
+        console.error(`Failed to clear harvest_failures rows for ${platform}: ${failuresError.message}`);
+      } else {
+        cleared += failuresCount ?? 0;
+      }
+    }
+    if (cleared) {
+      console.log(`Cleared ${cleared} harvest_failures row(s) for these artist+platform image services.`);
     }
   }
 
