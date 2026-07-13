@@ -32,6 +32,7 @@
     "orchestrate-platform-enrichment": "node scripts/orchestrate-platform-enrichment.mjs",
     "fix-http-https-mismatches": "node scripts/fix-http-https-mismatches.mjs",
     "sanitize-bios": "node scripts/sanitize-bios.mjs",
+    "summarize-bios": "node scripts/summarize-bios.mjs",
     "linkify-bios": "tsx scripts/linkify-bios.ts",
     "update-artist-count": "node scripts/update-artist-count.mjs",
     "migrate-linktree-to-links": "tsx scripts/migrate-linktree-to-links.ts",
