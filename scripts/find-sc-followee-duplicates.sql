@@ -1,68 +1,64 @@
--- Ad-hoc diagnostic version — superseded by the "SC followee duplicates"
--- report in the admin panel (/admin/reports), which runs this same
--- lookup as a paginated JS join instead of a single SQL query, to avoid
--- the Supabase SQL editor's upstream timeout on the two joins below.
--- Route: src/app/api/admin/reports/sc-followee-duplicates/route.ts
--- Kept here for ad-hoc use via a direct psql connection.
+-- SC followee duplicates — sc_followee artists whose SoundCloud profile matches
+-- a URL already held by an approved artist (likely the same person, found a
+-- second time via the follow graph).
 --
--- Find sc_followee artists whose SoundCloud permalink_url matches a URL
--- already held by an approved artist (in any platform, via artist_links).
+-- This is the query the admin Reports page's "SC followee duplicates" report
+-- copies to your clipboard ("Copy SQL" button). Paste it into the Supabase SQL
+-- editor and run it there — it scans ~135k cache rows and takes ~20s, which is
+-- fine for the SQL editor (2-min limit) but too slow for a Vercel serverless
+-- function on the Hobby plan, so we surface the SQL instead of running it in a
+-- route. See REPORTS.md for the full story.
 --
--- Table/column names per the live schema (read-only psql via .env.local SUPABASE_DB_URL):
---   artists.directory_status (enum artist_status: 'sc_followee', 'approved', ...)
---   api_response_cache.payload (jsonb) -> 'permalink_url'  (namespace 'soundcloud_user',
---     cache_key = artist_id::text — this is where the raw SoundCloud user payload
---     lives since artist_enrichment.raw_data was moved out; see
---     supabase_migration_move_raw_data_to_cache.sql)
---   artist_links.url, artist_links.not_found (tombstone flag — excluded per project convention)
+-- Keep this in sync with the SQL string in src/lib/reports.ts (the button copies
+-- that copy).
 --
--- URL normalization: lowercased, strip scheme + "www.", strip trailing slash,
--- so "https://soundcloud.com/Foo/" and "http://www.soundcloud.com/foo" match.
+-- Requires the api_response_cache.permalink_url generated column
+-- (supabase_migration_cache_permalink_url.sql): the SoundCloud permalink lives
+-- in the payload JSONB, and reading it via that column avoids detoasting every
+-- row.
+--
+-- Note on normalization: SoundCloud permalinks carry a "?utm_…" query string
+-- that the approved artists' links don't, so both sides must be normalized
+-- (scheme, "www.", query/fragment, and trailing slash stripped) or nothing
+-- matches.
 
-WITH followees AS (
+WITH followees AS (      -- Set 1: sc_followees + their SoundCloud permalink
   SELECT
-    a.id                          AS followee_id,
-    a.name                        AS followee_name,
-    c.payload ->> 'permalink_url' AS permalink_url,
-    lower(
-      regexp_replace(
-        regexp_replace(c.payload ->> 'permalink_url', '^https?://(www\.)?', ''),
-        '/+$', ''
-      )
-    ) AS norm_url
+    a.id   AS followee_id,
+    a.name AS followee_name,
+    c.permalink_url AS followee_url,
+    lower(regexp_replace(regexp_replace(regexp_replace(
+      btrim(c.permalink_url), '^https?://(www\.)?', '', 'i'),  -- strip scheme + www
+      '[?#].*$', ''),                                           -- strip ?utm…/fragment
+      '/+$', '')) AS norm_url                                   -- strip trailing slash
   FROM artists a
   JOIN api_response_cache c
     ON c.namespace = 'soundcloud_user'
    AND c.cache_key = a.id::text
   WHERE a.directory_status = 'sc_followee'
-    AND c.payload ->> 'permalink_url' IS NOT NULL
+    AND a.deleted = false
+    AND c.permalink_url IS NOT NULL
 ),
-approved_links AS (
+approved AS (            -- Set 2: approved artists + all their platform links
   SELECT
-    a.id                AS approved_id,
-    a.name              AS approved_name,
-    al.platform         AS approved_platform,
-    al.url              AS approved_url,
-    lower(
-      regexp_replace(
-        regexp_replace(al.url, '^https?://(www\.)?', ''),
-        '/+$', ''
-      )
-    ) AS norm_url
+    a.id   AS approved_id,
+    a.name AS approved_name,
+    al.platform AS approved_platform,
+    al.url AS approved_url,
+    lower(regexp_replace(regexp_replace(regexp_replace(
+      btrim(al.url), '^https?://(www\.)?', '', 'i'),
+      '[?#].*$', ''),
+      '/+$', '')) AS norm_url
   FROM artists a
   JOIN artist_links al ON al.artist_id = a.id
   WHERE a.directory_status = 'approved'
-    AND al.not_found = false        -- exclude url-less tombstone rows
+    AND a.deleted = false
+    AND al.not_found = false
     AND al.url IS NOT NULL
 )
 SELECT
-  f.followee_id,
-  f.followee_name,
-  f.permalink_url          AS followee_soundcloud_url,
-  ap.approved_id,
-  ap.approved_name,
-  ap.approved_platform,
-  ap.approved_url
+  f.followee_id, f.followee_name, f.followee_url,
+  ap.approved_id, ap.approved_name, ap.approved_platform, ap.approved_url
 FROM followees f
-JOIN approved_links ap ON ap.norm_url = f.norm_url
+JOIN approved ap ON ap.norm_url = f.norm_url
 ORDER BY f.followee_name;

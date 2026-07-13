@@ -27,7 +27,8 @@ export default async function AdminReportsPage() {
       </div>
 
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Run a report to download a LibreOffice spreadsheet (.ods).
+        Each report either downloads a LibreOffice spreadsheet (.ods) or copies
+        a SQL query to paste into the Supabase SQL editor — see its description.
       </p>
 
       <div className="space-y-4">
