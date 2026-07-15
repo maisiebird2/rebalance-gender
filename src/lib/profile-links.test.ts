@@ -7,7 +7,10 @@ import {
   resolveShareUrl,
   resolveProfileLinkUrlAsync,
   deriveHandle,
+  unwrapRedirectUrl,
+  canonicalizeResidentAdvisorUrl,
 } from "./profile-links";
+import { cleanLinkUrl } from "./platforms";
 
 describe("isTemplatedPlatform", () => {
   it("is true for platforms with a URL template", () => {
@@ -140,6 +143,76 @@ describe("normalizeProfileLink — mismatches and edge cases", () => {
   });
 });
 
+describe("normalizeProfileLink — search URLs (no profile page)", () => {
+  it("keeps a SoundCloud search URL, dropping tracking params", () => {
+    const result = normalizeProfileLink(
+      "soundcloud",
+      "https://soundcloud.com/search?q=nancy%20whang&ref=share"
+    );
+    expect(result.url).toBe("https://soundcloud.com/search?q=nancy+whang");
+    expect(result.handle).toBeNull();
+    expect(result.warning).toBeNull();
+  });
+
+  it("keeps a Bandcamp apex search URL (not flagged as a different site)", () => {
+    const result = normalizeProfileLink("bandcamp", "https://bandcamp.com/search?q=nancy%2Bwhang");
+    expect(result.url).toBe("https://bandcamp.com/search?q=nancy%2Bwhang");
+    expect(result.warning).toBeNull();
+  });
+});
+
+describe("normalizeProfileLink — Resident Advisor", () => {
+  it("does not warn on a handle that ends in a period", () => {
+    const result = normalizeProfileLink("resident_advisor", "https://ra.co/dj/kali.");
+    expect(result.url).toBe("https://ra.co/dj/kali.");
+    expect(result.warning).toBeNull();
+  });
+
+  it("does not warn on a handle with interior periods", () => {
+    const result = normalizeProfileLink("resident_advisor", "https://ra.co/dj/j.aria");
+    expect(result.warning).toBeNull();
+  });
+
+  it("rewrites a pre-rebrand residentadvisor.net URL onto ra.co", () => {
+    const result = normalizeProfileLink(
+      "resident_advisor",
+      "https://www.residentadvisor.net/dj/dianamay"
+    );
+    expect(result.url).toBe("https://ra.co/dj/dianamay");
+    expect(result.warning).toBeNull();
+  });
+});
+
+describe("canonicalizeResidentAdvisorUrl", () => {
+  it("swaps the residentadvisor.net host for ra.co, keeping the path", () => {
+    expect(canonicalizeResidentAdvisorUrl("https://www.residentadvisor.net/dj/dianamay")).toBe(
+      "https://ra.co/dj/dianamay"
+    );
+    expect(canonicalizeResidentAdvisorUrl("http://residentadvisor.net/dj/adiel")).toBe(
+      "https://ra.co/dj/adiel"
+    );
+  });
+
+  it("leaves an already-ra.co or unrelated URL unchanged", () => {
+    expect(canonicalizeResidentAdvisorUrl("https://ra.co/dj/dianamay")).toBe("https://ra.co/dj/dianamay");
+    expect(canonicalizeResidentAdvisorUrl("https://soundcloud.com/x")).toBe("https://soundcloud.com/x");
+    expect(canonicalizeResidentAdvisorUrl("not a url")).toBe("not a url");
+  });
+});
+
+describe("deriveHandle — resident_advisor", () => {
+  it("derives the handle from a singular /dj/ URL", () => {
+    expect(deriveHandle("resident_advisor", "https://ra.co/dj/dianamay")).toBe("dianamay");
+  });
+});
+
+describe("host matching does not false-positive on lookalike domains", () => {
+  it("treats notbandcamp.com as a different site, not a bandcamp handle", () => {
+    const result = normalizeProfileLink("bandcamp", "https://notbandcamp.com/foo");
+    expect(result.warning).toMatch(/different site/);
+  });
+});
+
 describe("resolveProfileLinkUrl", () => {
   it("uses the template for templated platforms, ignoring the fallback cleaner", () => {
     const fallback = (_platform: string, url: string) => `FALLBACK:${url}`;
@@ -164,6 +237,50 @@ describe("resolveProfileLinkUrl", () => {
     expect(resolveProfileLinkUrl("discogs", "https://www.discogs.com/artist/123-Name/", passthrough)).toBe(
       "https://www.discogs.com/artist/123-Name"
     );
+  });
+});
+
+describe("unwrapRedirectUrl", () => {
+  const WRAPPED =
+    "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fmartha_radio%3Futm_source%3Dig%26utm_medium%3Dsocial%26utm_content%3Dlink_in_bio%26fbclid%3DPAZabc&e=AUAu077sm9VUpqxy9uhJRvb";
+
+  it("expands an l.instagram.com link shim to its decoded destination", () => {
+    expect(unwrapRedirectUrl(WRAPPED)).toBe(
+      "https://linktr.ee/martha_radio?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAZabc"
+    );
+  });
+
+  it("leaves a normal (non-shim) URL untouched", () => {
+    expect(unwrapRedirectUrl("https://linktr.ee/martha_radio")).toBe("https://linktr.ee/martha_radio");
+  });
+
+  it("returns the input unchanged when the shim has no destination param", () => {
+    expect(unwrapRedirectUrl("https://l.instagram.com/")).toBe("https://l.instagram.com/");
+  });
+
+  it("unwraps a doubly-wrapped link", () => {
+    const inner = encodeURIComponent("https://linktr.ee/foo");
+    const middle = encodeURIComponent(`https://l.facebook.com/?u=${inner}`);
+    expect(unwrapRedirectUrl(`https://l.instagram.com/?u=${middle}`)).toBe("https://linktr.ee/foo");
+  });
+});
+
+describe("link-shim unwrapping through the save path", () => {
+  const WRAPPED =
+    "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fmartha_radio%3Futm_source%3Dig%26fbclid%3DPAZabc&e=AUAu077";
+
+  it("resolves a wrapped Linktree URL to the bare profile (tracking stripped)", () => {
+    expect(resolveProfileLinkUrl("linktree", WRAPPED, cleanLinkUrl)).toBe(
+      "https://linktr.ee/martha_radio"
+    );
+  });
+
+  it("unwraps to a templated platform's canonical URL when wrapped", () => {
+    const wrappedSc =
+      "https://l.instagram.com/?u=https%3A%2F%2Fsoundcloud.com%2Freal-artist%3Fsi%3Dabc&e=x";
+    const result = normalizeProfileLink("soundcloud", wrappedSc);
+    expect(result.url).toBe("https://soundcloud.com/real-artist");
+    expect(result.wasTransformed).toBe(true);
   });
 });
 

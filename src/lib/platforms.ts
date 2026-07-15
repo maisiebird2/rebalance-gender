@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform } from "./types";
+import { cleanGenericUrl } from "./profile-links";
 
 /**
  * Fetches every profile-link category from the `platforms` lookup
@@ -49,39 +50,14 @@ export function platformPlaceholder(label: string): string {
 }
 
 /**
- * Cleans a profile link URL before it is saved to the database.
+ * Cleans a profile link URL before it is saved to the database: trims, then
+ * strips everything from `?` onward (tracking params, share tokens), except on
+ * a platform's search/content path where the query is meaningful and kept.
  *
- * Always applied regardless of platform:
- * - Trims leading and trailing whitespace (including newlines and tabs).
- * - Strips everything from `?` onward (tracking params, share tokens, etc.).
- *
- * Platform-specific exceptions: certain URL paths use the query string as
- * meaningful content (search queries, voucher codes, etc.) rather than
- * tracking params. These are left intact.
+ * The implementation lives in lib/profile-links.ts (cleanGenericUrl) so there
+ * is a single source of truth for URL cleaning; this is the historical name/
+ * import site kept for the callers that already use it.
  */
-
-/** Path prefixes that signal the query string is content, not tracking. */
-const SEARCH_PATH_PREFIXES: Partial<Record<string, string>> = {
-  soundcloud: "/search",
-  discogs:    "/search",
-  youtube:    "/results",
-  bandcamp:   "/search",
-  venmo:      "/code",
-};
-
 export function cleanLinkUrl(platform: string, url: string): string {
-  // Trim first so all downstream checks operate on a clean string.
-  const trimmed = url.trim();
-
-  const searchPrefix = SEARCH_PATH_PREFIXES[platform];
-  if (searchPrefix) {
-    try {
-      const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith(searchPrefix)) return trimmed;
-    } catch {
-      // malformed URL — fall through to default stripping
-    }
-  }
-
-  return trimmed.split("?")[0];
+  return cleanGenericUrl(platform, url);
 }
