@@ -30,9 +30,12 @@
 // No cache file — state lives in the DB. A platform is skipped once
 // artist_images has a row for it, or once harvest_failures has a
 // confirmed 'no_og_image' row for it (service = "image-enrich:
-// <platform>"); a brand-new link on a platform never tried before is
-// always attempted, force or not. See src/lib/enrich-images.ts for
-// the full skip-set rules.
+// <platform>"). The skip is keyed to the exact link: both records store
+// the profile URL they came from, so a link edited/corrected to a
+// different URL is treated as never-tried and re-fetched automatically,
+// force or not. If a link changes to a page with no image, the stale
+// image previously stored for that platform is deleted. See
+// src/lib/enrich-images.ts for the full skip-set rules.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -129,6 +132,7 @@ async function main() {
   console.log(`${artists.length} approved artist(s) to check.\n`);
 
   let storedCount = 0;
+  let removedCount = 0;
   let attemptedCount = 0;
   let noActivity = 0;
   let fullyCovered = 0;
@@ -142,6 +146,7 @@ async function main() {
     });
 
     attemptedCount += result.attempted.length;
+    removedCount += result.removed.length;
 
     if (result.stored.length > 0) {
       storedCount += result.stored.length;
@@ -164,6 +169,7 @@ async function main() {
   for (const [platform, count] of Object.entries(bySource)) {
     console.log(`    via ${platform}: ${count}`);
   }
+  console.log(`  stale images removed (link changed to a page with no image): ${removedCount}`);
   console.log(`  platform attempts with no image found: ${attemptedCount - storedCount}`);
   console.log(`  artists already fully covered: ${fullyCovered}`);
   console.log(`  artists with no usable links: ${noActivity}`);

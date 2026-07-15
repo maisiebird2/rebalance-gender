@@ -15,6 +15,11 @@
 // separate stored images from several platforms at once; see
 // supabase_migration_artist_images.sql for why.
 //
+// Known "no real photo" placeholders (e.g. Last.fm's default star
+// avatar) are rejected as if the page had no og:image at all — see
+// isPlaceholderImageUrl — so a generic silhouette is never stored and
+// the artist is recorded as a stable no-image result instead.
+//
 // Two platforms are deliberately off-limits here: soundcloud and
 // bandcamp have their own dedicated, better-guarded harvesters
 // (sync-soundcloud.mjs, sync-bandcamp.mjs) that pull images from a
@@ -41,6 +46,24 @@
 // failure (timeout, 5xx, network error) is deliberately NOT part of
 // that skip set — those are retried on every call automatically, same
 // convention sync-soundcloud.mjs uses for harvest_failures.
+//
+// The skip set is keyed to the exact link, not just the platform: both
+// records store the profile URL they came from (artist_images.source_page_url
+// for a stored image, harvest_failures.url for a no-image result), and a
+// platform is only skipped when the artist's *current* link for it still
+// matches. When a link is edited/corrected to a different URL, that URL
+// is treated as never-tried and re-fetched automatically — no --force
+// needed. (Rows predating source_page_url have it null; a null recorded
+// URL is treated as still covering the current link, so legacy rows keep
+// their old skip-unless-forced behaviour.) See
+// supabase_migration_artist_images_source_page_url.sql.
+//
+// If a link changes to a page that has no image, any image previously
+// stored for that platform (fetched from the old link) is DELETED, so a
+// stored image always reflects the artist's current link rather than a
+// now-delinked URL. That delete also drops any re-hosted storage copy's
+// row — an accepted trade for keeping artist_images consistent with the
+// live links.
 //
 // harvest_failures rows are read/written directly here (a small
 // inline upsert/delete, not an import of
@@ -78,6 +101,24 @@ export const DEDICATED_HARVEST_PLATFORMS: ReadonlySet<string> = new Set([
   "soundcloud",
   "bandcamp",
 ]);
+
+// Some platforms serve a generic placeholder in place of a 404 when an
+// artist has no real photo — an og:image scrape happily returns it, so
+// we reject these as if there were no image tag at all (a stable
+// no-image result, recorded in harvest_failures and skipped on retry).
+// Match on the stable filename/hash so every size variant of the same
+// placeholder is caught.
+const PLACEHOLDER_IMAGE_PATTERNS: readonly RegExp[] = [
+  // Last.fm's default "star" artist avatar, e.g.
+  // https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg
+  // — the same hash is served at every size variant (ar0/174s/300x300/…),
+  // so matching the hash alone catches all of them.
+  /2a96cbd8b46e442fc41c2b86b821562f/i,
+];
+
+export function isPlaceholderImageUrl(imageUrl: string): boolean {
+  return PLACEHOLDER_IMAGE_PATTERNS.some((re) => re.test(imageUrl));
+}
 
 export type OgImageResult =
   | { found: true; imageUrl: string }
@@ -134,7 +175,14 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
       return { found: false, transient: false, detail: "no og:image/twitter:image meta tag" };
     }
 
-    return { found: true, imageUrl: new URL(imageUrl, url).toString() };
+    const resolved = new URL(imageUrl, url).toString();
+    if (isPlaceholderImageUrl(resolved)) {
+      // A real page that returned a known "no real photo" placeholder —
+      // stable, so record it as a no-image result rather than storing it.
+      return { found: false, transient: false, detail: "placeholder image (platform default, no real photo)" };
+    }
+
+    return { found: true, imageUrl: resolved };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { found: false, transient: true, detail };
@@ -159,6 +207,7 @@ export interface EnrichArtistImagesOptions {
 export interface EnrichArtistImagesResult {
   attempted: string[];
   stored: string[];
+  removed: string[]; // stale image dropped: link changed to a page with no image
   skippedExisting: string[]; // already had an image or a stable failure, not forced
   skippedProtected: string[]; // soundcloud/bandcamp — owned by their own harvester
   failed: string[];
@@ -181,6 +230,7 @@ export async function enrichArtistImages(
   const result: EnrichArtistImagesResult = {
     attempted: [],
     stored: [],
+    removed: [],
     skippedExisting: [],
     skippedProtected: [],
     failed: [],
@@ -222,10 +272,10 @@ export async function enrichArtistImages(
 
   const [{ data: existingImages, error: imagesError }, { data: stableFailures, error: failuresError }] =
     await Promise.all([
-      adminClient.from("artist_images").select("platform").eq("artist_id", artistId),
+      adminClient.from("artist_images").select("platform, source_page_url").eq("artist_id", artistId),
       adminClient
         .from("harvest_failures")
-        .select("service")
+        .select("service, url")
         .eq("artist_id", artistId)
         .eq("status", "no_og_image")
         .like("service", "image-enrich:%"),
@@ -240,22 +290,49 @@ export async function enrichArtistImages(
     console.error(`[enrich-images] Failed to load prior failures for ${artist.name}:`, failuresError.message);
   }
 
-  const existingPlatforms = new Set((existingImages ?? []).map((r) => r.platform as string));
-  const stableFailurePlatforms = new Set(
-    (stableFailures ?? []).map((r) => (r.service as string).slice("image-enrich:".length))
+  // platform -> the profile URL we last processed for it. For a stored
+  // image that's source_page_url (the link we fetched the image from);
+  // for a stable no-image failure it's harvest_failures.url. A null
+  // value means we have a record but predate URL tracking (a legacy row).
+  const imagedUrlByPlatform = new Map<string, string | null>(
+    (existingImages ?? []).map((r) => [r.platform as string, (r.source_page_url as string | null) ?? null])
+  );
+  const failedUrlByPlatform = new Map<string, string | null>(
+    (stableFailures ?? []).map((r) => [
+      (r.service as string).slice("image-enrich:".length),
+      (r.url as string | null) ?? null,
+    ])
   );
 
   for (const platform of candidates) {
     const url = linksByPlatform.get(platform)!;
     const isDedicated = DEDICATED_HARVEST_PLATFORMS.has(platform);
     const service = `image-enrich:${platform}`;
+    const hadImage = imagedUrlByPlatform.has(platform);
+    const hadFailure = !hadImage && failedUrlByPlatform.has(platform);
 
-    if (existingPlatforms.has(platform)) {
-      if (isDedicated || !force) {
-        (isDedicated ? result.skippedProtected : result.skippedExisting).push(platform);
-        continue;
-      }
-    } else if (stableFailurePlatforms.has(platform) && !force) {
+    // The link we last processed this platform against: source_page_url
+    // for a stored image, harvest_failures.url for a confirmed no-image
+    // result. A null value is a legacy row from before URL tracking —
+    // treat it as still covering the current link (so legacy rows keep
+    // their old skip-unless-forced behaviour); undefined = no record.
+    const processedUrl = hadImage
+      ? imagedUrlByPlatform.get(platform)!
+      : hadFailure
+        ? failedUrlByPlatform.get(platform)!
+        : undefined;
+    const urlChanged = processedUrl != null && processedUrl !== url;
+
+    // soundcloud/bandcamp are owned by their dedicated harvesters —
+    // never re-fetched or overwritten here, even on a link change or
+    // with --force.
+    if (hadImage && isDedicated) {
+      result.skippedProtected.push(platform);
+      continue;
+    }
+    // Skip a platform already covered for its current link, unless forced
+    // or the link has changed — a changed link is re-fetched automatically.
+    if ((hadImage || hadFailure) && !force && !urlChanged) {
       result.skippedExisting.push(platform);
       continue;
     }
@@ -271,6 +348,7 @@ export async function enrichArtistImages(
             artist_id: artistId,
             platform,
             source_url: fetched.imageUrl,
+            source_page_url: url,
             fetched_at: new Date().toISOString(),
           },
           { onConflict: "artist_id,platform" }
@@ -291,6 +369,25 @@ export async function enrichArtistImages(
       result.failed.push(platform);
       if (!fetched.transient) {
         console.log(`[enrich-images] ${artist.name}: ${platform} — no image found (${fetched.detail})`);
+        if (hadImage && urlChanged) {
+          // The link changed to a page with no image, and a stale image
+          // survives from the previous link — drop it so a stored image
+          // always reflects the current link (see the "link changes" note
+          // in the module header). Only on a genuine link change: a --force
+          // re-check of an unchanged link whose page merely lost its image
+          // leaves the existing image in place.
+          console.log(
+            `[enrich-images] ${artist.name}: removing stale ${platform} image (link changed to a page with no image)`
+          );
+          result.removed.push(platform);
+          if (!dryRun) {
+            await adminClient
+              .from("artist_images")
+              .delete()
+              .eq("artist_id", artistId)
+              .eq("platform", platform);
+          }
+        }
         if (!dryRun) {
           await adminClient.from("harvest_failures").upsert(
             {

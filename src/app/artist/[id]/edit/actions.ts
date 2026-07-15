@@ -355,9 +355,10 @@ export async function saveArtist(
   // ── 9. Trigger image enrichment if warranted ──────────────────
   // Run after the response is sent so it doesn't block the redirect.
   // enrichArtistImages only attempts platforms that don't already have
-  // a stored image (or a confirmed no-image result), so this is a
-  // no-op for platforms already covered — cheap to call unconditionally
-  // whenever new links might have changed the picture.
+  // a stored image (or a confirmed no-image result) for their *current*
+  // link — a platform whose image is up to date is a no-op, but one
+  // whose link URL just changed is re-fetched (hasNewImageUrls, which
+  // gates this, is exactly "a submitted link URL differs from before").
   if (directoryStatus === "approved" && hasNewImageUrls) {
     after(() => enrichArtistImages(artistId, admin));
   }

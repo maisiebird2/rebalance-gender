@@ -1,0 +1,36 @@
+-- Migration: artist_images.source_page_url
+-- Run once in the Supabase SQL editor before running the updated
+-- scripts/enrich-images.ts / src/lib/enrich-images.ts.
+--
+-- Why:
+--
+--   enrich-images skips a platform once artist_images has a row for it,
+--   so an artist whose stored image is up to date isn't re-fetched every
+--   run. But the skip was keyed purely by platform, with no record of
+--   *which* profile URL produced the image: source_url holds the
+--   resulting image URL (the og:image/avatar the fetch landed on), not
+--   the profile-page link that was fetched. So when an artist's link for
+--   a platform is later corrected or replaced (a cleaned URL, an
+--   http->https fix, a wrong-slug correction — all of which real scripts
+--   in this repo do), the new URL was never retried automatically; only
+--   --force re-checked it. See the "swapping the URL on a platform that
+--   already has one doesn't count as new" gap.
+--
+--   source_page_url records the profile-page link that was fetched to
+--   produce this image, so enrich-images can compare it against the
+--   artist's current link for that platform and re-fetch when they
+--   differ — the same URL-change detection harvest_failures already
+--   supports via its own url column.
+--
+--   Nullable, no backfill: existing rows predate this column and have no
+--   recorded source page. enrich-images treats a null source_page_url as
+--   "unknown" and keeps the old behaviour for those rows (skip unless
+--   --force); the column is populated the next time each platform is
+--   (re-)fetched. soundcloud/bandcamp rows are written by their own
+--   dedicated harvesters and are never touched by enrich-images, so
+--   leaving their source_page_url null is harmless.
+--
+-- Safe to re-run (ADD COLUMN IF NOT EXISTS).
+
+ALTER TABLE "public"."artist_images"
+    ADD COLUMN IF NOT EXISTS "source_page_url" "text";

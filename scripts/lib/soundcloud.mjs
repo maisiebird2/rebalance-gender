@@ -52,6 +52,19 @@ export function upgradeAvatarUrl(url) {
 }
 
 // ------------------------------------------------------------
+// When a SoundCloud account has no real avatar, the API still returns an
+// avatar_url — a generic grey placeholder hosted at
+// .../images/default_avatar_<size>.png. It's not a usable profile photo,
+// so callers should treat it as "no image" rather than re-hosting a
+// silhouette. Matches any size variant / CDN host by the stable
+// "default_avatar" filename (real avatars are avatars-<id>-<size>.jpg and
+// never contain it). Returns false for a missing/empty avatar.
+// ------------------------------------------------------------
+export function isDefaultAvatarUrl(url) {
+  return typeof url === "string" && /\/default_avatar[_.]/i.test(url);
+}
+
+// ------------------------------------------------------------
 // Normalize a SoundCloud profile URL for in-memory dedupe-key matching
 // (lowercased, query/hash stripped, trailing slash removed). Used by
 // the follow-graph builder to tell whether a followed account is

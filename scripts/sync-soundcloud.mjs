@@ -108,6 +108,14 @@
 // artist_enrichment.profile_image_url (explicitly nulled in that
 // upsert, so a pre-migration value doesn't linger looking
 // authoritative) — see supabase_migration_artist_images.sql.
+// "No real image" cases are recorded, not silently skipped: an account
+// with no avatar at all (no_avatar), and one whose avatar_url is
+// SoundCloud's generic grey default_avatar placeholder (detected by
+// isDefaultAvatarUrl — returned for accounts with no photo). Neither is
+// stored; both are recorded under IMAGE_STATE_SERVICE like any other
+// image failure, so the image-only pass stops re-resolving them every
+// run. As with any URL-keyed failure, an image added later at the
+// unchanged profile URL is only picked up on --force (or a link change).
 // Directory-only, unconditionally: the image write only happens when
 // this artist's directory_status is 'approved' at the moment
 // syncArtist() runs, checked inline regardless of which flags scoped
@@ -207,6 +215,7 @@ import {
   SOUNDCLOUD_HOST_REGEX,
   isSoundCloudUrl,
   upgradeAvatarUrl,
+  isDefaultAvatarUrl,
 } from "./lib/soundcloud.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -825,8 +834,25 @@ export async function syncArtist(artist, opts = {}) {
   if (isApproved) {
     const avatarUrl = upgradeAvatarUrl(user.avatar_url);
     if (!avatarUrl) {
+      // No avatar at all — nothing to store. Recorded like any other
+      // image failure so the image-only pass stops re-resolving this
+      // artist every run (a wasted /resolve call). Same URL-keyed
+      // trade-off as default_avatar below: an avatar added later at the
+      // unchanged profile URL is only picked up on --force (or if the
+      // link changes), not automatically.
       imageStatus = "no_avatar";
       if (debug) console.log(`  [debug] ${name}: approved but no avatar_url on resolved user`);
+      await failImage("no_avatar", "resolved soundcloud user has no avatar_url");
+    } else if (isDefaultAvatarUrl(user.avatar_url)) {
+      // SoundCloud serves a generic placeholder avatar for accounts with
+      // no real photo — not a usable image, so don't re-host a silhouette.
+      // Record it against IMAGE_STATE_SERVICE (with the current profile
+      // URL) so main()'s image-only pass stops re-attempting until the
+      // link changes — the same link-changed-since-failure cross-check it
+      // already applies to every other image failure.
+      imageStatus = "default_avatar";
+      if (debug) console.log(`  [debug] ${name}: approved but avatar_url is SoundCloud's default placeholder`);
+      await failImage("default_avatar", "soundcloud returned its default placeholder avatar (no real photo)");
     } else if (!dryRun) {
       const { error: imageError } = await supabase.from("artist_images").upsert(
         {
@@ -855,7 +881,7 @@ export async function syncArtist(artist, opts = {}) {
     // from the main sync; resolved_artists('soundcloud-sync') is left
     // untouched since this call was never about the main sync.
     console.log(
-      `${imageStatus === "stored" ? "✓" : imageStatus === "no_avatar" ? "○" : "✗"} ${name}: image-only — ${imageStatus}`
+      `${imageStatus === "stored" ? "✓" : imageStatus === "no_avatar" || imageStatus === "default_avatar" ? "○" : "✗"} ${name}: image-only — ${imageStatus}`
     );
     await sleep(300);
     return { status: imageStatus === "stored" ? "image_synced" : "image_failed", imageStatus };

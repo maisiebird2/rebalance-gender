@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isSoundCloudUrl,
   upgradeAvatarUrl,
+  isDefaultAvatarUrl,
   normalizeScUrl,
   cleanScUrl,
   createSoundcloudClient,
@@ -36,6 +37,23 @@ describe("upgradeAvatarUrl", () => {
     expect(upgradeAvatarUrl(null)).toBeNull();
     expect(upgradeAvatarUrl("")).toBeNull();
     expect(upgradeAvatarUrl(undefined)).toBeNull();
+  });
+});
+
+describe("isDefaultAvatarUrl", () => {
+  it("matches SoundCloud's default placeholder avatar at any size", () => {
+    expect(isDefaultAvatarUrl("https://a1.sndcdn.com/images/default_avatar_large.png")).toBe(true);
+    expect(isDefaultAvatarUrl("https://a1.sndcdn.com/images/default_avatar_t500x500.png")).toBe(
+      true
+    );
+    expect(isDefaultAvatarUrl("https://a1.sndcdn.com/images/default_avatar.png")).toBe(true);
+  });
+
+  it("does not match a real avatar or missing value", () => {
+    expect(isDefaultAvatarUrl("https://i1.sndcdn.com/avatars-000123-abc-large.jpg")).toBe(false);
+    expect(isDefaultAvatarUrl(null)).toBe(false);
+    expect(isDefaultAvatarUrl("")).toBe(false);
+    expect(isDefaultAvatarUrl(undefined)).toBe(false);
   });
 });
 
