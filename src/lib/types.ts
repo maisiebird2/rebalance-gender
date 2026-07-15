@@ -9,7 +9,8 @@ export type ArtistStatus =
   | "search_input"
   | "sc_followee"
   | "duplicate"
-  | "unverified";
+  | "unverified"
+  | "obscure";
 
 // ── Submission / revision system ─────────────────────────────────────────────
 
