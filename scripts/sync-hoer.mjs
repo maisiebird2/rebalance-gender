@@ -107,6 +107,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -305,6 +306,9 @@ function normalizeUrl(url) {
   return u.toString();
 }
 function classifyUrl(rawUrl) {
+  // Rewrite pre-rebrand residentadvisor.net links onto ra.co up front, so
+  // both the platform match and the stored parsed_url use the current host.
+  rawUrl = canonicalizeResidentAdvisorUrl(rawUrl);
   let url;
   try {
     url = new URL(rawUrl);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
-import { getPlatforms, cleanLinkUrl } from "@/lib/platforms";
+import { getPlatforms } from "@/lib/platforms";
 import { resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import {
   checkBotProtection,
@@ -246,9 +246,9 @@ export async function POST(request: NextRequest) {
             // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
             // without a blur event). SoundCloud mobile share links
             // (on.soundcloud.com/...) are expanded via a redirect-follow here
-            // too. Everything else falls back to the existing cleanLinkUrl()
-            // trimming/query-stripping.
-            url: await resolveProfileLinkUrlAsync(platform, original_url, cleanLinkUrl),
+            // too. Everything else falls back to generic trimming/query-
+            // stripping (cleanGenericUrl, the default fallback cleaner).
+            url: await resolveProfileLinkUrlAsync(platform, original_url),
           };
         })
     );

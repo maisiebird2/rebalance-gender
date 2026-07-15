@@ -266,7 +266,6 @@ export async function approveRevision(
 
   // Merge links (upsert — don't delete links not mentioned in revision).
   if (rd.links && Object.keys(rd.links).length) {
-    const { cleanLinkUrl } = await import("@/lib/platforms");
     const { resolveProfileLinkUrlAsync } = await import("@/lib/profile-links");
     const rows = await Promise.all(
       Object.entries(rd.links)
@@ -275,7 +274,7 @@ export async function approveRevision(
           artist_id: artistId,
           platform,
           original_url: url.trim(),
-          url: await resolveProfileLinkUrlAsync(platform, url.trim(), cleanLinkUrl),
+          url: await resolveProfileLinkUrlAsync(platform, url.trim()),
         }))
     );
     if (rows.length) {
