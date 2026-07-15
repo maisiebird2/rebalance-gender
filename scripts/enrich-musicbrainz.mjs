@@ -32,6 +32,7 @@ import { createClient } from '@supabase/supabase-js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { canonicalizeResidentAdvisorUrl } from './lib/ra-url.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -421,8 +422,12 @@ async function processArtist(artist, mbid, mbidToArtistId) {
 
   for (const rel of urlRels) {
     if ((rel.type ?? '').toLowerCase() === 'free streaming') continue
-    const resource = rel.url?.resource
-    if (!resource) continue
+    const rawResource = rel.url?.resource
+    if (!rawResource) continue
+
+    // Rewrite pre-rebrand residentadvisor.net links onto ra.co before both
+    // platform detection and storage.
+    const resource = canonicalizeResidentAdvisorUrl(rawResource)
 
     const platform = platformFromUrl(resource)
     if (!platform) continue        // null = skip entirely

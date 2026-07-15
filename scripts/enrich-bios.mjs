@@ -48,6 +48,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
+import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -222,7 +223,8 @@ function harvestLinks(hydration) {
     .filter((p) => !SKIP_NETWORKS.has(p.network) && !isTwitterHost(p.url))
     .map((p) => ({
       platform: NETWORK_PLATFORM_MAP[p.network] ?? "other",
-      url: p.url,
+      // Rewrite pre-rebrand residentadvisor.net links onto ra.co.
+      url: canonicalizeResidentAdvisorUrl(p.url),
       handle: p.handle,
     }));
 }

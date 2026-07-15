@@ -97,6 +97,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -573,8 +574,9 @@ async function main() {
       pairsAlreadyLinked++;
     } else {
       // No existing artist_links row for this pair — promote the
-      // surviving candidate.
-      canonicalUrl = winner.parsed_url;
+      // surviving candidate. Rewrite any pre-rebrand residentadvisor.net
+      // URL onto ra.co on the way into artist_links.
+      canonicalUrl = canonicalizeResidentAdvisorUrl(winner.parsed_url);
       pairsNewlyLinked++;
       toInsert.push({ artist_id: artistId, platform, handle: null, url: canonicalUrl });
       if (DEBUG) console.log(`+ ${key}: inserting ${canonicalUrl} (from harvested row #${winner.id})`);
