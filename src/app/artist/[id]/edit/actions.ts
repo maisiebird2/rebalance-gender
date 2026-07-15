@@ -5,7 +5,6 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { cleanLinkUrl } from "@/lib/platforms";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { enrichArtistImages, PLATFORM_PRIORITY } from "@/lib/enrich-images";
@@ -213,7 +212,7 @@ export async function saveArtist(
     if (!l.not_found && l.url?.trim()) {
       resolvedUrls.set(
         l,
-        await resolveProfileLinkUrlAsync(l.platform, l.url.trim(), cleanLinkUrl)
+        await resolveProfileLinkUrlAsync(l.platform, l.url.trim())
       );
     }
   }

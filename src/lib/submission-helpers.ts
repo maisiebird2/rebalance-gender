@@ -12,7 +12,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { verifyTurnstileToken } from "@/lib/turnstile";
 import { sendVerificationEmail, type SubmissionKind } from "@/lib/email";
-import { cleanLinkUrl } from "@/lib/platforms";
 import { resolveProfileLinkUrlAsync, deriveHandle } from "@/lib/profile-links";
 
 // ── Bot protection ────────────────────────────────────────────────────────────
@@ -147,7 +146,7 @@ export async function findDuplicateArtists(
     // Resolve share links (e.g. on.soundcloud.com/...) the same way the save
     // path will, so a submitted share link is matched against the existing
     // artist's already-canonical URL.
-    const canonical = await resolveProfileLinkUrlAsync(platform, url, cleanLinkUrl);
+    const canonical = await resolveProfileLinkUrlAsync(platform, url);
     if (!canonical) continue;
     const keys = linkKeys(platform, canonical);
     if (keys.length === 0) continue;

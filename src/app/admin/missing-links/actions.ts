@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { cleanLinkUrl } from "@/lib/platforms";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { enrichArtistImages, PLATFORM_PRIORITY } from "@/lib/enrich-images";
 
@@ -23,7 +22,7 @@ async function requireUser(): Promise<boolean> {
 /**
  * Saves a single platform link for an artist, from the "Missing links"
  * admin page. Applies the same normalization as the edit form
- * (resolveProfileLinkUrlAsync → cleanLinkUrl → deriveHandle), replaces any
+ * (resolveProfileLinkUrlAsync → deriveHandle), replaces any
  * existing row for (artist, platform) so it's safe to retry, and kicks
  * off image enrichment when the platform can provide a profile image.
  */
@@ -40,7 +39,7 @@ export async function saveArtistPlatformLink(
   const admin = getSupabaseAdminClient();
 
   const original_url = rawUrl.trim();
-  const url = await resolveProfileLinkUrlAsync(platform, original_url, cleanLinkUrl);
+  const url = await resolveProfileLinkUrlAsync(platform, original_url);
 
   // Replace-then-insert keeps this idempotent (double-click, stale tab).
   await admin
