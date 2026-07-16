@@ -80,6 +80,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Platform priority: try these link types in this order. Every
 // candidate the artist has a link for gets tried (not just the
 // first) — this only controls run order, e.g. for log readability.
+//
+// "other" and "homepage" are deliberately excluded: both are catch-alls
+// pointing at arbitrary third-party websites with no consistent page
+// shape, so an og:image scrape can't reliably pull a genuine profile
+// photo from them (and often grabs an unrelated hero/banner image).
+// Neither is a candidate here, so such a link is never fetched or
+// recorded as a failure — same treatment as a not-found slot. This
+// mirrors qc-links.mjs, which omits the same two platforms from its
+// domain cross-check because any domain is valid for them.
 export const PLATFORM_PRIORITY = [
   "soundcloud",
   "bandcamp",
@@ -92,7 +101,6 @@ export const PLATFORM_PRIORITY = [
   "wikipedia",
   "apple_music",
   "youtube",
-  "other",
 ] as const;
 
 // Platforms with their own dedicated image harvester. Never fetched
@@ -238,7 +246,7 @@ export async function enrichArtistImages(
 
   const { data: artist, error } = await adminClient
     .from("artists")
-    .select("id, name, directory_status, links:artist_links(platform, url)")
+    .select("id, name, directory_status, links:artist_links(platform, url, not_found)")
     .eq("id", artistId)
     .single();
 
@@ -256,8 +264,17 @@ export async function enrichArtistImages(
     return result;
   }
 
+  // A link marked "not found" (an admin recorded that the artist isn't on
+  // this platform — artist_links.not_found = true, url null) is treated
+  // exactly like a platform the artist has no row for at all: it's not a
+  // candidate, so it's never fetched and never recorded as a failure. It
+  // only comes back into play if a real URL is later entered for that slot
+  // (which clears not_found). Also drops any row that somehow has no url,
+  // which would otherwise fail with "Failed to parse URL from null".
   const linksByPlatform = new Map(
-    ((artist.links ?? []) as { platform: string; url: string }[]).map((l) => [l.platform, l.url])
+    ((artist.links ?? []) as { platform: string; url: string; not_found?: boolean }[])
+      .filter((l) => !l.not_found && l.url)
+      .map((l) => [l.platform, l.url])
   );
 
   let candidates = PLATFORM_PRIORITY.filter((p) => linksByPlatform.has(p));

@@ -3,7 +3,7 @@
 // typing precisely for test plumbing — so `any` is allowed in this file.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { enrichArtistImages, isPlaceholderImageUrl } from "./enrich-images";
+import { enrichArtistImages, isPlaceholderImageUrl, PLATFORM_PRIORITY } from "./enrich-images";
 
 const LASTFM_PLACEHOLDER =
   "https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg";
@@ -98,7 +98,9 @@ function stubFetch(map: Record<string, FetchKind>) {
   return fetchMock;
 }
 
-function approvedArtist(links: { platform: string; url: string }[]) {
+function approvedArtist(
+  links: { platform: string; url: string | null; not_found?: boolean }[]
+) {
   return { id: "a1", name: "Test Artist", directory_status: "approved", links };
 }
 
@@ -125,6 +127,66 @@ describe("enrichArtistImages — URL-change handling", () => {
     expect(result.stored).toEqual(["spotify"]);
     const upsert = calls.upserts.find((u) => u.table === "artist_images");
     expect(upsert?.row.source_page_url).toBe("https://spotify/new");
+  });
+
+  it("skips a platform marked not-found entirely — never fetched, never recorded as a failure", async () => {
+    const { client, calls } = makeClient({
+      artist: approvedArtist([{ platform: "spotify", url: null, not_found: true }]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({});
+
+    const result = await enrichArtistImages("a1", client);
+
+    // Treated exactly like a platform with no link row at all: not a
+    // candidate, so no attempt, no fetch, and no harvest_failures write.
+    expect(result.attempted).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
+  it("still enriches other platforms alongside a not-found one", async () => {
+    const { client } = makeClient({
+      artist: approvedArtist([
+        { platform: "spotify", url: null, not_found: true },
+        { platform: "discogs", url: "https://discogs/real" },
+      ]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({ "https://discogs/real": "image" });
+
+    const result = await enrichArtistImages("a1", client);
+
+    expect(result.stored).toEqual(["discogs"]);
+    expect(result.attempted).toEqual(["discogs"]);
+    expect(fetchMock).not.toHaveBeenCalledWith(null, expect.anything());
+  });
+
+  // "other" and "homepage" are catch-alls for arbitrary sites, so an
+  // og:image scrape can't reliably yield a real profile photo. Neither
+  // is image-capable; both must be ignored outright.
+  it.each(["other", "homepage"])("never tries a %s link", async (platform) => {
+    const { client, calls } = makeClient({
+      artist: approvedArtist([{ platform, url: "https://some-random-site/artist" }]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({ "https://some-random-site/artist": "image" });
+
+    const result = await enrichArtistImages("a1", client);
+
+    expect(result.attempted).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
+  it("excludes both catch-all platforms from PLATFORM_PRIORITY", () => {
+    expect(PLATFORM_PRIORITY).not.toContain("other");
+    expect(PLATFORM_PRIORITY).not.toContain("homepage");
   });
 
   it("skips a platform whose stored image came from the same (unchanged) link", async () => {
