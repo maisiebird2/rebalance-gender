@@ -75,6 +75,28 @@ describe("deriveHandle — bandcamp", () => {
   });
 });
 
+describe("deriveHandle — first vs last path segment", () => {
+  it("takes the FIRST segment for a SoundCloud track URL", () => {
+    expect(deriveHandle("soundcloud", "https://soundcloud.com/laura-indorf/dub")).toBe("laura-indorf");
+  });
+
+  it("takes the FIRST segment for a plain SoundCloud profile", () => {
+    expect(deriveHandle("soundcloud", "https://soundcloud.com/some-dj-name")).toBe("some-dj-name");
+  });
+
+  it("takes the FIRST segment for an Instagram URL with trailing content", () => {
+    expect(deriveHandle("instagram", "https://www.instagram.com/techno_blondy/reel/Cabc123/")).toBe(
+      "techno_blondy"
+    );
+  });
+
+  it("still takes the LAST segment for Discogs (handle sits after /artist/)", () => {
+    expect(deriveHandle("discogs", "https://www.discogs.com/artist/12345-Some-Artist")).toBe(
+      "12345-Some-Artist"
+    );
+  });
+});
+
 describe("normalizeProfileLink — pasted URLs", () => {
   it("re-canonicalizes a full URL with tracking params", () => {
     const result = normalizeProfileLink("instagram", "https://instagram.com/techno_blondy/?hl=en");
@@ -114,6 +136,27 @@ describe("normalizeProfileLink — pasted URLs", () => {
     const result = normalizeProfileLink("soundcloud", "https://soundcloud.com/some-dj-name");
     expect(result.url).toBe("https://soundcloud.com/some-dj-name");
     expect(result.wasTransformed).toBe(false);
+  });
+
+  it("reduces a SoundCloud track URL to the profile (handle is the FIRST segment)", () => {
+    const result = normalizeProfileLink(
+      "soundcloud",
+      "https://soundcloud.com/laura-indorf/dub?ref=clipboard&p=i&c=1&si=08FAAF6D5D4E4F9FB760A93EBB4F426C&utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing"
+    );
+    expect(result.url).toBe("https://soundcloud.com/laura-indorf");
+    expect(result.handle).toBe("laura-indorf");
+  });
+
+  it("reduces a SoundCloud /sets/ (playlist) URL to the profile", () => {
+    const result = normalizeProfileLink("soundcloud", "https://soundcloud.com/some-dj-name/sets/my-mixes");
+    expect(result.url).toBe("https://soundcloud.com/some-dj-name");
+    expect(result.handle).toBe("some-dj-name");
+  });
+
+  it("reduces an Instagram URL with trailing content to the profile", () => {
+    const result = normalizeProfileLink("instagram", "https://www.instagram.com/techno_blondy/reel/Cabc123/");
+    expect(result.url).toBe("https://www.instagram.com/techno_blondy");
+    expect(result.handle).toBe("techno_blondy");
   });
 });
 

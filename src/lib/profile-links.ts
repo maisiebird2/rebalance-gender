@@ -61,12 +61,25 @@ function lastPathSegment(pathname: string): string | null {
   return parts.length ? parts[parts.length - 1] : null;
 }
 
+// For platforms whose URL is platform.com/<handle>[/track-or-other-stuff],
+// the handle is the FIRST path segment — anything after it is a track title,
+// set, /sets/, /reposts, etc., NOT the handle. (Contrast lastPathSegment,
+// used by platforms like discogs where the handle is the last segment.)
+function firstPathSegment(pathname: string): string | null {
+  const parts = pathname.split("/").map((s) => s.trim()).filter(Boolean);
+  return parts.length ? parts[0] : null;
+}
+
 const CONFIG: Record<string, PlatformLinkConfig> = {
   soundcloud: {
     domainHints: ["soundcloud.com"],
     handlePattern: /^[a-zA-Z0-9_-]{2,50}$/,
     buildUrl: (h) => `https://soundcloud.com/${h}`,
-    extractHandle: (u) => lastPathSegment(u.pathname),
+    // soundcloud.com/<handle> — the handle is the FIRST path segment. A track
+    // link like soundcloud.com/laura-indorf/dub has the track title after it;
+    // using the last segment here would build the wrong profile
+    // (https://soundcloud.com/dub). See firstPathSegment.
+    extractHandle: (u) => firstPathSegment(u.pathname),
     // soundcloud.com/search?q=<artist> — kept for artists who only appear on
     // tracks, with no profile page of their own. Keep the query term, drop the
     // rest (SoundCloud appends tracking like ?ref=… to shared search links).
@@ -80,7 +93,10 @@ const CONFIG: Record<string, PlatformLinkConfig> = {
     // No trailing slash — resolveProfileLinkUrl strips them uniformly
     // across every platform so stored URLs are consistent.
     buildUrl: (h) => `https://www.instagram.com/${h}`,
-    extractHandle: (u) => lastPathSegment(u.pathname),
+    // instagram.com/<handle> — like SoundCloud, the handle is the FIRST path
+    // segment, so a link with trailing content (e.g. instagram.com/<handle>/
+    // reel/<id>) still resolves to the profile rather than the last segment.
+    extractHandle: (u) => firstPathSegment(u.pathname),
   },
   bandcamp: {
     domainHints: ["bandcamp.com"],
@@ -264,6 +280,15 @@ function lastPathSegmentOfUrl(url: string): string | null {
   }
 }
 
+/** First non-empty path segment of a full URL, or null. */
+function firstPathSegmentOfUrl(url: string): string | null {
+  try {
+    return firstPathSegment(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+}
+
 export function deriveHandle(platform: string, url: string): string | null {
   if (!url) return null;
   try {
@@ -272,10 +297,16 @@ export function deriveHandle(platform: string, url: string): string | null {
     switch (platform) {
       case "soundcloud":
       case "instagram":
+        // https://soundcloud.com/handle           (first segment)
+        // https://soundcloud.com/handle/track      -> handle, not "track"
+        // https://www.instagram.com/handle/         (first segment)
+        // The handle is the FIRST path segment; anything after it is a track
+        // title / post id, not the handle.
+        return firstPathSegmentOfUrl(url);
+
       case "discogs":
-        // https://soundcloud.com/handle
-        // https://www.instagram.com/handle/
-        // https://www.discogs.com/artist/Handle  (last segment)
+        // https://www.discogs.com/artist/Handle  (last segment — the handle
+        // sits AFTER the /artist/ prefix, unlike soundcloud/instagram)
         return lastPathSegmentOfUrl(url);
 
       case "resident_advisor": {
