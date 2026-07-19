@@ -39,6 +39,7 @@ export function platformLabel(platforms: Platform[], key: string): string {
 export const PLATFORMS_HIDDEN_ON_ARTIST_PAGE: ReadonlySet<string> = new Set([
   "lastfm",
   "musicbrainz",
+  "spotify",
 ]);
 
 /**
