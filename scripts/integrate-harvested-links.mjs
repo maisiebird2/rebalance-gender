@@ -30,6 +30,21 @@
 //     overwritten — this script never edits or removes a row that's
 //     already in artist_links.
 //
+//   - Special case: that existing artist_links row can have a NULL
+//     url — a human marked the platform "not found" (the edit form
+//     and mark-mismatch-not-found.py write { url: null,
+//     not_found: true }). The row still occupies the (artist_id,
+//     platform) unique slot, so inserting the harvested candidate
+//     would violate artist_links_artist_platform_unique. These pairs
+//     are skipped entirely: no insert, no flag, no terminal error.
+//     Instead each is recorded to a datetime-stamped CSV written one
+//     level up from the repo root at the end of the run (columns:
+//     artist name, artist edit-page URL, platform, harvested URL), so
+//     a human can review a candidate the harvester found for a
+//     platform previously judged not-found. The CSV is only created
+//     when there's at least one such collision, and is skipped in dry
+//     runs (the summary still reports the count).
+//
 // That one surviving harvested row per (artist, platform) pair is
 // then compared against whichever URL is canonical:
 //
@@ -146,6 +161,9 @@ loadEnvLocal();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+// Base origin for artist page links written into the collision CSV.
+// Mirrors the fallback used across src/ (e.g. src/app/layout.tsx).
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(
@@ -191,6 +209,24 @@ function chunk(array, size) {
     out.push(array.slice(i, i + size));
   }
   return out;
+}
+
+// Escapes one CSV field per RFC 4180: wrap in quotes and double any
+// interior quote whenever the value contains a comma, quote, or newline.
+// A null/undefined value becomes an empty field.
+function csvField(value) {
+  const s = value == null ? "" : String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Local-time stamp for CSV filenames, e.g. "20260719-143005". Used so a
+// new run never overwrites an earlier run's collision log.
+function runTimestamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  );
 }
 
 // Runs `doWrite(rows)` (which resolves to a Supabase { error } result).
@@ -378,6 +414,50 @@ function classifyResolved(rawUrl) {
 }
 
 // ------------------------------------------------------------
+// Writes the "not found" collisions to a datetime-stamped CSV one level
+// up from the repo root (parent of the checkout — path.join(__dirname,
+// "..", ".."), so `.../<parent>/harvested-link-collisions-<stamp>.csv`).
+// Columns: artist name, artist edit-page URL, platform, platform URL.
+// Artist names are looked up from `artists` by id. Skipped in dry runs.
+// ------------------------------------------------------------
+async function writeCollisionCsv(collisions) {
+  if (DRY_RUN) {
+    console.log(
+      `\n${collisions.length} "not found" collision(s) would be written to a CSV — skipped in dry run.`
+    );
+    return;
+  }
+
+  const ids = [...new Set(collisions.map((c) => c.artistId))];
+  const nameById = new Map();
+  for (const batch of chunk(ids, 500)) {
+    const { data, error } = await supabase.from("artists").select("id, name").in("id", batch);
+    if (error) {
+      console.error(`  Could not fetch artist names for collision CSV: ${error.message}`);
+      continue;
+    }
+    for (const a of data) nameById.set(a.id, a.name);
+  }
+
+  const lines = [["artist_name", "artist_url", "platform", "platform_url"].join(",")];
+  for (const c of collisions) {
+    lines.push(
+      [
+        csvField(nameById.get(c.artistId)),
+        csvField(`${SITE_URL}/artist/${c.artistId}/edit`),
+        csvField(c.platform),
+        csvField(c.platformUrl),
+      ].join(",")
+    );
+  }
+
+  const filename = `harvested-link-collisions-${runTimestamp()}.csv`;
+  const outPath = path.join(__dirname, "..", "..", filename);
+  fs.writeFileSync(outPath, lines.join("\n") + "\n", "utf-8");
+  console.log(`\n${collisions.length} "not found" collision(s) written to ${outPath}`);
+}
+
+// ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
 async function main() {
@@ -398,7 +478,7 @@ async function main() {
         return q;
       }
     ),
-    fetchAll("artist_links", "id, artist_id, platform, url"),
+    fetchAll("artist_links", "id, artist_id, platform, url, not_found"),
     supabase.from("platforms").select("key").then(({ data, error }) => {
       if (error) throw error;
       return data;
@@ -493,14 +573,23 @@ async function main() {
     }
   }
 
-  // Canonical URL already in artist_links, per (artist_id, platform).
+  // Existing artist_links row per (artist_id, platform), storing both
+  // the URL and the not_found flag. The distinction matters: a row can
+  // exist with url = null when a human has marked "not found" for that
+  // platform (the edit form and mark-mismatch-not-found.py both write
+  // { url: null, not_found: true }). Such a row still occupies the
+  // (artist_id, platform) unique slot, so we must NOT try to insert
+  // over it — that's the collision this script used to crash on. We
+  // key on presence, not URL truthiness.
+  //
   // If an artist somehow has more than one existing row for the same
-  // platform (the DB constraint allows it), the lowest-id one wins —
-  // arbitrary but deterministic.
+  // platform (the artist_links_artist_id_platform_url_key constraint
+  // allows distinct URLs), the lowest-id one wins — arbitrary but
+  // deterministic (existingLinks is ordered by id ascending).
   const existingMap = new Map();
   for (const row of existingLinks) {
     const key = `${row.artist_id}|${row.platform}`;
-    if (!existingMap.has(key)) existingMap.set(key, row.url);
+    if (!existingMap.has(key)) existingMap.set(key, { url: row.url, notFound: row.not_found });
   }
 
   // Group harvested rows by (artist_id, parsed_platform).
@@ -523,6 +612,12 @@ async function main() {
 
   const toInsert = [];
   const skippedNoPlatformKey = {};
+  // Pairs where a live artist_links row already exists but has no URL —
+  // a human-set "not found" marker. We skip these (never insert over
+  // them, never flag) and record them for the CSV written at the end,
+  // rather than crashing on the unique-constraint violation or spamming
+  // the terminal. Each entry: { artistId, platform, platformUrl }.
+  const notFoundCollisions = [];
   let pairsAlreadyLinked = 0;
   let pairsNewlyLinked = 0;
   let excludedExtraCandidates = 0;
@@ -568,7 +663,19 @@ async function main() {
       }
     }
 
-    let canonicalUrl = existingMap.get(key);
+    const existing = existingMap.get(key);
+
+    // A live row exists for this pair but has no URL — someone marked
+    // the platform "not found". Skip entirely: don't insert (it would
+    // collide with the (artist_id, platform) unique constraint), don't
+    // flag the harvested row. Record it for the end-of-run CSV instead.
+    if (existing && !existing.url) {
+      notFoundCollisions.push({ artistId, platform, platformUrl: winner.parsed_url });
+      if (DEBUG) console.log(`~ ${key}: skipped, live row is marked not-found (logged to CSV)`);
+      continue;
+    }
+
+    let canonicalUrl = existing?.url;
 
     if (canonicalUrl) {
       pairsAlreadyLinked++;
@@ -605,11 +712,21 @@ async function main() {
   console.log(`Additional candidates excluded (2nd+ link for same artist+platform): ${excludedExtraCandidates}`);
   console.log(`Harvested rows flagged as mismatched:  ${flaggedCount}`);
   console.log(`Harvested rows cleared (now matching or excluded): ${clearedCount}`);
+  console.log(`Pairs skipped — live row marked "not found": ${notFoundCollisions.length}`);
   if (Object.keys(skippedNoPlatformKey).length > 0) {
     console.log(`Skipped — platform key doesn't exist yet in \`platforms\`:`);
     for (const [platform, count] of Object.entries(skippedNoPlatformKey).sort((a, b) => b[1] - a[1])) {
       console.log(`  ${platform}: ${count} row(s)`);
     }
+  }
+
+  // Write the "not found" collisions to a datetime-stamped CSV one level
+  // up from the repo root, so a human can review candidates the harvester
+  // found for platforms someone had marked not-found. Only when there's
+  // at least one collision; the file itself is skipped in dry runs (see
+  // writeCollisionCsv), though the count above still reports it.
+  if (notFoundCollisions.length > 0) {
+    await writeCollisionCsv(notFoundCollisions);
   }
 
   if (DRY_RUN) {
