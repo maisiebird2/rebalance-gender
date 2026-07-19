@@ -21,19 +21,29 @@
 // ONLY to platform === 'soundcloud' rows; every other source is
 // fetched at whatever size its stored URL provides.
 //
+// Any downloaded image larger than the bucket's fileSizeLimit
+// (MAX_UPLOAD_BYTES) is re-encoded down under the limit before upload
+// (downscaleToLimit), so a legitimately large press photo is stored
+// rather than dropped for Supabase's "exceeded the maximum allowed
+// size" 413. Only the rare image sharp still can't fit is recorded as
+// a "too_large" failure — a failsafe, not the normal path.
+//
 // Failures persist to harvest_failures (service = "image-store:
 // <platform>") instead of console-only — download/upload/DB-write
 // errors are queryable afterward instead of living only in scrollback,
 // same convention as every other harvester in this pipeline. A later
 // successful run clears the row.
 //
-// Each download/upload/DB-write is retried on transient failure
+// Each download/upload/DB-write is retried on TRANSIENT failure
 // (exponential backoff, up to 3 retries) before being treated as a
 // real failure — added after a run died partway through on a
 // stretch of "TypeError: fetch failed" errors, most likely a dead
 // connection after a network blip rather than anything wrong with
-// those specific images. A row only reaches harvest_failures now if
-// it still fails after retries.
+// those specific images. Permanent rejections (a 4xx such as the
+// oversize 413) are NOT retried — they fail identically every time —
+// so they surface at once instead of burning the backoff and skewing
+// the consecutive-failure bail-out. A row only reaches harvest_failures
+// now if it still fails after retries.
 //
 // Usage (from the rebalance-gender/ folder):
 //
@@ -47,6 +57,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { Agent } from "undici";
+import sharp from "sharp";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +135,15 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 });
 
 const BUCKET = "artist-images";
+// Supabase Storage rejects any object larger than the bucket's
+// fileSizeLimit with "The object exceeded the maximum allowed size"
+// (a deterministic 413 — no amount of retrying changes the outcome).
+// Kept as one constant so the bucket's configured limit and the
+// client-side downscale/guard below can never drift apart. NOTE: the
+// bucket's live limit is only ever set at creation time (see
+// ensureBucket) — changing this constant alone won't relax an
+// already-created bucket; that needs updateBucket or a dashboard change.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MiB
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------
@@ -141,11 +161,35 @@ async function withRetry(operation, { retries = 3, label = "" } = {}) {
   for (let attempt = 0; ; attempt++) {
     result = await operation();
     if (!result.error) return result;
-    if (attempt >= retries) return result;
+    // Only transient failures (dead pooled connection, timeout — the
+    // "fetch failed" case this retry loop was built for) are worth
+    // retrying. A permanent rejection like a 413 "exceeded the maximum
+    // allowed size" fails identically every time, so retrying it just
+    // burns the backoff delay AND pushes consecutiveFailures toward the
+    // early-bail threshold, which would then misreport a deterministic
+    // per-image rejection as a connectivity problem. Bail out at once.
+    if (isPermanentError(result.error) || attempt >= retries) return result;
     const delay = 1000 * 2 ** attempt;
     console.log(`    (${label} failed: ${describeError(result.error)} — retrying in ${delay}ms)`);
     await sleep(delay);
   }
+}
+
+// ------------------------------------------------------------
+// Distinguish a permanent rejection (retrying can never succeed) from
+// a transient one (worth a retry). Supabase Storage surfaces HTTP
+// status in a few shapes depending on the code path, so check all of
+// them: a `statusCode`/`status` field, and the known message text for
+// the oversize case. Any 4xx except 429 (rate limit, which IS worth
+// backing off on) is treated as permanent.
+// ------------------------------------------------------------
+function isPermanentError(error) {
+  if (!error) return false;
+  const status = Number(error.statusCode ?? error.status);
+  if (Number.isFinite(status) && status >= 400 && status < 500 && status !== 429) {
+    return true;
+  }
+  return /exceeded the maximum allowed size/i.test(error.message ?? "");
 }
 
 // ------------------------------------------------------------
@@ -190,7 +234,7 @@ function toSize500(url) {
 async function ensureBucket() {
   const { error } = await supabase.storage.createBucket(BUCKET, {
     public: true,
-    fileSizeLimit: 5 * 1024 * 1024, // 5 MB
+    fileSizeLimit: MAX_UPLOAD_BYTES,
   });
   if (error && !error.message.includes("already exists")) {
     throw new Error(`Could not create bucket "${BUCKET}": ${error.message}`);
@@ -233,6 +277,53 @@ async function downloadImage(url, { retries = 3 } = {}) {
       clearTimeout(timeout);
     }
   }
+}
+
+// ------------------------------------------------------------
+// Bring an over-limit image under maxBytes by re-encoding it, so a
+// legitimately large press photo still gets stored instead of being
+// dropped for missing the bucket's fileSizeLimit by a few KB (the
+// original trigger: a 5.02 MiB Hoer JPEG). Progressive: cap the
+// longest edge and re-encode, shrinking dimension and JPEG quality
+// each round until it fits. Profile photos are only ever displayed
+// small, so a 2000px longest edge loses nothing visible.
+//
+// EXIF orientation is baked in (.rotate() with no args) before
+// resizing, so a portrait shot from a phone isn't silently rotated by
+// dropping its metadata. PNGs are converted to JPEG once past the
+// first round — a PNG big enough to blow the limit is a photo in a
+// PNG wrapper, and JPEG is what actually shrinks it. Returns the
+// re-encoded { buffer, contentType }, or null if it still won't fit
+// after the final round.
+// ------------------------------------------------------------
+async function downscaleToLimit(buffer, contentType, maxBytes) {
+  let dimension = 2000;
+  let quality = 82;
+  let asPng = contentType.includes("png");
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const pipeline = sharp(buffer, { failOn: "none" })
+      .rotate()
+      .resize({ width: dimension, height: dimension, fit: "inside", withoutEnlargement: true });
+
+    let out;
+    let outType;
+    if (asPng) {
+      out = await pipeline.png({ compressionLevel: 9, palette: true }).toBuffer();
+      outType = "image/png";
+    } else {
+      out = await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
+      outType = "image/jpeg";
+    }
+
+    if (out.length <= maxBytes) return { buffer: out, contentType: outType };
+
+    dimension = Math.round(dimension * 0.8);
+    quality = Math.max(40, quality - 12);
+    asPng = false; // subsequent rounds re-encode as JPEG regardless of source
+  }
+
+  return null;
 }
 
 // ------------------------------------------------------------
@@ -344,7 +435,42 @@ async function main() {
       continue;
     }
 
-    const { buffer, contentType } = downloaded;
+    let { buffer, contentType } = downloaded;
+    // Downscale anything over the bucket's fileSizeLimit before upload —
+    // Supabase would otherwise reject it with a deterministic 413 that no
+    // retry can fix. The "too_large" failure below is only a failsafe for
+    // the rare image sharp still can't squeeze under the limit; when
+    // resizing works (the normal case) nothing is recorded.
+    let sizeNote = "";
+    if (buffer.length > MAX_UPLOAD_BYTES) {
+      const originalKb = Math.round(buffer.length / 1024);
+      const resized = await downscaleToLimit(buffer, contentType, MAX_UPLOAD_BYTES);
+      if (!resized) {
+        const detail =
+          `image is ${originalKb} KB and could not be re-encoded under the ` +
+          `${Math.round(MAX_UPLOAD_BYTES / 1024)} KB limit`;
+        console.log(`✗ too large: ${detail}`);
+        failed++;
+        if (!DRY_RUN) {
+          await recordFailure(supabase, {
+            artistId,
+            service,
+            status: "too_large",
+            detail,
+            url: sourceUrl,
+          });
+        }
+        // A successful download proves the connection is fine, so this
+        // per-image outcome must not trip the connectivity early-bail.
+        consecutiveFailures = 0;
+        await sleep(200);
+        continue;
+      }
+      buffer = resized.buffer;
+      contentType = resized.contentType;
+      sizeNote = `resized ${originalKb}→${Math.round(buffer.length / 1024)} KB; `;
+    }
+
     const ext = contentType.includes("png") ? "png" : "jpg";
     const storagePath = `${artistId}/${platform}.${ext}`;
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath}`;
@@ -409,7 +535,7 @@ async function main() {
       await clearFailure(supabase, { artistId, service });
     }
 
-    console.log(`✓ ${Math.round(buffer.length / 1024)} KB → ${publicUrl}`);
+    console.log(`✓ ${sizeNote}${Math.round(buffer.length / 1024)} KB → ${publicUrl}`);
     uploaded++;
     consecutiveFailures = 0;
     await sleep(200);
