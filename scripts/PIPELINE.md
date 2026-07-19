@@ -1723,10 +1723,47 @@ catches them at point of use too.
 
 Considered and set aside: Spotify (API exposes no external links),
 Last.fm (none structured; page links mostly mirror MB's), Resident
-Advisor (links exist on ra.co artist pages but only via an
-unofficial GraphQL endpoint — fragile; revisit later), Beatport /
-Qobuz / Tidal / Apple Music pages (no meaningful outbound links). A
-future Linktree harvester should adopt the same guard when it's built.
+Advisor (see below), Beatport / Qobuz / Tidal / Apple Music pages (no
+meaningful outbound links). A future Linktree harvester should adopt
+the same guard when it's built.
+
+#### Resident Advisor — don't build this without an agreement (2026-07-17)
+
+This entry previously read "links exist on ra.co artist pages but only
+via an unofficial GraphQL endpoint — fragile; revisit later". The
+assessment is now firmer than "fragile", and "revisit later" overstates
+how open the door is.
+
+Attempting to load an ra.co artist page from an automated browser
+returned 403 on first navigation, serving a bot-detection interstitial
+("Access is temporarily restricted — We detected unusual activity from
+your device or network"). No page, and therefore no GraphQL call, ever
+happened. The block is at the edge, before the GraphQL layer is
+reachable at all — so the original concern (an undocumented endpoint
+whose schema can move without notice) is real but secondary. RA
+actively defends against automated access, and a harvester would be in
+a continuing fight with that defence rather than a one-off integration.
+We are not going to route around bot detection to get this data.
+
+The endpoint itself is `https://ra.co/graphql` (POST, JSON) — that much
+is known from RA's own frontend and from public event-scraping projects.
+Specific query shapes are NOT recorded here on purpose: they were never
+verified, and a plausible-looking but wrong query document in this file
+would be worse than nothing.
+
+Viable paths, in preference order:
+1. Ask RA for official or partner API access. A gender-balance research
+   project is a reasonable ask, and it's the only route that doesn't
+   decay.
+2. Keep relying on the existing harvesters. `ra.co` URLs are already
+   classified to the `resident_advisor` platform when they surface on
+   Linktree / SoundCloud / Bandcamp / Discogs / Høer, and artists with
+   an RA page generally link it themselves. This is already built and
+   may cover more of the roster than expected — worth measuring
+   coverage before assuming a dedicated harvester is needed.
+
+Revisit only if (1) lands. Check RA's terms of service before building
+on anything here regardless.
 
 ### New harvester: `harvest-links-discogs.mjs` ✅ BUILT (2026-07-03)
 
