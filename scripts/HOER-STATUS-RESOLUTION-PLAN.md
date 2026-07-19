@@ -5,10 +5,10 @@ Automated resolution of `directory_status` for artists seeded from HÖR
 confidently can, hold the uncertain ones for human review, and record every
 automated change in a dated CSV.
 
-Status: **plan only — no code written yet.** When we start building, open a new
-branch off `main` (project rule). These scripts hit Supabase, so they can't be
-run or verified in the Cowork sandbox — they'll be handed to Maisie to run
-locally.
+Status: **scripts implemented** (committed Jul 11, `7daab17`) against this plan;
+not yet run. Any further changes go on a new branch off `main` (project rule).
+These scripts hit Supabase, so they can't be run or verified in the Cowork
+sandbox — they'll be handed to Maisie to run locally.
 
 ---
 
@@ -26,10 +26,11 @@ locally.
 
 Caveats baked into the plan:
 
-- `name_search` currently strips spaces but **keeps punctuation**. Step 1 below
-  fixes this (a long-intended change) so the column strips punctuation too, and
-  then becomes a valid exact-dup key. The Node normalizer is defined to mirror
-  the new column exactly so DB and script agree.
+- `name_search` strips both spaces **and** punctuation (diacritics folded,
+  lowercased), so it is a valid exact-dup key. This was a long-intended change,
+  already applied via `supabase_migration_name_search_strip_punctuation.sql` —
+  no migration step remains. The Node normalizer is defined to mirror the column
+  exactly so DB and script agree.
 - The trigram index on `name_search` is **partial to approved artists only**.
   Fuzzy candidate lookup against *all* non-HÖR artists (any status) won't use
   it, so we either widen the query or compute similarity in Node. Given these
@@ -47,19 +48,17 @@ Caveats baked into the plan:
 character that isn't `[a-z0-9]` (drops spaces **and** punctuation). This is the
 key for exact-dup comparison and the base for fuzzy comparison.
 
-After Step 1 this is **defined to match the DB's `name_search`
-expression exactly**, so the two agree character-for-character. That lets the
-exact-dup rule lean on `name_search` for equality while still normalizing the
-HÖR-side names in Node.
+It is **defined to match the DB's `name_search` expression exactly**
+(`regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')`), so
+the two agree character-for-character. That lets the exact-dup rule lean on
+`name_search` for equality while still normalizing the HÖR-side names in Node.
 
 ---
 
 ## Components
 
-One migration, three scripts, one shared lib module:
+Three scripts, one shared lib module:
 
-0. **`supabase_migration_name_search_strip_punctuation.sql`** — Step 1 schema
-   change (below).
 1. **`report-hoer-internal-dupes.mjs`** — pre-run step, standalone report.
 2. **`resolve-hoer-status.mjs`** — the main resolver (precedence pipeline).
 3. **`apply-hoer-dupe-review.mjs`** — round-trip importer for the reviewed
@@ -71,56 +70,7 @@ All CSVs are written with a `YYYYMMDD-HHMMSS` stamp in the filename.
 
 ---
 
-## Step 1 — `name_search` migration (do this first)
-
-Long-intended change: make `name_search` strip punctuation as well as spaces, so
-it becomes a clean normalized key we can match on directly.
-
-`name_search` is a `STORED` generated column, and Postgres can't alter a
-generation expression in place — it's a drop-and-recreate, and the dependent
-partial trigram index (`idx_artists_name_search_trgm_approved`) has to be
-dropped and rebuilt around it. As a migration file at the repo root
-(`supabase_migration_name_search_strip_punctuation.sql`), applied via the
-Supabase SQL editor like the others:
-
-```sql
-begin;
-
--- 1. drop the index that depends on the column
-drop index if exists "idx_artists_name_search_trgm_approved";
-
--- 2. drop and re-add the generated column with the new expression
-alter table "public"."artists" drop column "name_search";
-alter table "public"."artists"
-  add column "name_search" text
-  generated always as (
-    regexp_replace(lower(public.immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
-  ) stored;
-
--- 3. rebuild the partial trigram index unchanged
-create index "idx_artists_name_search_trgm_approved"
-  on "public"."artists" using gin ("name_search" public.gin_trgm_ops)
-  where (("directory_status" = 'approved'::"public"."artist_status")
-         and ("deleted" = false));
-
-commit;
-```
-
-Notes:
-
-- `regexp_replace(... , 'g')`, `lower`, and `immutable_unaccent` are all
-  immutable, so the generation expression is valid.
-- Recreating a `STORED` column recomputes it for every row — fine one-time, but
-  worth running in a low-traffic window.
-- Confirm no other objects depend on `name_search` before dropping (the schema
-  dump shows only that one index; the separate `alias_search` migration is on a
-  different column). Re-verify against the live DB before running.
-- After this lands, `normalizeName` in `lib/hoer-resolve.mjs` must reproduce this
-  exact expression.
-
----
-
-## Step 2 — HÖR-internal duplicate report (run first among the scripts, resolve manually)
+## Step 1 — HÖR-internal duplicate report (run first among the scripts, resolve manually)
 
 HÖR's own site has dupes (e.g. `/artist/ayako-mori/` and
 `/artist/ayako-mori-2/` look like the same person). We surface these **before**
@@ -158,10 +108,10 @@ the first that fires:
 
 ### Rule 1 — exact duplicate
 
-- Compare `normalizeName(hoer.name)` against the (post-migration) `name_search`
-  of **all DB artists except HÖR-loaded ones** (exclude any artist with a
-  `platform='hoer'` link; also exclude `deleted`). Because Step 1 aligns the two,
-  this is a direct equality match.
+- Compare `normalizeName(hoer.name)` against the `name_search` of **all DB
+  artists except HÖR-loaded ones** (exclude any artist with a `platform='hoer'`
+  link; also exclude `deleted`). Because `name_search` is the aligned normalized
+  key, this is a direct equality match.
 - Exactly one match → set `directory_status='duplicate'`, record the matched
   artist.
 - **More than one** DB artist shares that normalized name → ambiguous. Do **not**
@@ -240,7 +190,7 @@ this run actually changed** (Rules 1 and 3). Columns:
 `matched_artist_id`, `matched_name`, `evidence`.
 
 The review/ambiguous files (`hoer-inferred-dupes-review-*`,
-`hoer-exact-ambiguous-*`, and the Step-0 `hoer-internal-dupes-*`) are separate —
+`hoer-exact-ambiguous-*`, and the Step-1 `hoer-internal-dupes-*`) are separate —
 they list artists that were **not** changed and need a human.
 
 ---
