@@ -38,6 +38,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadEnvLocal, createSupabase } from "./lib/hoer-db.mjs";
 import { parseCSV, writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
+import {
+  HOER,
+  HOER_LINK_AUDIT_COLUMNS,
+  decideHoerLinkCopy,
+  buildHoerLinkRow,
+} from "./lib/hoer-links.mjs";
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run") || process.env.DRY_RUN === "1";
@@ -55,8 +61,6 @@ if (!fs.existsSync(csvPath)) {
   console.error(`File not found: ${csvPath}`);
   process.exit(1);
 }
-
-const HOER = "hoer";
 
 loadEnvLocal();
 
@@ -149,6 +153,7 @@ async function main() {
   let copied = 0;
   let wouldCopy = 0;
   let skipped = 0;
+  let conflicts = 0;
   let errors = 0;
 
   // Tracks hoer urls now present on each target (seed from DB, update as we go)
@@ -172,6 +177,7 @@ async function main() {
       });
       if (action === "copied") copied++;
       else if (action === "would-copy") wouldCopy++;
+      else if (action === "conflict") conflicts++;
       else if (action === "error") errors++;
       else skipped++;
     };
@@ -218,18 +224,13 @@ async function main() {
       continue;
     }
 
-    const existingTargetUrl = targetHoerUrl.get(p.matchedId);
-    if (existingTargetUrl !== undefined) {
-      if (existingTargetUrl === (srcLink.url ?? "")) {
-        record("skipped", "target already has this hoer link", srcLink.url ?? "");
-      } else {
-        record(
-          "skipped",
-          `target already has a DIFFERENT hoer link ("${existingTargetUrl}") — ` +
-            "one hoer link per artist; resolve by hand",
-          srcLink.url ?? ""
-        );
-      }
+    const decision = decideHoerLinkCopy(srcLink.url, targetHoerUrl.get(p.matchedId));
+    if (decision.action === "skip") {
+      record("skipped", decision.note, srcLink.url ?? "");
+      continue;
+    }
+    if (decision.action === "conflict") {
+      record("conflict", decision.note, srcLink.url ?? "");
       continue;
     }
 
@@ -243,14 +244,9 @@ async function main() {
       continue;
     }
 
-    const { error } = await supabase.from("artist_links").insert({
-      artist_id: p.matchedId,
-      platform: HOER,
-      handle: srcLink.handle ?? null,
-      url: srcLink.url ?? null,
-      original_url: srcLink.original_url ?? null,
-      not_found: srcLink.not_found ?? false,
-    });
+    const { error } = await supabase
+      .from("artist_links")
+      .insert(buildHoerLinkRow(p.matchedId, srcLink));
 
     if (error) {
       // 23505 = unique_violation: the target sprouted a hoer link since we read.
@@ -269,16 +265,12 @@ async function main() {
 
   console.log(
     DRY_RUN
-      ? `\nwould copy: ${wouldCopy}   skipped: ${skipped}   errors: ${errors}\n`
-      : `\ncopied: ${copied}   skipped: ${skipped}   errors: ${errors}\n`
+      ? `\nwould copy: ${wouldCopy}   skipped: ${skipped}   conflicts: ${conflicts}   errors: ${errors}\n`
+      : `\ncopied: ${copied}   skipped: ${skipped}   conflicts: ${conflicts}   errors: ${errors}\n`
   );
 
   const outPath = path.resolve(process.cwd(), `hoer-link-migration-applied-${timestamp()}.csv`);
-  writeCSV(
-    outPath,
-    ["artist_id", "hoer_name", "matched_artist_id", "matched_name", "action", "url", "note"],
-    applied
-  );
+  writeCSV(outPath, HOER_LINK_AUDIT_COLUMNS, applied);
   console.log(`Wrote audit log:\n  ${outPath}`);
 }
 

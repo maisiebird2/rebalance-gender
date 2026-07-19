@@ -80,16 +80,26 @@ export function makeFetchAll(supabase) {
 // Higher-level loaders. Each takes a fetchAll from makeFetchAll().
 // ------------------------------------------------------------
 
-// artist_id -> { url, handle } for every artist carrying a platform='hoer'
-// link. The key set doubles as "which artists came from HÖR".
+// artist_id -> { url, handle, original_url, not_found } for every artist
+// carrying a platform='hoer' link. The key set doubles as "which artists came
+// from HÖR". The extra fields let the link-migration copy the link faithfully.
 export async function loadHoerLinks(fetchAll) {
-  const rows = await fetchAll("artist_links", "artist_id, url, handle", (q) =>
-    q.eq("platform", "hoer")
+  const rows = await fetchAll(
+    "artist_links",
+    "artist_id, url, handle, original_url, not_found",
+    (q) => q.eq("platform", "hoer")
   );
   const map = new Map();
   for (const r of rows) {
     // keep the first link per artist (HÖR seeds exactly one)
-    if (!map.has(r.artist_id)) map.set(r.artist_id, { url: r.url, handle: r.handle });
+    if (!map.has(r.artist_id)) {
+      map.set(r.artist_id, {
+        url: r.url,
+        handle: r.handle,
+        original_url: r.original_url,
+        not_found: r.not_found,
+      });
+    }
   }
   return map;
 }
