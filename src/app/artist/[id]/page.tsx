@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArtistById } from "@/lib/queries";
-import { getPlatforms, platformLabel } from "@/lib/platforms";
+import {
+  getPlatforms,
+  platformLabel,
+  PLATFORMS_HIDDEN_ON_ARTIST_PAGE,
+} from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
 import EditButton from "@/components/EditButton";
 import AdminActions from "@/components/AdminActions";
@@ -47,6 +51,14 @@ export default async function ArtistPage({ params }: PageProps) {
     ?.map((a) => a.name)
     .filter(Boolean)
     .join(", ");
+
+  // Profile links shown to visitors: drop not-found/empty links, and hide the
+  // platforms that are directory data sources rather than clickable profiles
+  // (Last.fm, MusicBrainz). Those links are still stored and used elsewhere;
+  // see PLATFORMS_HIDDEN_ON_ARTIST_PAGE.
+  const visibleLinks = artist.links?.filter(
+    (l) => !l.not_found && l.url && !PLATFORMS_HIDDEN_ON_ARTIST_PAGE.has(l.platform)
+  );
 
   const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
@@ -161,9 +173,9 @@ export default async function ArtistPage({ params }: PageProps) {
           )}
 
           {/* Profile links */}
-          {artist.links?.some((l) => !l.not_found) && (
+          {visibleLinks && visibleLinks.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
-              {artist.links?.filter((l) => !l.not_found && l.url).map((link) => (
+              {visibleLinks.map((link) => (
                 <a
                   key={link.id}
                   href={link.url!}
