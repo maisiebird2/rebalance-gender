@@ -192,7 +192,7 @@ export default async function ArtistPage({ params }: PageProps) {
           {/* Labels */}
           {artist.label_list?.length > 0 && (
             <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-              <span className="font-semibold">Labels: </span>
+              <span className="font-semibold">Associated with: </span>
               {artist.label_list.map((l) => l.name).join(", ")}
             </p>
           )}
