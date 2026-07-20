@@ -71,7 +71,7 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
             </h3>
             {aliasText && (
               <p className="truncate text-xs text-gray-400 dark:text-gray-500">
-                aka {aliasText}
+                {aliasText}
               </p>
             )}
             {artist.pronoun?.value && (
