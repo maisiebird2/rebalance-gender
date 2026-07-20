@@ -44,7 +44,7 @@ export default async function Home({ searchParams }: PageProps) {
             <b className="font-bold text-[#7c5cff] dark:text-[#ff2d9b]">
               {artistCount.toLocaleString()}
             </b>{" "}
-            artists
+            producers, DJs, and vocalists
           </p>
         ) : null}
       </div>
