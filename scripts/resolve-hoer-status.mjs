@@ -5,10 +5,16 @@
 // For each HÖR-loaded artist still at directory_status='pending', applies
 // these rules IN ORDER and stops at the first that fires:
 //
-//   1. Exact duplicate     -> `duplicate`      (auto-applied)
+//   1. Exact duplicate     -> `duplicate` + copy its HÖR link onto the survivor
 //   2. Inferred duplicate  -> hold for review  (no status change)
 //   3. Pronoun eligibility -> `approved` / `not_eligible` (auto-applied)
 //   4. Nothing fired       -> stays `pending`
+//
+// On an exact duplicate the artist's platform='hoer' link is also COPIED onto
+// the surviving (matched) artist, so the HÖR association lands on the row that
+// stays in the directory instead of being stranded on the `duplicate` row.
+// (The standalone migrate-hoer-dupe-links.mjs does the same from a saved report
+// — use it to backfill dupes marked before this step existed.)
 //
 // See scripts/HOER-STATUS-RESOLUTION-PLAN.md for the full design. Run the
 // name_search punctuation migration FIRST (this script aborts if it detects
@@ -19,6 +25,7 @@
 //   hoer-status-resolution-<stamp>.csv        — rows this run CHANGED
 //   hoer-inferred-dupes-review-<stamp>.csv    — held for human review
 //   hoer-exact-ambiguous-<stamp>.csv          — exact-name collisions to check
+//   hoer-link-migration-<stamp>.csv           — HÖR links copied onto survivors
 //
 // Usage (from the repo root):
 //   node scripts/resolve-hoer-status.mjs --dry-run     # compute + write CSVs, no DB writes
@@ -53,6 +60,11 @@ import {
   writeCSV,
   timestamp,
 } from "./lib/hoer-resolve.mjs";
+import {
+  decideHoerLinkCopy,
+  buildHoerLinkRow,
+  HOER_LINK_AUDIT_COLUMNS,
+} from "./lib/hoer-links.mjs";
 
 // ------------------------------------------------------------
 // Tuning knobs (see the plan's "Open tuning knobs" section).
@@ -138,6 +150,7 @@ async function main() {
   const candidates = [];
   for (const a of artists) {
     if (hoerIds.has(a.id)) continue; // exclude HÖR-loaded artists
+    if (a.directory_status === "obscure") continue; // hidden artists aren't dup targets
     const norm = a.name_search || normalizeName(a.name);
     if (norm) {
       if (!exactIndex.has(norm)) exactIndex.set(norm, []);
@@ -162,13 +175,16 @@ async function main() {
   }
   console.log(
     `HÖR artists: ${hoerIds.size}; pending: ${pending.length}; ` +
-      `comparison pool (non-HÖR): ${candidates.length}.\n`
+      `comparison pool (non-HÖR, non-obscure): ${candidates.length}.\n`
   );
 
   const runAt = new Date().toISOString();
   const changed = []; // master report rows
   const reviewRows = []; // inferred-dup review rows
   const ambiguousRows = []; // exact-name collisions
+  const linkAudit = []; // hoer-link-migration rows (exact dups only)
+  const linkInserts = []; // { auditRow, payload } queued for a real run
+  const survivorHoerUrl = new Map(); // matchedId -> hoer url assigned this run
   const updateGroups = new Map(); // patch-signature -> { patch, ids: [] }
 
   function queueUpdate(id, patch) {
@@ -185,6 +201,7 @@ async function main() {
     pronoun_not_eligible: 0,
     stayed_pending: 0,
   };
+  let linkCounts = { copied: 0, would_copy: 0, skipped: 0, conflict: 0, error: 0 };
 
   for (const artist of pending) {
     const norm = artist.name_search || normalizeName(artist.name);
@@ -214,6 +231,46 @@ async function main() {
       });
       counts.exact_duplicate++;
       if (DEBUG) console.log(`  [exact dup] ${artist.name} -> ${matched?.name}`);
+
+      // Copy this artist's HÖR link onto the surviving (matched) artist. The
+      // matched artist is a non-HÖR candidate, so it has no hoer link of its
+      // own — the only collision is two dupes pointing at the same survivor.
+      const srcLink = hoerLinks.get(artist.id);
+      const auditRow = {
+        artist_id: artist.id,
+        hoer_name: artist.name,
+        matched_artist_id: matchedId,
+        matched_name: matched?.name ?? "",
+        action: "",
+        url: srcLink?.url ?? "",
+        note: "",
+      };
+      if (!srcLink) {
+        auditRow.action = "skipped";
+        auditRow.note = "source has no hoer link";
+        linkCounts.skipped++;
+      } else {
+        const decision = decideHoerLinkCopy(srcLink.url, survivorHoerUrl.get(matchedId));
+        if (decision.action === "copy") {
+          survivorHoerUrl.set(matchedId, srcLink.url ?? "");
+          if (DRY_RUN) {
+            auditRow.action = "would-copy";
+            linkCounts.would_copy++;
+          } else {
+            auditRow.action = "copy-pending";
+            linkInserts.push({ auditRow, payload: buildHoerLinkRow(matchedId, srcLink) });
+          }
+        } else if (decision.action === "skip") {
+          auditRow.action = "skipped";
+          auditRow.note = decision.note;
+          linkCounts.skipped++;
+        } else {
+          auditRow.action = "conflict";
+          auditRow.note = decision.note;
+          linkCounts.conflict++;
+        }
+      }
+      linkAudit.push(auditRow);
       continue;
     }
     if (matches.length > 1) {
@@ -344,6 +401,51 @@ async function main() {
     console.log("No automatic status changes this run.");
   }
 
+  // ---- Copy HÖR links onto surviving artists (real run) ----
+  if (DRY_RUN) {
+    if (linkAudit.length > 0) {
+      console.log(
+        `(dry run) would copy ${linkCounts.would_copy} HÖR link(s); ` +
+          `${linkCounts.skipped} skipped, ${linkCounts.conflict} conflict(s).`
+      );
+    }
+  } else if (linkInserts.length > 0) {
+    for (let i = 0; i < linkInserts.length; i += 500) {
+      const chunk = linkInserts.slice(i, i + 500);
+      const { error } = await supabase.from("artist_links").insert(chunk.map((c) => c.payload));
+      if (!error) {
+        for (const c of chunk) {
+          c.auditRow.action = "copied";
+          linkCounts.copied++;
+        }
+        continue;
+      }
+      // A batch failed — retry row-by-row so the audit attributes each outcome.
+      for (const c of chunk) {
+        const { error: e1 } = await supabase.from("artist_links").insert(c.payload);
+        if (!e1) {
+          c.auditRow.action = "copied";
+          linkCounts.copied++;
+        } else if (e1.code === "23505") {
+          c.auditRow.action = "skipped";
+          c.auditRow.note = "survivor already has a hoer link (unique violation)";
+          linkCounts.skipped++;
+        } else {
+          c.auditRow.action = "error";
+          c.auditRow.note = e1.message;
+          linkCounts.error++;
+          console.error(`  link insert error (${c.payload.artist_id}): ${e1.message}`);
+        }
+      }
+    }
+    console.log(
+      `✓ Copied ${linkCounts.copied} HÖR link(s) onto surviving artists` +
+        (linkCounts.conflict ? ` (${linkCounts.conflict} conflict(s) skipped)` : "") +
+        (linkCounts.error ? ` (${linkCounts.error} error(s))` : "") +
+        "."
+    );
+  }
+
   // ---- Write CSVs ----
   const stamp = timestamp();
   const outDir = process.cwd();
@@ -393,10 +495,16 @@ async function main() {
     ambiguousRows
   );
 
+  const linkPath = path.resolve(outDir, `hoer-link-migration-${stamp}.csv`);
+  writeCSV(linkPath, HOER_LINK_AUDIT_COLUMNS, linkAudit);
+
   console.log("\nWrote:");
   console.log(`  ${masterPath}  (${changed.length} changed)`);
   console.log(`  ${reviewPath}  (${reviewRows.length} to review)`);
   console.log(`  ${ambiguousPath}  (${ambiguousRows.length} collisions)`);
+  console.log(
+    `  ${linkPath}  (${DRY_RUN ? linkCounts.would_copy + " would copy" : linkCounts.copied + " copied"})`
+  );
   console.log(
     "\nNext: review hoer-inferred-dupes-review-*.csv, fill the `decision` column, " +
       "then run apply-hoer-dupe-review.mjs on it."

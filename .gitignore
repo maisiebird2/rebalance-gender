@@ -30,6 +30,13 @@ scripts/*-cache.json
 resolve-candidates-*.csv
 sc-followee-duplicates-*.csv
 genre-report*.csv
+# HÖR resolver / link-migration dated outputs
+hoer-status-resolution-*.csv
+hoer-inferred-dupes-review-*.csv
+hoer-exact-ambiguous-*.csv
+hoer-internal-dupes-*.csv
+hoer-dupe-review-applied-*.csv
+hoer-link-migration-applied-*.csv
 __pycache__/
 *.pyc
 
