@@ -152,7 +152,7 @@ export default async function ArtistPage({ params }: PageProps) {
               </p>
               {aliasText && (
                 <p className="text-sm text-gray-400 dark:text-gray-500">
-                  aka {aliasText}
+                  {aliasText}
                 </p>
               )}
             </div>
