@@ -151,6 +151,7 @@ async function main() {
   for (const a of artists) {
     if (hoerIds.has(a.id)) continue; // exclude HÖR-loaded artists
     if (a.directory_status === "obscure") continue; // hidden artists aren't dup targets
+    if (a.directory_status === "duplicate") continue; // duplicate artists aren't dup targets
     const norm = a.name_search || normalizeName(a.name);
     if (norm) {
       if (!exactIndex.has(norm)) exactIndex.set(norm, []);
