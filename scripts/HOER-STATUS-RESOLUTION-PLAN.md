@@ -5,10 +5,12 @@ Automated resolution of `directory_status` for artists seeded from HÖR
 confidently can, hold the uncertain ones for human review, and record every
 automated change in a dated CSV.
 
-Status: **scripts implemented** (committed Jul 11, `7daab17`) against this plan;
-not yet run. Any further changes go on a new branch off `main` (project rule).
-These scripts hit Supabase, so they can't be run or verified in the Cowork
-sandbox — they'll be handed to Maisie to run locally.
+Status: **scripts implemented and extended.** Beyond the original pipeline, the
+resolver now also copies each exact-duplicate's HÖR link onto the surviving
+artist (see Rule 1), and a standalone backlog importer backfills that for dupes
+marked earlier. Any further changes go on a new branch off `main` (project
+rule). These scripts hit Supabase, so they can't be run or verified in the
+Cowork sandbox — they're run locally.
 
 ---
 
@@ -17,7 +19,7 @@ sandbox — they'll be handed to Maisie to run locally.
 | Thing | Where |
 |---|---|
 | Artist row | `artists(id uuid, name, pronoun_id int, directory_status enum, name_search generated, deleted)` |
-| Status enum values | `approved, pending, rejected, not_eligible, search_input, sc_followee, duplicate, unverified` — `approved` / `not_eligible` / `duplicate` all exist |
+| Status enum values | `approved, pending, rejected, not_eligible, search_input, sc_followee, duplicate, unverified, obscure` — `obscure` = intentionally hidden from the directory |
 | Pronouns | `pronouns(id int, value text unique)` — `value` strings seeded separately; confirm actual set on first run |
 | HÖR membership | `artist_links` where `platform='hoer'` (join to `artists`) |
 | HÖR bio | `biographies` where `platform='hoer'` (`bio` column); raw audit copy in `artist_harvested_bios` (`source_platform='hoer'`, `raw_bio`) |
@@ -57,14 +59,21 @@ the two agree character-for-character. That lets the exact-dup rule lean on
 
 ## Components
 
-Three scripts, one shared lib module:
+Four scripts, two shared lib modules:
 
 1. **`report-hoer-internal-dupes.mjs`** — pre-run step, standalone report.
-2. **`resolve-hoer-status.mjs`** — the main resolver (precedence pipeline).
+2. **`resolve-hoer-status.mjs`** — the main resolver (precedence pipeline);
+   also copies HÖR links onto survivors on an exact duplicate (Rule 1).
 3. **`apply-hoer-dupe-review.mjs`** — round-trip importer for the reviewed
    inferred-duplicate CSV.
-4. **`lib/hoer-resolve.mjs`** — normalization, pronoun detection, bio/genre
+4. **`migrate-hoer-dupe-links.mjs`** — standalone backlog importer that copies
+   HÖR links onto survivors from a saved `hoer-status-resolution-*.csv` (for
+   dupes marked before the resolver did this itself).
+5. **`lib/hoer-resolve.mjs`** — normalization, pronoun detection, bio/genre
    overlap, CSV read/write — shared and unit-tested.
+6. **`lib/hoer-links.mjs`** — the shared HÖR link-copy decision + insert-row
+   shape, used by both the resolver and the backlog importer so they can't
+   drift — unit-tested.
 
 All CSVs are written with a `YYYYMMDD-HHMMSS` stamp in the filename.
 
@@ -108,25 +117,45 @@ the first that fires:
 
 ### Rule 1 — exact duplicate
 
-- Compare `normalizeName(hoer.name)` against the `name_search` of **all DB
-  artists except HÖR-loaded ones** (exclude any artist with a `platform='hoer'`
-  link; also exclude `deleted`). Because `name_search` is the aligned normalized
-  key, this is a direct equality match.
+- Compare `normalizeName(hoer.name)` against the `name_search` of the
+  **comparison pool** — all DB artists except HÖR-loaded ones, `deleted` ones,
+  and `obscure` ones (intentionally hidden from the directory, so never a dup
+  target). Because `name_search` is the aligned normalized key, this is a direct
+  equality match.
 - Exactly one match → set `directory_status='duplicate'`, record the matched
-  artist.
+  artist, **and copy this artist's HÖR link onto the matched (surviving)
+  artist** (see "HÖR link copy" below).
 - **More than one** DB artist shares that normalized name → ambiguous. Do **not**
   change status; write the case to `hoer-exact-ambiguous-<stamp>.csv`
   (`artist_id`, `hoer_name`, `hoer_url`, and every colliding
   `matched_artist_id` / `matched_name`) for manual review.
 - Zero matches → fall through to Rule 2.
 
+**HÖR link copy.** Marking a dup `duplicate` would otherwise strand its
+`platform='hoer'` link on the demoted row (and the public RLS only surfaces
+links for `approved` artists, so it would vanish from the directory). So on an
+exact duplicate the resolver **copies** the dup's HÖR link onto the survivor —
+a new `artist_links` row (the dup keeps its own as a record), preserving
+`handle` / `url` / `original_url` / `not_found`. The `(artist_id, platform)`
+unique constraint permits only one HÖR link per artist, so if two dupes point at
+the same survivor with different URLs the second is flagged as a `conflict` for
+manual review rather than forced. Every action is logged to
+`hoer-link-migration-<stamp>.csv` (`copied` / `would-copy` / `skipped` /
+`conflict` / `error`); `--dry-run` reports `would-copy` without writing.
+
+Because the resolver only acts on `pending` rows, it copies links only for dupes
+it marks **this run**. Dupes marked before this behaviour existed are backfilled
+by the standalone `migrate-hoer-dupe-links.mjs`, which does the same copy from a
+saved `hoer-status-resolution-*.csv`.
+
 ### Rule 2 — inferred duplicate (review, never auto-applied)
 
 Only for artists with no exact match that have a HÖR bio and/or HÖR genres.
 
-1. **Candidate shortlist:** non-HÖR, non-deleted DB artists whose normalized
-   name is *similar* (trigram / normalized-Levenshtein above a threshold — start
-   ~0.55, tune). Keeps the expensive comparison to a small subset.
+1. **Candidate shortlist:** comparison-pool artists (non-HÖR, non-deleted,
+   non-obscure) whose normalized name is *similar* (trigram /
+   normalized-Levenshtein above a threshold — start ~0.55, tune). Keeps the
+   expensive comparison to a small subset.
 2. **Score each candidate** using the extra signals:
    - bio: cheap token/keyword overlap (lowercase, stop-word-stripped Jaccard)
      between HÖR bio and the candidate's bio,
@@ -191,7 +220,8 @@ this run actually changed** (Rules 1 and 3). Columns:
 
 The review/ambiguous files (`hoer-inferred-dupes-review-*`,
 `hoer-exact-ambiguous-*`, and the Step-1 `hoer-internal-dupes-*`) are separate —
-they list artists that were **not** changed and need a human.
+they list artists that were **not** changed and need a human. The resolver also
+writes `hoer-link-migration-<stamp>.csv` auditing the Rule 1 HÖR-link copies.
 
 ---
 
@@ -218,7 +248,8 @@ uploaded file, the upload can safely be a filtered subset of the review output.
 
 - Unit tests (no DB) for `lib/hoer-resolve.mjs`: normalization, pronoun
   counting + dominance ratio (incl. the he/they edge case and the exactly-0.80
-  boundary), bio/genre overlap, CSV round-trip.
+  boundary), bio/genre overlap, CSV round-trip. And for `lib/hoer-links.mjs`:
+  the link-copy decision (copy / skip / conflict) and the insert-row builder.
 - First live run: `--dry-run` (compute + write CSVs, no DB writes) so we can eye
   the reports before anything changes. Also confirm the actual `pronouns.value`
   strings match detection assumptions on this run.
