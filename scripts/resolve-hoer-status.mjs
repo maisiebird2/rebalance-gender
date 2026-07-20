@@ -150,6 +150,7 @@ async function main() {
   const candidates = [];
   for (const a of artists) {
     if (hoerIds.has(a.id)) continue; // exclude HÖR-loaded artists
+    if (a.directory_status === "obscure") continue; // hidden artists aren't dup targets
     const norm = a.name_search || normalizeName(a.name);
     if (norm) {
       if (!exactIndex.has(norm)) exactIndex.set(norm, []);
@@ -174,7 +175,7 @@ async function main() {
   }
   console.log(
     `HÖR artists: ${hoerIds.size}; pending: ${pending.length}; ` +
-      `comparison pool (non-HÖR): ${candidates.length}.\n`
+      `comparison pool (non-HÖR, non-obscure): ${candidates.length}.\n`
   );
 
   const runAt = new Date().toISOString();
