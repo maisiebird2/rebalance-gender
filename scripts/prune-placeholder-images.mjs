@@ -46,6 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDefaultAvatarUrl } from "./lib/soundcloud.mjs";
+import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -110,15 +111,15 @@ function isOgPlaceholderUrl(url) {
 function classifyPlaceholder(row) {
   if (row.platform === "soundcloud" && isDefaultAvatarUrl(row.source_url)) {
     return {
-      service: "image-sync:soundcloud",
-      status: "default_avatar",
+      service: imageFailureService("soundcloud"),
+      status: IMAGE_FAILURE_STATUS.PLACEHOLDER,
       detail: "soundcloud returned its default placeholder avatar (no real photo)",
     };
   }
   if (isOgPlaceholderUrl(row.source_url)) {
     return {
-      service: `image-enrich:${row.platform}`,
-      status: "no_og_image",
+      service: imageFailureService(row.platform),
+      status: IMAGE_FAILURE_STATUS.PLACEHOLDER,
       detail: "placeholder image (platform default, no real photo)",
     };
   }

@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  DEDICATED_HARVEST_PLATFORMS,
+  OWNED_BY_DEDICATED_HARVESTER,
   enrichArtistImages,
   fetchOgImage,
   isPlaceholderImageUrl,
@@ -296,7 +296,7 @@ describe("enrichArtistImages — URL-change handling", () => {
     const { client } = makeClient({
       artist: approvedArtist([{ platform: "discogs", url: "https://discogs/same" }]),
       images: [],
-      failures: [{ service: "image-enrich:discogs", url: "https://discogs/same" }],
+      failures: [{ service: "image:discogs", status: "no_image", url: "https://discogs/same" }],
     });
     const fetchMock = stubFetch({});
 
@@ -310,7 +310,7 @@ describe("enrichArtistImages — URL-change handling", () => {
     const { client, calls } = makeClient({
       artist: approvedArtist([{ platform: "discogs", url: "https://discogs/NEW" }]),
       images: [],
-      failures: [{ service: "image-enrich:discogs", url: "https://discogs/OLD" }],
+      failures: [{ service: "image:discogs", status: "no_image", url: "https://discogs/OLD" }],
     });
     stubFetch({ "https://discogs/NEW": "image" });
 
@@ -336,6 +336,56 @@ describe("enrichArtistImages — URL-change handling", () => {
     expect(calls.deletes).toEqual([]);
   });
 
+  // The ownership rule: a dedicated harvester owns its platform, and a
+  // scrape is a fallback for exactly one case — the owner ran and failed
+  // in a way that might not recur.
+
+  it("leaves a dedicated-harvester platform alone when its owner has not run yet", async () => {
+    const { client } = makeClient({
+      artist: approvedArtist([{ platform: "soundcloud", url: "https://soundcloud/a" }]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({ "https://soundcloud/a": "image" });
+
+    const result = await enrichArtistImages("a1", client);
+
+    // No image and no failure row means sync-soundcloud simply hasn't got
+    // here — not our platform to fetch.
+    expect(result.skippedProtected).toEqual(["soundcloud"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("scrapes a dedicated-harvester platform after its owner failed transiently", async () => {
+    const { client } = makeClient({
+      artist: approvedArtist([{ platform: "soundcloud", url: "https://soundcloud/a" }]),
+      images: [],
+      failures: [{ service: "image:soundcloud", status: "fetch_failed", url: "https://soundcloud/a" }],
+    });
+    const fetchMock = stubFetch({ "https://soundcloud/a": "image" });
+
+    const result = await enrichArtistImages("a1", client);
+
+    expect(result.stored).toEqual(["soundcloud"]);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("does not scrape a dedicated-harvester platform its owner ruled out definitively", async () => {
+    const { client } = makeClient({
+      artist: approvedArtist([{ platform: "soundcloud", url: "https://soundcloud/a" }]),
+      images: [],
+      failures: [{ service: "image:soundcloud", status: "no_image", url: "https://soundcloud/a" }],
+    });
+    const fetchMock = stubFetch({ "https://soundcloud/a": "image" });
+
+    const result = await enrichArtistImages("a1", client);
+
+    // The owner already established there is no photo; re-deriving it via
+    // a scrape would just re-confirm the same answer.
+    expect(result.skippedExisting).toEqual(["soundcloud"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a Last.fm default placeholder as a no-image result rather than storing it", async () => {
     const { client, calls } = makeClient({
       artist: approvedArtist([{ platform: "lastfm", url: "https://lastfm/artist" }]),
@@ -351,7 +401,7 @@ describe("enrichArtistImages — URL-change handling", () => {
     // No image stored; the no-image result is recorded in harvest_failures.
     expect(calls.upserts.some((u) => u.table === "artist_images")).toBe(false);
     const failUpsert = calls.upserts.find((u) => u.table === "harvest_failures");
-    expect(failUpsert?.row.status).toBe("no_og_image");
+    expect(failUpsert?.row.status).toBe("placeholder");
   });
 
   it("reports a removal in dry-run without writing to the DB", async () => {
@@ -397,7 +447,7 @@ describe("SCRAPE_ONLY_PLATFORMS", () => {
   it("covers every other image-capable platform", () => {
     // The complement must stay exhaustive: anything dropped from here
     // silently loses its only source of images.
-    const expected = PLATFORM_PRIORITY.filter((p) => !DEDICATED_HARVEST_PLATFORMS.has(p));
+    const expected = PLATFORM_PRIORITY.filter((p) => !OWNED_BY_DEDICATED_HARVESTER.has(p));
     expect([...SCRAPE_ONLY_PLATFORMS].sort()).toEqual([...expected].sort());
     expect(SCRAPE_ONLY_PLATFORMS).toContain("spotify");
     expect(SCRAPE_ONLY_PLATFORMS).toContain("youtube");
@@ -503,7 +553,7 @@ describe("fetchOgImage — meta tag discovery", () => {
 
     expect(await fetchOgImage("https://site.example/x")).toEqual({
       found: false,
-      transient: false,
+      status: "no_image",
       detail: "og:image tag present but empty (no photo set)",
     });
   });
@@ -514,7 +564,7 @@ describe("fetchOgImage — meta tag discovery", () => {
 
     expect(await fetchOgImage("https://site.example/x")).toEqual({
       found: false,
-      transient: false,
+      status: "no_image_tag",
       detail: "no og:image/twitter:image meta tag",
     });
   });

@@ -42,7 +42,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enrichArtistImages, DEDICATED_HARVEST_PLATFORMS } from "../src/lib/enrich-images.js";
+import { enrichArtistImages, OWNED_BY_DEDICATED_HARVESTER } from "../src/lib/enrich-images.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -110,7 +110,7 @@ async function main() {
   if (FORCE) {
     console.log(
       `--force: re-checking platforms that already have a stored image or a confirmed no-image result ` +
-        `(except ${[...DEDICATED_HARVEST_PLATFORMS].join(", ")}, never touched by this script)\n`
+        `(except ${[...OWNED_BY_DEDICATED_HARVESTER].join(", ")}, never touched by this script)\n`
     );
   }
   if (ALLOWED_PLATFORMS) {
