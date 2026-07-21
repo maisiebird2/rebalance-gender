@@ -148,7 +148,7 @@
 // syncArtist() function below. The CLI loop in main() is a thin driver
 // over it — the same shape a future event-triggered call (e.g. "sync
 // this one artist from SoundCloud on admin approval", the same pattern
-// src/lib/enrich-images.ts already uses for images) can call directly
+// src/lib/scrape-images.ts already uses for images) can call directly
 // for a single artist instead of a bulk run.
 //
 // Uses upserts throughout, so re-running refreshes existing rows

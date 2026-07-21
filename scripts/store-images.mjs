@@ -5,7 +5,7 @@
 // Re-hosts artist_images rows to Supabase Storage. artist_images (see
 // supabase_migration_artist_images.sql) holds one row per
 // (artist_id, platform) — every platform that turned up a usable
-// profile photo, written by enrich-images.ts, sync-soundcloud.mjs, and
+// profile photo, written by scrape-images.ts, sync-soundcloud.mjs, and
 // sync-bandcamp.mjs. This script downloads each row's source_url and
 // uploads it to artist-images/{artist_id}/{platform}.{ext} — one
 // Storage object per platform, not one shared slot per artist — then

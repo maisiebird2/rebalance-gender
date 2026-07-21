@@ -14,7 +14,7 @@
 //   --non-directory          Every image belonging to an artist whose
 //                            directory_status is NOT 'approved' (or
 //                            who is soft-deleted). Every writer
-//                            (enrich-images.ts, sync-soundcloud.mjs,
+//                            (scrape-images.ts, sync-soundcloud.mjs,
 //                            sync-bandcamp.mjs, store-images.mjs, the
 //                            backfill migration) already restricts
 //                            itself to approved artists, so rows like

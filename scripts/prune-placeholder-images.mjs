@@ -2,14 +2,14 @@
 // ============================================================
 // One-time cleanup: remove already-stored placeholder images.
 //
-// Before enrich-images.ts / sync-soundcloud.mjs learned to reject
+// Before scrape-images.ts / sync-soundcloud.mjs learned to reject
 // platform default placeholders, some got scraped and stored (and
 // re-hosted) as if they were real profile photos:
 //
 //   - Last.fm's default "star" avatar (og:image scrape) — any
 //     artist_images.source_url containing the well-known placeholder
 //     hash. Rejected going forward by isPlaceholderImageUrl in
-//     src/lib/enrich-images.ts.
+//     src/lib/scrape-images.ts.
 //   - SoundCloud's generic grey default_avatar (returned as avatar_url
 //     for accounts with no photo). Rejected going forward by
 //     isDefaultAvatarUrl in scripts/lib/soundcloud.mjs.
@@ -47,6 +47,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDefaultAvatarUrl } from "./lib/soundcloud.mjs";
 import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.mjs";
+import { isPlaceholderImageUrl } from "../src/lib/images/placeholders.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -91,18 +92,9 @@ const BUCKET = "artist-images";
 const SUPABASE_PAGE_SIZE = 1000;
 const IN_CHUNK = 100;
 
-// og:image placeholders — keep in sync with PLACEHOLDER_IMAGE_PATTERNS /
-// isPlaceholderImageUrl in src/lib/enrich-images.ts. Duplicated rather
-// than imported: that module is bundled into the Next.js app and this is
-// a plain-Node .mjs, the same boundary store-images.mjs's PLATFORM_
-// PRIORITY copy already lives with.
-const OG_PLACEHOLDER_PATTERNS = [
-  // Last.fm default "star" artist avatar (same hash at every size).
-  /2a96cbd8b46e442fc41c2b86b821562f/i,
-];
-function isOgPlaceholderUrl(url) {
-  return typeof url === "string" && OG_PLACEHOLDER_PATTERNS.some((re) => re.test(url));
-}
+// Placeholder patterns come from the shared registry
+// (src/lib/images/placeholders.mjs) rather than a local copy kept in
+// sync by hand — see that file.
 
 // Classify a stored image row as a placeholder, or return null. The
 // service/status mirror exactly what the forward-going rejection paths
@@ -116,7 +108,7 @@ function classifyPlaceholder(row) {
       detail: "soundcloud returned its default placeholder avatar (no real photo)",
     };
   }
-  if (isOgPlaceholderUrl(row.source_url)) {
+  if (isPlaceholderImageUrl(row.source_url, row.platform)) {
     return {
       service: imageFailureService(row.platform),
       status: IMAGE_FAILURE_STATUS.PLACEHOLDER,

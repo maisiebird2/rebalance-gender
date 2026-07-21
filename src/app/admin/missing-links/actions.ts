@@ -5,7 +5,7 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
-import { enrichArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/enrich-images";
+import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 
 export interface ActionResult {
   error?: string;
@@ -66,9 +66,9 @@ export async function saveArtistPlatformLink(
   if (SCRAPE_ONLY_PLATFORMS.includes(platform)) {
     after(async () => {
       try {
-        await enrichArtistImages(artistId, admin, { allowedPlatforms: [platform] });
+        await scrapeArtistImages(artistId, admin, { allowedPlatforms: [platform] });
       } catch (e) {
-        console.error(`enrichArtistImages(${artistId}) failed:`, e);
+        console.error(`scrapeArtistImages(${artistId}) failed:`, e);
       }
     });
   }

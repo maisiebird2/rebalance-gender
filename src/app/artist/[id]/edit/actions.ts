@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
-import { enrichArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/enrich-images";
+import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 import {
   imageFailureService,
   LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
@@ -360,7 +360,7 @@ export async function saveArtist(
 
   // ── 9. Trigger image enrichment if warranted ──────────────────
   // Run after the response is sent so it doesn't block the redirect.
-  // enrichArtistImages only attempts platforms that don't already have
+  // scrapeArtistImages only attempts platforms that don't already have
   // a stored image (or a confirmed no-image result) for their *current*
   // link — a platform whose image is up to date is a no-op, but one
   // whose link URL just changed is re-fetched (hasNewImageUrls, which
@@ -369,7 +369,7 @@ export async function saveArtist(
   // their own harvesters, which run from the orchestrator.
   if (directoryStatus === "approved" && hasNewImageUrls) {
     after(() =>
-      enrichArtistImages(artistId, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS })
+      scrapeArtistImages(artistId, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS })
     );
   }
 

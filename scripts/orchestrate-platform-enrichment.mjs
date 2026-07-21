@@ -44,9 +44,30 @@
 //                                           new links and the loop
 //                                           converges.
 //
+//   3. scrape-images.ts                  — image acquisition for every
+//                                           platform that has no
+//                                           harvester of its own
+//                                           (spotify, lastfm, wikipedia,
+//                                           youtube, …), plus a fallback
+//                                           scrape for soundcloud/
+//                                           bandcamp where their owner
+//                                           recorded a transient
+//                                           failure. Runs after the loop
+//                                           converges, not inside it:
+//                                           the loop's own harvesters
+//                                           supply the owned platforms'
+//                                           images, so scraping mid-loop
+//                                           would race gaps a later
+//                                           round fills properly. Run
+//                                           `scrape-images.ts --list` to
+//                                           see which source owns what.
+//                                           Unconditionally approved-only,
+//                                           so --approved is not
+//                                           forwarded to it.
+//
 // (SoundCloud sync was a standalone stage 2 here until 2026-07-11, when
-// it became a loop harvester like Bandcamp — so this orchestrator now
-// collapses to just the name cleanup plus the loop.)
+// it became a loop harvester like Bandcamp — so this orchestrator is the
+// name cleanup, the loop, then images.)
 //
 // This is the same ordering as Phase 1 → Phase 2 of PIPELINE.md, wired
 // together so it can be launched (and, later, scheduled) with one flag.
@@ -83,6 +104,7 @@
 // ============================================================
 
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -106,7 +128,15 @@ const maxRoundsArg = args.find((a) => a.startsWith("--max-rounds="));
 function runStage(script, stageArgs = []) {
   const label = [script, ...stageArgs].join(" ");
   console.log(`\n════════ ${label} ${"═".repeat(Math.max(0, 48 - label.length))}`);
-  const result = spawnSync("node", [path.join(__dirname, script), ...stageArgs], {
+  // TypeScript stages run under tsx (the same runtime their npm script
+  // uses); .mjs stages run under plain node. tsx is located through
+  // node's own resolution rather than a node_modules/.bin path, so this
+  // keeps working from a git worktree, where node_modules lives in the
+  // main checkout rather than beside the script.
+  const isTs = script.endsWith(".ts");
+  const runtime = isTs ? process.execPath : "node";
+  const prefixArgs = isTs ? [createRequire(import.meta.url).resolve("tsx/cli")] : [];
+  const result = spawnSync(runtime, [...prefixArgs, path.join(__dirname, script), ...stageArgs], {
     stdio: "inherit",
     env: process.env, // DRY_RUN (and everything else) propagates to children
   });
@@ -152,6 +182,18 @@ export function orchestratePlatformEnrichment(opts = {}) {
       script: "harvest-links-loop.mjs",
       args: [...common, ...(maxRounds != null ? [`--max-rounds=${maxRounds}`] : [])],
     },
+    // Images last, and outside the loop. Every platform with a harvester
+    // of its own gets its images from that harvester inside the loop
+    // above; this fills in the platforms that have no harvester, and
+    // falls back to scraping an owned platform only where its owner
+    // recorded a transient failure. Running it inside the loop would
+    // race that — it would scrape gaps a later round fills properly.
+    //
+    // --approved is deliberately not forwarded: scrape-images is
+    // unconditionally approved-only (the guard lives inside
+    // scrapeArtistImages), so the flag would be a no-op that implies a
+    // choice the stage doesn't have.
+    { script: "scrape-images.ts", args: [] },
   ];
 
   for (const { script, args: stageArgs } of stages) {

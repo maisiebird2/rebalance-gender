@@ -2,13 +2,16 @@
 // ============================================================
 // Profile picture enrichment (bulk CLI).
 //
-// Thin driver over enrichArtistImages() in src/lib/enrich-images.ts —
+// Thin driver over scrapeArtistImages() in src/lib/scrape-images.ts —
 // see that file for the actual per-artist logic (which platforms get
-// tried, the directory-only guard, the skip-set, and why
-// soundcloud/bandcamp are off-limits here since they have their own
-// dedicated harvesters). This script just walks every directory
-// artist and calls it — same "single per-artist unit + thin CLI
-// driver" shape as sync-soundcloud.mjs.
+// tried, the directory-only guard, and the skip-set). This script just
+// walks every directory artist and calls it — same "single per-artist
+// unit + thin CLI driver" shape as sync-soundcloud.mjs.
+//
+// This owns image acquisition for every platform that has no harvester
+// of its own. soundcloud and bandcamp belong to sync-soundcloud.mjs and
+// sync-bandcamp.mjs; this script only falls back to scraping them when
+// the owner recorded a transient failure. Run --list to see the split.
 //
 // For each artist with directory_status = 'approved', tries every
 // platform link that doesn't already have a stored image (or a
@@ -18,31 +21,36 @@
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   npx tsx scripts/enrich-images.ts                    # all approved artists, every uncovered platform
-//   npx tsx scripts/enrich-images.ts --limit=20         # only the first 20 (for testing)
-//   npx tsx scripts/enrich-images.ts --force            # re-check platforms that already have a stored image
-//                                                        # or a confirmed no-image result (soundcloud/bandcamp
-//                                                        # excepted — never touched by this script)
-//   npx tsx scripts/enrich-images.ts --platforms=resident_advisor,discogs
+//   npx tsx scripts/scrape-images.ts                    # all approved artists, every uncovered platform
+//   npx tsx scripts/scrape-images.ts --limit=20         # only the first 20 (for testing)
+//   npx tsx scripts/scrape-images.ts --list             # print who owns each platform, then exit
+//   npx tsx scripts/scrape-images.ts --force            # re-check platforms that already have a stored image
+//                                                        # or a definitive no-image result
+//   npx tsx scripts/scrape-images.ts --platforms=resident_advisor,discogs
 //                                                        # only try these platforms
-//   DRY_RUN=1 npx tsx scripts/enrich-images.ts          # fetch + log, don't write to the DB
+//   DRY_RUN=1 npx tsx scripts/scrape-images.ts          # fetch + log, don't write to the DB
 //
 // No cache file — state lives in the DB. A platform is skipped once
 // artist_images has a row for it, or once harvest_failures has a
-// confirmed 'no_og_image' row for it (service = "image-enrich:
-// <platform>"). The skip is keyed to the exact link: both records store
+// definitive row for it (service = "image:<platform>" — see
+// src/lib/images/failures.mjs). The skip is keyed to the exact link: both records store
 // the profile URL they came from, so a link edited/corrected to a
 // different URL is treated as never-tried and re-fetched automatically,
 // force or not. If a link changes to a page with no image, the stale
 // image previously stored for that platform is deleted. See
-// src/lib/enrich-images.ts for the full skip-set rules.
+// src/lib/scrape-images.ts for the full skip-set rules.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { enrichArtistImages, OWNED_BY_DEDICATED_HARVESTER } from "../src/lib/enrich-images.js";
+import {
+  scrapeArtistImages,
+  OWNED_BY_DEDICATED_HARVESTER,
+  PLATFORM_PRIORITY,
+} from "../src/lib/scrape-images.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -54,6 +62,7 @@ const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
+const LIST_ONLY = args.includes("--list");
 const platformsArg = args.find((a) => a.startsWith("--platforms="));
 const ALLOWED_PLATFORMS: string[] | undefined = platformsArg
   ? platformsArg.split("=")[1].split(",").map((p) => p.trim())
@@ -90,7 +99,10 @@ loadEnvLocal();
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
-if (!SUPABASE_URL || !SECRET_KEY) {
+// --list only reports how the platforms are divided up, so it stays
+// usable without credentials — the question it answers is most often
+// asked by someone who hasn't set the project up yet.
+if (!LIST_ONLY && (!SUPABASE_URL || !SECRET_KEY)) {
   console.error(
     "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY.\n" +
       "Fill these in in .env.local before running."
@@ -98,19 +110,55 @@ if (!SUPABASE_URL || !SECRET_KEY) {
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
-  auth: { persistSession: false },
-});
+// Built on first use rather than at import, so --list (which needs no DB)
+// doesn't fail on a missing URL before it can print anything.
+let client: SupabaseClient | null = null;
+function supabaseClient(): SupabaseClient {
+  client ??= createClient(SUPABASE_URL!, SECRET_KEY!, {
+    auth: { persistSession: false },
+  });
+  return client;
+}
 
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
+/**
+ * Print which source owns each platform's images and what role this
+ * script plays for it, so "where does a spotify image come from?" is
+ * answerable by running one command rather than reading five scripts.
+ */
+function printOwnershipTable() {
+  const OWNERS: Record<string, string> = {
+    soundcloud: "sync-soundcloud.mjs (SoundCloud /resolve API)",
+    bandcamp: "sync-bandcamp.mjs (artist page sidebar)",
+  };
+  console.log("Image ownership by platform\n");
+  const width = Math.max(...PLATFORM_PRIORITY.map((p) => p.length));
+  for (const platform of PLATFORM_PRIORITY) {
+    const owner = OWNERS[platform];
+    console.log(
+      `  ${platform.padEnd(width)}  ${owner ?? "this script (og:image scrape)"}` +
+        (owner ? "  — scraped here only after a transient failure" : "")
+    );
+  }
+  console.log(
+    `\nharvest_failures key: image:<platform>. A definitive status means the ` +
+      `answer is known;\na transient one is retried, and is what makes an owned ` +
+      `platform eligible for a scrape.\n`
+  );
+}
+
 async function main() {
-  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running image enrichment\n");
+  if (LIST_ONLY) {
+    printOwnershipTable();
+    return;
+  }
+  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running image scraping\n");
   if (FORCE) {
     console.log(
-      `--force: re-checking platforms that already have a stored image or a confirmed no-image result ` +
-        `(except ${[...OWNED_BY_DEDICATED_HARVESTER].join(", ")}, never touched by this script)\n`
+      `--force: re-checking platforms that already have a stored image or a definitive no-image result ` +
+        `(${[...OWNED_BY_DEDICATED_HARVESTER].join(", ")} still only scraped after their owner fails transiently)\n`
     );
   }
   if (ALLOWED_PLATFORMS) {
@@ -126,7 +174,7 @@ async function main() {
   const artists: { id: string; name: string }[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const to = LIMIT ? Math.min(from + PAGE_SIZE, LIMIT) - 1 : from + PAGE_SIZE - 1;
-    const { data: page, error } = await supabase
+    const { data: page, error } = await supabaseClient()
       .from("artists")
       .select("id, name")
       .eq("directory_status", "approved")
@@ -149,7 +197,7 @@ async function main() {
   const bySource: Record<string, number> = {};
 
   for (const artist of artists) {
-    const result = await enrichArtistImages(artist.id, supabase, {
+    const result = await scrapeArtistImages(artist.id, supabaseClient(), {
       force: FORCE,
       dryRun: DRY_RUN,
       allowedPlatforms: ALLOWED_PLATFORMS,

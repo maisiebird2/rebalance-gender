@@ -1,3 +1,4 @@
+import { isPlaceholderImageUrl } from "../../src/lib/images/placeholders.mjs";
 // ============================================================
 // Shared SoundCloud API client + URL helpers.
 //
@@ -61,7 +62,7 @@ export function upgradeAvatarUrl(url) {
 // never contain it). Returns false for a missing/empty avatar.
 // ------------------------------------------------------------
 export function isDefaultAvatarUrl(url) {
-  return typeof url === "string" && /\/default_avatar[_.]/i.test(url);
+  return isPlaceholderImageUrl(url, "soundcloud");
 }
 
 // ------------------------------------------------------------
