@@ -3,7 +3,14 @@
 // typing precisely for test plumbing — so `any` is allowed in this file.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { enrichArtistImages, isPlaceholderImageUrl, PLATFORM_PRIORITY } from "./enrich-images";
+import {
+  DEDICATED_HARVEST_PLATFORMS,
+  enrichArtistImages,
+  fetchOgImage,
+  isPlaceholderImageUrl,
+  PLATFORM_PRIORITY,
+  SCRAPE_ONLY_PLATFORMS,
+} from "./enrich-images";
 
 const LASTFM_PLACEHOLDER =
   "https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg";
@@ -378,5 +385,147 @@ describe("isPlaceholderImageUrl", () => {
     expect(
       isPlaceholderImageUrl("https://lastfm.freetls.fastly.net/i/u/ar0/abc123realhash.jpg")
     ).toBe(false);
+  });
+});
+
+describe("SCRAPE_ONLY_PLATFORMS", () => {
+  it("excludes the platforms owned by a dedicated harvester", () => {
+    expect(SCRAPE_ONLY_PLATFORMS).not.toContain("soundcloud");
+    expect(SCRAPE_ONLY_PLATFORMS).not.toContain("bandcamp");
+  });
+
+  it("covers every other image-capable platform", () => {
+    // The complement must stay exhaustive: anything dropped from here
+    // silently loses its only source of images.
+    const expected = PLATFORM_PRIORITY.filter((p) => !DEDICATED_HARVEST_PLATFORMS.has(p));
+    expect([...SCRAPE_ONLY_PLATFORMS].sort()).toEqual([...expected].sort());
+    expect(SCRAPE_ONLY_PLATFORMS).toContain("spotify");
+    expect(SCRAPE_ONLY_PLATFORMS).toContain("youtube");
+  });
+});
+
+// ── fetchOgImage: meta tag discovery ─────────────────────────────────
+// These drive the streaming path (res.body.getReader()), unlike the
+// enrichArtistImages tests above which use the body:null text() fallback.
+
+// Serves `html` as a byte stream in fixed-size chunks, so tests can put a
+// chunk boundary in the middle of a meta tag.
+function stubStreamingFetch(html: string, chunkSize: number) {
+  const bytes = new TextEncoder().encode(html);
+  const reader = () => {
+    let offset = 0;
+    return {
+      async read() {
+        if (offset >= bytes.length) return { done: true, value: undefined };
+        const value = bytes.slice(offset, offset + chunkSize);
+        offset += chunkSize;
+        return { done: false, value };
+      },
+      async cancel() {},
+    };
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: { getReader: reader },
+      text: async () => html,
+    }))
+  );
+}
+
+describe("fetchOgImage — meta tag discovery", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("finds og:image emitted inside <body>, past </head>", async () => {
+    // YouTube's shape: the social meta tags sit well after the closing
+    // head tag, so a head-only read misses them entirely.
+    const html =
+      `<html><head><title>Chan</title></head><body>` +
+      "x".repeat(50_000) +
+      `<meta property="og:image" content="https://cdn.example/avatar.jpg">` +
+      `</body></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/chan")).toEqual({
+      found: true,
+      imageUrl: "https://cdn.example/avatar.jpg",
+    });
+  });
+
+  it("finds a meta tag straddling a chunk boundary", async () => {
+    // Padding exceeds the rescan window, and 4990 puts the boundary at
+    // 5000 ten characters into the tag.
+    const html = "<html><body>" + "y".repeat(4978) + `<meta property="og:image" content="https://cdn.example/split.jpg"></body></html>`;
+    expect(html.indexOf("<meta")).toBe(4990);
+    stubStreamingFetch(html, 2_500);
+
+    expect(await fetchOgImage("https://site.example/x")).toEqual({
+      found: true,
+      imageUrl: "https://cdn.example/split.jpg",
+    });
+  });
+
+  it("prefers og:image even when twitter:image appears earlier", async () => {
+    const html =
+      `<html><head>` +
+      `<meta name="twitter:image" content="https://cdn.example/twitter.jpg">` +
+      `<meta property="og:image" content="https://cdn.example/og.jpg">` +
+      `</head></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/x")).toEqual({
+      found: true,
+      imageUrl: "https://cdn.example/og.jpg",
+    });
+  });
+
+  it("falls back to twitter:image when the page has no og:image", async () => {
+    const html = `<html><head><meta name="twitter:image" content="https://cdn.example/tw.jpg"></head></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/x")).toEqual({
+      found: true,
+      imageUrl: "https://cdn.example/tw.jpg",
+    });
+  });
+
+  it("reports an empty og:image separately from a missing tag", async () => {
+    // SoundCloud's shape for an artist with no avatar — the platform is
+    // affirmatively saying "no photo", which must not look like a
+    // scrape failure in the logs.
+    const html = `<html><head><meta property="og:image" content=""></head></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/x")).toEqual({
+      found: false,
+      transient: false,
+      detail: "og:image tag present but empty (no photo set)",
+    });
+  });
+
+  it("reports a genuinely absent tag as a missing tag", async () => {
+    const html = `<html><head><title>nothing here</title></head></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/x")).toEqual({
+      found: false,
+      transient: false,
+      detail: "no og:image/twitter:image meta tag",
+    });
+  });
+
+  it("resolves a relative image URL against the page URL", async () => {
+    const html = `<html><head><meta property="og:image" content="/img/a.jpg"></head></html>`;
+    stubStreamingFetch(html, 16_000);
+
+    expect(await fetchOgImage("https://site.example/artist/x")).toEqual({
+      found: true,
+      imageUrl: "https://site.example/img/a.jpg",
+    });
   });
 });
