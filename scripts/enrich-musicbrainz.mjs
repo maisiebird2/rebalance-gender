@@ -32,7 +32,9 @@ import { createClient } from '@supabase/supabase-js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { canonicalizeResidentAdvisorUrl } from './lib/ra-url.mjs'
+import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from '../src/lib/profile-links.js'
+import { cleanLinkUrl } from '../src/lib/platforms.js'
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from '../src/lib/classify-platform-url.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -168,64 +170,24 @@ const COLLAB_RELATION_TYPES = new Set([
 ])
 
 // ------------------------------------------------------------
-// URL-rel domain → platform key mapping
+// URL-rel classification.
 //
-// Keys must match rows in the `platforms` table.
-// Domains are matched after stripping a leading "www.".
-// Wikipedia subdomains (e.g. fr.wikipedia.org) are caught by a
-// suffix check rather than exhaustively listing every language.
+// The domain → platform key table lives in
+// src/lib/classify-platform-url.ts, shared with the web forms and every
+// other harvester, so a newly tracked platform is added in one place.
+// CLASSIFY_CONFIGS.musicbrainz carries this script's own deviations:
+// skip musicbrainz.org (self-reference) and wikidata.org (not a platform
+// we track). Twitter/X is skipped centrally by project policy.
 //
-// "free streaming" type rels are excluded entirely before this map
-// is consulted. Twitter/X is skipped (not in platforms; not wanted).
-// MusicBrainz itself is skipped (self-reference).
+// "free streaming" type rels are excluded entirely before this runs.
 // ------------------------------------------------------------
-const URL_DOMAIN_MAP = {
-  'soundcloud.com':       'soundcloud',
-  'instagram.com':        'instagram',
-  'ra.co':                'resident_advisor',
-  'residentadvisor.net':  'resident_advisor',
-  'bandcamp.com':         'bandcamp',
-  'beatport.com':         'beatport',
-  'qobuz.com':            'qobuz',
-  'discogs.com':          'discogs',
-  'open.spotify.com':     'spotify',
-  'spotify.com':          'spotify',
-  'tidal.com':            'tidal',
-  'listen.tidal.com':     'tidal',
-  'songkick.com':         'songkick',
-  'music.apple.com':      'apple_music',
-  'itunes.apple.com':     'apple_music',
-  'last.fm':              'lastfm',
-  'lastfm.com':           'lastfm',
-  'linktr.ee':            'linktree',
-  'mixcloud.com':         'other',
-  'youtube.com':          'other',
-  'facebook.com':         'other',
-  'fb.com':               'other',
-  'tiktok.com':           'other',
-}
-
-// Domains to skip entirely (not wanted in any form).
-const SKIP_DOMAINS = new Set([
-  'twitter.com', 'x.com', 't.co',   // Elon Musk products — excluded by policy
-  'musicbrainz.org',                 // self-reference
-  'wikidata.org',                    // not a platform we track
-])
 
 /**
  * Returns the platform key for a URL, 'other' for unmapped-but-valid
  * domains, or null for domains we want to skip entirely.
  */
 function platformFromUrl(urlStr) {
-  let hostname
-  try {
-    hostname = new URL(urlStr).hostname.toLowerCase().replace(/^www\./, '')
-  } catch {
-    return null
-  }
-  if (SKIP_DOMAINS.has(hostname)) return null
-  if (hostname.endsWith('.wikipedia.org')) return 'wikipedia'
-  return URL_DOMAIN_MAP[hostname] ?? 'other'
+  return classifyPlatformUrl(urlStr, CLASSIFY_CONFIGS.musicbrainz)
 }
 
 // ------------------------------------------------------------
@@ -440,7 +402,10 @@ async function processArtist(artist, mbid, mbidToArtistId) {
     linkRows.push({
       artist_id: artist.id,
       platform,
-      url: resource,
+      // Canonicalize exactly as the submit/edit forms do — strips tracking
+      // params and trims sub-pages (YouTube /watch + /@handle tabs, Beatport
+      // /artist/<slug>/<id>/tracks, …) via the shared cleaner.
+      url: resolveProfileLinkUrl(platform, resource, cleanLinkUrl),
       handle: null,
       not_found: false,
     })

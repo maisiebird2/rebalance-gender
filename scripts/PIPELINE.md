@@ -649,8 +649,8 @@ known tracking/share params (Spotify's `si`/`nd`/`context`,
 param doesn't falsely flag against a clean live URL.
 
 ```bash
-node scripts/integrate-harvested-links.mjs
-node scripts/integrate-harvested-links.mjs --approved   # directory artists only
+npm run integrate-harvested-links
+npm run integrate-harvested-links -- --approved   # directory artists only
 ```
 
 `--approved` restricts promotion/flagging to directory artists (`directory_status = 'approved'`, excluding deleted).
@@ -1385,7 +1385,7 @@ npm run sync-soundcloud         # 2a (bio + image + staged links)
 npm run sync-discogs            # 2c
 npm run sync-linktree           # 2c (also bio + image)
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
-node scripts/integrate-harvested-links.mjs   # 2d
+npm run integrate-harvested-links   # 2d
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios

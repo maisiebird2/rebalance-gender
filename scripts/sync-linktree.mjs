@@ -106,7 +106,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -222,49 +223,14 @@ export function isLinktreeUrl(rawUrl) {
 }
 
 // ------------------------------------------------------------
-// Link classification. Same per-script-copy DOMAIN_PLATFORM_MAP
-// convention as sync-discogs.mjs / sync-hoer.mjs — but with the
-// Linktree-specific fallback: unrecognized domains are classified by
+// Link classification. The domain -> platform key table is shared with
+// the web forms and every other harvester (see
+// src/lib/classify-platform-url.ts); CLASSIFY_CONFIGS.linktree carries
+// this script's deviations — linktr.ee self-links are skipped, mixcloud
+// is retained under its own key, and unrecognized domains fall back to
 // their BARE DOMAIN (not "other"), so 2d retains-but-doesn't-promote
-// them. See the module header. linktr.ee self-links and Twitter/X
-// (project policy) are skipped.
+// them. See the module header.
 // ------------------------------------------------------------
-const DOMAIN_PLATFORM_MAP = [
-  [/(^|\.)soundcloud\.com$/i, "soundcloud"],
-  [/(^|\.)instagram\.com$/i, "instagram"],
-  [/(^|\.)open\.spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.link$/i, "spotify"],
-  [/(^|\.)youtube\.com$/i, "youtube"],
-  [/(^|\.)youtu\.be$/i, "youtube"],
-  [/(^|\.)music\.youtube\.com$/i, "youtube"],
-  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
-  [/(^|\.)ra\.co$/i, "resident_advisor"],
-  [/(^|\.)bandcamp\.com$/i, "bandcamp"],
-  [/(^|\.)facebook\.com$/i, "facebook"],
-  [/(^|\.)fb\.me$/i, "facebook"],
-  [/(^|\.)tiktok\.com$/i, "tiktok"],
-  [/(^|\.)beatport\.com$/i, "beatport"],
-  [/(^|\.)discogs\.com$/i, "discogs"],
-  [/(^|\.)qobuz\.com$/i, "qobuz"],
-  [/(^|\.)tidal\.com$/i, "tidal"],
-  [/(^|\.)songkick\.com$/i, "songkick"],
-  [/(^|\.)music\.apple\.com$/i, "apple_music"],
-  [/(^|\.)itunes\.apple\.com$/i, "apple_music"],
-  [/(^|\.)last\.fm$/i, "lastfm"],
-  [/(^|\.)lastfm\.[a-z]+$/i, "lastfm"],
-  [/(^|\.)musicbrainz\.org$/i, "musicbrainz"],
-  // mixcloud is a real music platform but not (yet) a tracked platform
-  // key — classify it explicitly so it stays staged under 'mixcloud'
-  // (retained, not promoted) rather than the promotable "other".
-  [/(^|\.)mixcloud\.com$/i, "mixcloud"],
-];
-
-const SKIP_HOST_REGEXES = [
-  /(^|\.)(twitter\.com|x\.com|t\.co)$/i, // excluded per project policy
-  /(^|\.)linktr\.ee$/i, // self-links (Linktree's own footer/marketing)
-  /(^|\.)linktree\.com$/i,
-];
 
 function normalizeUrl(url) {
   const u = new URL(url.toString());
@@ -277,35 +243,15 @@ function normalizeUrl(url) {
   return u.toString();
 }
 
-// Bare registrable-ish domain used as the parsed_platform for
-// unrecognized links: the hostname minus a leading "www." (no public-
-// suffix logic — this is a human-readable retention label, not a
-// canonical key). e.g. "www.dice.fm" -> "dice.fm".
-function bareDomain(host) {
-  return host.toLowerCase().replace(/^www\./, "");
-}
-
 export function classifyLinktreeUrl(rawUrl) {
   // Rewrite pre-rebrand residentadvisor.net links onto ra.co up front, so
   // both the platform match and the stored parsed_url use the current host.
   rawUrl = canonicalizeResidentAdvisorUrl(rawUrl);
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null; // unparseable — skip
-  }
-  if (!/^https?:$/.test(url.protocol)) return null; // mailto:, tel:, etc.
-  const host = url.hostname.toLowerCase();
-  for (const re of SKIP_HOST_REGEXES) if (re.test(host)) return null;
-  if (host.endsWith(".wikipedia.org") || host === "wikipedia.org") {
-    return { platform: "wikipedia", parsedUrl: normalizeUrl(url) };
-  }
-  for (const [re, platform] of DOMAIN_PLATFORM_MAP) {
-    if (re.test(host)) return { platform, parsedUrl: normalizeUrl(url) };
-  }
-  // Unrecognized: retain under the bare domain, never "other".
-  return { platform: bareDomain(host), parsedUrl: normalizeUrl(url) };
+  // Shared domain table + this script's deviations; returns null for
+  // unparseable/non-http(s)/skip-listed hosts.
+  const platform = classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.linktree);
+  if (!platform) return null;
+  return { platform, parsedUrl: normalizeUrl(new URL(rawUrl)) };
 }
 
 // ------------------------------------------------------------

@@ -8,8 +8,8 @@
 // canonical URL.
 //
 // Only implemented for platforms where a bare handle is enough to
-// build a working URL on its own: soundcloud, instagram, bandcamp,
-// resident_advisor. Platforms like beatport/qobuz/discogs embed a
+// build a working URL on its own: soundcloud, instagram, tiktok,
+// bandcamp, resident_advisor. Platforms like beatport/qobuz/discogs embed a
 // numeric ID in their URLs that can't be guessed from a handle, so
 // those pass through unchanged here — cleanLinkUrl() in
 // lib/platforms.ts still trims/strips tracking params for them, same
@@ -121,6 +121,27 @@ const CONFIG: Record<string, PlatformLinkConfig> = {
       const host = u.hostname.toLowerCase().replace(/^www\./, "");
       const sub = host.replace(/\.bandcamp\.com$/, "");
       return sub !== host ? sub : null;
+    },
+  },
+  tiktok: {
+    domainHints: ["tiktok.com"],
+    // 2-24 chars, letters/digits/periods/underscores, no "..". Same shape as
+    // Instagram (advisory only — a few real handles fall outside it).
+    handlePattern: /^(?!.*\.\.)[a-zA-Z0-9._]{2,24}$/,
+    // No trailing slash — resolveProfileLinkUrl strips them uniformly across
+    // every platform so stored URLs are consistent.
+    buildUrl: (h) => `https://www.tiktok.com/@${h}`,
+    // tiktok.com/@<handle> — the handle is the FIRST path segment and always
+    // carries an "@" prefix. Requiring the "@" is also the guard that keeps
+    // opaque share links (vm.tiktok.com/ZMxxxx, vt.tiktok.com/…, whose path is
+    // a random id with no "@") from being turned into a bogus @<id> profile:
+    // those return null here and pass through untouched, the same way an
+    // unresolved on.soundcloud.com share link does. A video/post sub-path
+    // (/@handle/video/<id>) still resolves to the profile via the first segment.
+    extractHandle: (u) => {
+      const seg = firstPathSegment(u.pathname);
+      if (!seg || !seg.startsWith("@")) return null;
+      return seg.slice(1) || null;
     },
   },
   resident_advisor: {
@@ -304,6 +325,13 @@ export function deriveHandle(platform: string, url: string): string | null {
         // title / post id, not the handle.
         return firstPathSegmentOfUrl(url);
 
+      case "tiktok": {
+        // https://www.tiktok.com/@handle[/video/<id>] — first segment, minus
+        // the leading "@" so the stored handle matches instagram's bare form.
+        const seg = firstPathSegmentOfUrl(url);
+        return seg?.startsWith("@") ? seg.slice(1) || null : seg;
+      }
+
       case "discogs":
         // https://www.discogs.com/artist/Handle  (last segment — the handle
         // sits AFTER the /artist/ prefix, unlike soundcloud/instagram)
@@ -372,7 +400,21 @@ export function normalizeProfileLink(platformKey: string, rawInput: string): Nor
   };
 
   const config = CONFIG[platformKey];
-  if (!config) return passthrough;
+  if (!config) {
+    // Non-templated platform (linktree, beatport, homepage, …). Apply the same
+    // generic cleaner the save path uses (resolveProfileLinkUrl → cleanGenericUrl)
+    // so the on-blur preview and the stored value agree. Without this the blur
+    // only unwrapped the redirect shim and left the ?utm…/?fbclid… tracking tail
+    // on, which the server then silently stripped on save — a confusing two-step
+    // transform where the field showed one URL and stored another.
+    const cleaned = cleanGenericUrl(platformKey, unwrapped);
+    return {
+      url: cleaned,
+      handle: null,
+      wasTransformed: cleaned !== trimmed,
+      warning: null,
+    };
+  }
 
   const withoutAt = unwrapped.replace(/^@/, "");
 
@@ -465,24 +507,121 @@ const GENERIC_SEARCH_PATH_PREFIXES: Partial<Record<string, string>> = {
   venmo: "/code",
 };
 
+// Path prefixes (per non-templated platform) where the query carries the
+// link's meaning, but only SOME params are content and the rest is tracking.
+// Unlike GENERIC_SEARCH_PATH_PREFIXES — which keeps the whole query — these keep
+// only the allowlisted params and drop everything else. YouTube /watch is the
+// motivating case: ?v=<id> identifies the video and ?t=<seconds> an optional
+// start time, while ?si=…, ?pp=…, ?feature=…, ?ab_channel=… etc. are share/
+// tracking cruft. (Prefix-matched, so it also covers m./music.youtube.com,
+// which use the same /watch?v= path.)
+const GENERIC_PARAM_ALLOWLISTS: Partial<
+  Record<string, ReadonlyArray<{ prefix: string; params: readonly string[] }>>
+> = {
+  youtube: [{ prefix: "/watch", params: ["v", "t"] }],
+};
+
+// Platforms whose canonical URL ends at a numeric id segment (…/<slug>/<id>),
+// where anything after the id is a sub-page to drop. Beatport is the case:
+// /artist/<slug>/<id> identifies the artist (and /label/…, /release/… etc. all
+// share the shape), while a trailing /tracks, /charts, … is just a tab on that
+// page. The id is required — the slug alone can't rebuild the URL, which is why
+// Beatport isn't a templated CONFIG platform. The truncation keeps the whole
+// path up to and including the first all-numeric segment.
+const GENERIC_TRUNCATE_AFTER_NUMERIC_ID: ReadonlySet<string> = new Set(["beatport"]);
+
+// Profile paths whose identity is a fixed number of leading segments, with
+// anything after them being a tab to drop. YouTube channels are the case: the
+// channel is /@handle, /channel/<id>, /c/<name> or /user/<name>, and a trailing
+// /videos, /about, /playlists, /streams, /shorts, /featured, … is just a tab on
+// that channel. Matched on the FIRST segment, so /watch and /results (handled
+// by the rules above) can never collide with these.
+const GENERIC_PROFILE_PATH_RULES: Partial<
+  Record<string, ReadonlyArray<{ first: RegExp; keep: number }>>
+> = {
+  youtube: [
+    { first: /^@./, keep: 1 }, // /@handle/videos -> /@handle
+    { first: /^(channel|c|user)$/i, keep: 2 }, // /channel/<id>/videos -> /channel/<id>
+  ],
+};
+
+/** Rebuilds "<scheme?><host>" from a parsed URL, preserving whether the original
+ *  input carried an http(s) scheme so a scheme-less paste stays scheme-less,
+ *  matching cleanGenericUrl's default branch. */
+function urlHead(original: string, parsed: URL): string {
+  return /^https?:\/\//i.test(original) ? `${parsed.protocol}//${parsed.host}` : parsed.host;
+}
+
 /**
  * Generic cleaner for platforms without a handle template: trims, then strips
  * everything from "?" onward (tracking params, share tokens), except on the
- * platform's search/content path where the whole query is kept intact. This is
- * the default fallback for resolveProfileLinkUrl's non-templated branch and the
- * single implementation behind lib/platforms.ts's cleanLinkUrl.
+ * platform's search/content path where the whole query is kept intact, or a
+ * param-allowlist path (YouTube /watch) where only the content params are kept.
+ * This is the default fallback for resolveProfileLinkUrl's non-templated branch
+ * and the single implementation behind lib/platforms.ts's cleanLinkUrl.
  */
 export function cleanGenericUrl(platform: string, url: string): string {
   const trimmed = url.trim();
-  const searchPrefix = GENERIC_SEARCH_PATH_PREFIXES[platform];
-  if (searchPrefix) {
-    try {
-      const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith(searchPrefix)) return trimmed;
-    } catch {
-      // malformed URL — fall through to default stripping
+
+  // Parse tolerantly: these links are frequently pasted without a scheme
+  // (e.g. "www.youtube.com/watch?v=…" lifted straight out of a bio). new URL()
+  // throws on a scheme-less string, so add one just for parsing — the returned
+  // value below preserves the input's original scheme form.
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    // not URL-shaped — fall through to the default query strip
+  }
+
+  if (parsed) {
+    // Search/content paths: the whole query IS the content (a search term,
+    // voucher code, …), so keep the input verbatim.
+    const searchPrefix = GENERIC_SEARCH_PATH_PREFIXES[platform];
+    if (searchPrefix && parsed.pathname.startsWith(searchPrefix)) return trimmed;
+
+    // Param-allowlist paths: keep only the content params, drop the rest.
+    const match = GENERIC_PARAM_ALLOWLISTS[platform]?.find((a) =>
+      parsed!.pathname.startsWith(a.prefix)
+    );
+    if (match) {
+      const kept = new URLSearchParams();
+      for (const key of match.params) {
+        const value = parsed.searchParams.get(key);
+        if (value !== null) kept.set(key, value);
+      }
+      const query = kept.toString();
+      // Rebuild from the input's own head (scheme + host + path) so a
+      // scheme-less paste stays scheme-less, matching the default branch.
+      const base = trimmed.split(/[?#]/)[0];
+      return query ? `${base}?${query}` : base;
+    }
+
+    // Numeric-id paths (Beatport /artist/<slug>/<id>/…): keep the path through
+    // the first all-numeric segment and drop the rest (a /tracks, /charts tab)
+    // plus any query. Only the head is rebuilt so a scheme-less paste stays
+    // scheme-less, matching the default branch.
+    if (GENERIC_TRUNCATE_AFTER_NUMERIC_ID.has(platform)) {
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const idIndex = segments.findIndex((s) => /^\d+$/.test(s));
+      if (idIndex !== -1 && idIndex < segments.length - 1) {
+        return `${urlHead(trimmed, parsed)}/${segments.slice(0, idIndex + 1).join("/")}`;
+      }
+    }
+
+    // Fixed-length profile paths (YouTube /@handle/videos, /channel/<id>/…):
+    // keep the identifying segments, drop the trailing tab and any query.
+    const pathRules = GENERIC_PROFILE_PATH_RULES[platform];
+    if (pathRules) {
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const rule = segments.length ? pathRules.find((r) => r.first.test(segments[0])) : undefined;
+      if (rule && segments.length > rule.keep) {
+        return `${urlHead(trimmed, parsed)}/${segments.slice(0, rule.keep).join("/")}`;
+      }
     }
   }
+
   return trimmed.split("?")[0];
 }
 
