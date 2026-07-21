@@ -137,6 +137,32 @@ export type OgImageResult =
   //                     recorded as a skip-on-retry failure.
   | { found: false; transient: boolean; detail: string };
 
+// Ceiling on how much of a page we'll buffer looking for a meta tag.
+// YouTube channel pages reach ~1.15MB with og:image at ~690KB.
+const MAX_HTML_BYTES = 1_500_000;
+// Longest plausible <meta> tag, used as the rescan window across chunks.
+const META_TAG_OVERLAP = 2_000;
+
+// Each matches a <meta> tag for one property in either attribute order
+// (property/name first, or content first). Kept separate rather than
+// alternated in one regex so og:image can win outright — we only need
+// one image per platform, so twitter:image is a fallback, never a race.
+const OG_IMAGE_RE =
+  /<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["'][^>]*>/i;
+const TWITTER_IMAGE_RE =
+  /<meta[^>]+(?:property|name)=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image["'][^>]*>/i;
+
+// Matches an og:image/twitter:image tag whose content is empty (SoundCloud
+// emits content="" for artists with no avatar). The backreference keeps the
+// quote characters matched, so content="' isn't read as an empty value.
+const EMPTY_IMAGE_META_RE =
+  /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=(["'])\1[^>]*>|<meta[^>]+content=(["'])\2[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*>/i;
+
+function matchImageUrl(html: string, re: RegExp): string | undefined {
+  const match = html.match(re);
+  return match?.[1] || match?.[2];
+}
+
 export async function fetchOgImage(url: string): Promise<OgImageResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -158,29 +184,46 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
       return { found: false, transient: res.status >= 500, detail: `HTTP ${res.status}` };
     }
 
-    // Only read the <head> — og:image is always there, and pages can be huge.
+    // Stream the page and stop the moment og:image turns up. Don't stop
+    // at </head>: YouTube emits its social meta tags inside <body>, ~50KB
+    // past the closing head tag and ~690KB into a >1MB document, so both
+    // a head-only read and a small size cap silently miss them.
     const reader = res.body?.getReader();
     let html = "";
+    let ogImageUrl: string | undefined;
     if (reader) {
       const decoder = new TextDecoder();
-      while (html.length < 200_000) {
+      // Rescan the tail of the previous chunk so a meta tag straddling a
+      // chunk boundary is still matched.
+      let scannedTo = 0;
+      while (html.length < MAX_HTML_BYTES) {
         const { done, value } = await reader.read();
         if (done) break;
         html += decoder.decode(value, { stream: true });
-        if (/<\/head>/i.test(html)) break;
+        ogImageUrl = matchImageUrl(html.slice(scannedTo), OG_IMAGE_RE);
+        if (ogImageUrl) break;
+        scannedTo = Math.max(0, html.length - META_TAG_OVERLAP);
       }
       reader.cancel().catch(() => {});
     } else {
       html = await res.text();
+      ogImageUrl = matchImageUrl(html, OG_IMAGE_RE);
     }
 
-    const metaRegex =
-      /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["'][^>]*>|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*>/i;
-
-    const match = html.match(metaRegex);
-    const imageUrl = match?.[1] || match?.[2];
+    // One image per platform is enough, so twitter:image is consulted
+    // only when the whole page yielded no og:image.
+    const imageUrl = ogImageUrl ?? matchImageUrl(html, TWITTER_IMAGE_RE);
     if (!imageUrl) {
-      return { found: false, transient: false, detail: "no og:image/twitter:image meta tag" };
+      // Both are stable failures, but they mean different things: an empty
+      // tag is the platform saying this artist has no photo, while no tag
+      // at all can mean the scrape itself broke (page shape changed, bot
+      // challenge served). Keep them distinct so the second stands out in
+      // logs instead of blending into the expected background of artists
+      // who genuinely have no picture.
+      const detail = EMPTY_IMAGE_META_RE.test(html)
+        ? "og:image tag present but empty (no photo set)"
+        : "no og:image/twitter:image meta tag";
+      return { found: false, transient: false, detail };
     }
 
     const resolved = new URL(imageUrl, url).toString();
