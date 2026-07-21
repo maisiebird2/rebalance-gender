@@ -76,6 +76,32 @@ between a website submission and enrichment.
 
 ---
 
+## Running the scripts: always `tsx`, never bare `node`
+
+Scripts in `scripts/` are `.mjs`, but they freely import TypeScript from
+`src/lib/` so that facts both the website and the pipeline depend on —
+platform URL parsing, the image-failure vocabulary, the placeholder
+registry — have exactly one definition. Plain `node` cannot load a `.ts`
+file, so it fails at the first such import with `ERR_MODULE_NOT_FOUND`.
+
+Consequences, all of which are easy to get wrong:
+
+- **npm scripts** for anything reaching `src/lib/` use `tsx scripts/…`,
+  not `node scripts/…`.
+- **Documented invocations** (including the usage comments in each
+  script's header) use `npx tsx scripts/…`.
+- **Spawned children** go through `scriptRuntime()` in
+  `scripts/lib/script-runtime.mjs`, which resolves `tsx` via node's own
+  module resolution so it also works from a git worktree. Both spawners
+  (`harvest-links-loop.mjs`, `orchestrate-platform-enrichment.mjs`) use
+  it for *every* child regardless of extension — a `.mjs` stage needs
+  `tsx` exactly as much as a `.ts` one, so the extension is not a usable
+  signal.
+
+The simplest rule: run everything in `scripts/` under `tsx`. It executes
+plain `.mjs` fine, so there is no case where `node` is required and `tsx`
+would not also work.
+
 ## Orchestration
 
 All of Phase 2 can be run end to end with a single command via
@@ -875,9 +901,9 @@ There's deliberately no "remove everything" mode — one of the two
 flags above is always required.
 
 ```bash
-node scripts/prune-artist-images.mjs --platform=bandcamp
-node scripts/prune-artist-images.mjs --non-directory
-DRY_RUN=1 node scripts/prune-artist-images.mjs --non-directory   # preview
+npx tsx scripts/prune-artist-images.mjs --platform=bandcamp
+npx tsx scripts/prune-artist-images.mjs --non-directory
+DRY_RUN=1 npx tsx scripts/prune-artist-images.mjs --non-directory   # preview
 ```
 
 ---

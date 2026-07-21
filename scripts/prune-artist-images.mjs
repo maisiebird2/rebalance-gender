@@ -50,10 +50,10 @@
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   node scripts/prune-artist-images.mjs --platform=bandcamp
-//   node scripts/prune-artist-images.mjs --non-directory
-//   node scripts/prune-artist-images.mjs --orphaned-links
-//   DRY_RUN=1 node scripts/prune-artist-images.mjs --orphaned-links   # preview, no deletes
+//   npx tsx scripts/prune-artist-images.mjs --platform=bandcamp
+//   npx tsx scripts/prune-artist-images.mjs --non-directory
+//   npx tsx scripts/prune-artist-images.mjs --orphaned-links
+//   DRY_RUN=1 npx tsx scripts/prune-artist-images.mjs --orphaned-links   # preview, no deletes
 //
 // Requires .env.local with NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY.
 // ============================================================
@@ -65,7 +65,7 @@ import { fileURLToPath } from "node:url";
 import {
   imageFailureService,
   LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
-} from "../src/lib/images/failures.mjs";
+} from "../src/lib/images/failures.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -85,9 +85,9 @@ if (modeCount !== 1) {
   console.error(
     "Specify exactly one of --platform=<platform>, --non-directory, or --orphaned-links.\n" +
       "Examples:\n" +
-      "  node scripts/prune-artist-images.mjs --platform=bandcamp\n" +
-      "  node scripts/prune-artist-images.mjs --non-directory\n" +
-      "  node scripts/prune-artist-images.mjs --orphaned-links"
+      "  npx tsx scripts/prune-artist-images.mjs --platform=bandcamp\n" +
+      "  npx tsx scripts/prune-artist-images.mjs --non-directory\n" +
+      "  npx tsx scripts/prune-artist-images.mjs --orphaned-links"
   );
   process.exit(1);
 }

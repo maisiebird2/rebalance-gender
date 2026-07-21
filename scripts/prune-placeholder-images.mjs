@@ -35,8 +35,8 @@
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   node scripts/prune-placeholder-images.mjs
-//   DRY_RUN=1 node scripts/prune-placeholder-images.mjs   # preview, no writes
+//   npx tsx scripts/prune-placeholder-images.mjs
+//   DRY_RUN=1 npx tsx scripts/prune-placeholder-images.mjs   # preview, no writes
 //
 // Requires .env.local with NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY.
 // ============================================================
@@ -46,8 +46,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDefaultAvatarUrl } from "./lib/soundcloud.mjs";
-import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.mjs";
-import { isPlaceholderImageUrl } from "../src/lib/images/placeholders.mjs";
+import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.js";
+import { isPlaceholderImageUrl } from "../src/lib/images/placeholders.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -93,7 +93,7 @@ const SUPABASE_PAGE_SIZE = 1000;
 const IN_CHUNK = 100;
 
 // Placeholder patterns come from the shared registry
-// (src/lib/images/placeholders.mjs) rather than a local copy kept in
+// (src/lib/images/placeholders.ts) rather than a local copy kept in
 // sync by hand — see that file.
 
 // Classify a stored image row as a placeholder, or return null. The

@@ -11,7 +11,7 @@ import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 import {
   imageFailureService,
   LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
-} from "@/lib/images/failures.mjs";
+} from "@/lib/images/failures";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -318,7 +318,7 @@ export async function saveArtist(
 
     // 3. Lingering image-harvest failures for those platforms, so a
     //    re-added link can be retried cleanly. Acquisition failures share
-    //    one key per platform (src/lib/images/failures.mjs); the legacy
+    //    one key per platform (src/lib/images/failures.ts); the legacy
     //    prefixes cover rows written before that, and image-store: is the
     //    separate re-hosting namespace owned by store-images.mjs.
     const removedServices = removedPlatforms.flatMap((p) => [

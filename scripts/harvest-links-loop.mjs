@@ -44,6 +44,7 @@
 // ============================================================
 
 import { spawnSync } from "node:child_process";
+import { scriptRuntime } from "./lib/script-runtime.mjs";
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
@@ -197,7 +198,10 @@ async function tableCount(table) {
 function runStage(script, { tolerate = [] } = {}) {
   const label = [script, ...STAGE_ARGS].join(" ");
   console.log(`\n──── running ${label} ${"─".repeat(Math.max(0, 40 - label.length))}`);
-  const result = spawnSync("node", [path.join(__dirname, script), ...STAGE_ARGS], {
+  // Under tsx, not node: every harvester imports TypeScript from
+  // src/lib, which plain node cannot load. See scripts/lib/script-runtime.mjs.
+  const { command, prefixArgs } = scriptRuntime();
+  const result = spawnSync(command, [...prefixArgs, path.join(__dirname, script), ...STAGE_ARGS], {
     stdio: "inherit",
     env: process.env, // DRY_RUN propagates to children
   });
