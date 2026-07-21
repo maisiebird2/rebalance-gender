@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
-import { enrichArtistImages, PLATFORM_PRIORITY } from "@/lib/enrich-images";
+import { enrichArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/enrich-images";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -192,8 +192,10 @@ export async function saveArtist(
   // ── 7. Replace links ──────────────────────────────────────────
 
   // Snapshot current image-capable URLs before we replace links, so we can
-  // detect whether any new ones are being added (to decide if enrichment is needed).
-  const imagePlatforms = new Set<string>(PLATFORM_PRIORITY);
+  // detect whether any new ones are being added (to decide if enrichment is
+  // needed). Scoped to the platforms this route can actually enrich, so a
+  // changed soundcloud/bandcamp link doesn't schedule a no-op pass.
+  const imagePlatforms = new Set<string>(SCRAPE_ONLY_PLATFORMS);
   const { data: existingImageLinks } = await admin
     .from("artist_links")
     .select("url")
@@ -358,8 +360,12 @@ export async function saveArtist(
   // link — a platform whose image is up to date is a no-op, but one
   // whose link URL just changed is re-fetched (hasNewImageUrls, which
   // gates this, is exactly "a submitted link URL differs from before").
+  // Restricted to SCRAPE_ONLY_PLATFORMS: soundcloud/bandcamp belong to
+  // their own harvesters, which run from the orchestrator.
   if (directoryStatus === "approved" && hasNewImageUrls) {
-    after(() => enrichArtistImages(artistId, admin));
+    after(() =>
+      enrichArtistImages(artistId, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS })
+    );
   }
 
   // ── 10. Revalidate caches and redirect ─────────────────────────

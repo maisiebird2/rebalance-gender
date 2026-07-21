@@ -4,10 +4,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  DEDICATED_HARVEST_PLATFORMS,
   enrichArtistImages,
   fetchOgImage,
   isPlaceholderImageUrl,
   PLATFORM_PRIORITY,
+  SCRAPE_ONLY_PLATFORMS,
 } from "./enrich-images";
 
 const LASTFM_PLACEHOLDER =
@@ -383,6 +385,22 @@ describe("isPlaceholderImageUrl", () => {
     expect(
       isPlaceholderImageUrl("https://lastfm.freetls.fastly.net/i/u/ar0/abc123realhash.jpg")
     ).toBe(false);
+  });
+});
+
+describe("SCRAPE_ONLY_PLATFORMS", () => {
+  it("excludes the platforms owned by a dedicated harvester", () => {
+    expect(SCRAPE_ONLY_PLATFORMS).not.toContain("soundcloud");
+    expect(SCRAPE_ONLY_PLATFORMS).not.toContain("bandcamp");
+  });
+
+  it("covers every other image-capable platform", () => {
+    // The complement must stay exhaustive: anything dropped from here
+    // silently loses its only source of images.
+    const expected = PLATFORM_PRIORITY.filter((p) => !DEDICATED_HARVEST_PLATFORMS.has(p));
+    expect([...SCRAPE_ONLY_PLATFORMS].sort()).toEqual([...expected].sort());
+    expect(SCRAPE_ONLY_PLATFORMS).toContain("spotify");
+    expect(SCRAPE_ONLY_PLATFORMS).toContain("youtube");
   });
 });
 

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { enrichArtistImages } from "@/lib/enrich-images";
+import { enrichArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/enrich-images";
 
 async function requireAuth() {
   const supabase = await createClient();
@@ -30,8 +30,10 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
   // Run image enrichment in the background after the response is sent.
   // This is the moment images become allowed for this artist at all
   // (enrichArtistImages only ever acts on directory_status = 'approved'),
-  // so check every platform link they have.
-  after(() => enrichArtistImages(id, admin));
+  // so check every scrape-owned platform link they have. soundcloud and
+  // bandcamp are deliberately excluded — their own harvesters pick this
+  // artist up on the next orchestrator run.
+  after(() => enrichArtistImages(id, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS }));
 }
 
 export async function quickReject(id: string): Promise<{ error: string } | void> {

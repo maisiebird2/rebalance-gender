@@ -34,7 +34,11 @@ vi.mock("next/server", () => ({
   // by its own tests.
   after: vi.fn(),
 }));
-vi.mock("@/lib/enrich-images", () => ({
+// Stub only the network-touching function; keep the real platform
+// constants so assertions about which platforms get enriched test the
+// actual lists rather than a fixture that can drift from them.
+vi.mock("@/lib/enrich-images", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/enrich-images")>()),
   enrichArtistImages: vi.fn(),
 }));
 
@@ -42,6 +46,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { enrichArtistImages } from "@/lib/enrich-images";
 import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -255,6 +260,27 @@ describe("quickApprove", () => {
     // Approval is the point images become allowed for this artist, so
     // background enrichment must be scheduled.
     expect(after).toHaveBeenCalledOnce();
+  });
+
+  it("schedules enrichment only for platforms without a dedicated harvester", async () => {
+    mockAuthedUser();
+    mockAdminFrom(chain({ error: null }));
+
+    await quickApprove("artist-1");
+
+    // `after` is stubbed to a no-op, so run the callback it was handed to
+    // see what the scheduled enrichment would actually do.
+    // `after` also accepts a bare promise, so narrow to the callback form.
+    const scheduled = vi.mocked(after).mock.calls[0][0] as () => Promise<unknown>;
+    await scheduled();
+
+    expect(enrichArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
+      allowedPlatforms: expect.not.arrayContaining(["soundcloud", "bandcamp"]),
+    });
+    // …and it still covers the platforms this route does own.
+    expect(enrichArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
+      allowedPlatforms: expect.arrayContaining(["spotify", "youtube", "wikipedia"]),
+    });
   });
 
   it("surfaces a database error instead of silently failing", async () => {

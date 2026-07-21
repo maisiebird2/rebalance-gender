@@ -103,12 +103,28 @@ export const PLATFORM_PRIORITY = [
   "youtube",
 ] as const;
 
-// Platforms with their own dedicated image harvester. Never fetched
-// or overwritten by enrichArtistImages(), even with --force.
+// Platforms with their own dedicated image harvester. An image already
+// stored for one of these is never overwritten by enrichArtistImages(),
+// even with --force.
 export const DEDICATED_HARVEST_PLATFORMS: ReadonlySet<string> = new Set([
   "soundcloud",
   "bandcamp",
 ]);
+
+// Platforms with no dedicated harvester, so enrichArtistImages() is the
+// only thing that ever supplies their images.
+//
+// The web app's after() hooks are scoped to these. soundcloud/bandcamp
+// images belong to sync-soundcloud/sync-bandcamp and are left to the
+// orchestrator: scraping them from a form handler would race that
+// pipeline, because a just-approved artist has no images yet, so the
+// scrape always wins the row and is then overwritten by the dedicated
+// harvester's result on the next run. Those harvesters already re-detect
+// such artists from DB state, so nothing needs to trigger them here.
+// See scripts/IMAGE-HARVESTING-PLAN.md (Phase 3).
+export const SCRAPE_ONLY_PLATFORMS: readonly string[] = PLATFORM_PRIORITY.filter(
+  (p) => !DEDICATED_HARVEST_PLATFORMS.has(p)
+);
 
 // Some platforms serve a generic placeholder in place of a 404 when an
 // artist has no real photo — an og:image scrape happily returns it, so
