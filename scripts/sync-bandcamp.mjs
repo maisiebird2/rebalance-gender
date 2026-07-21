@@ -161,7 +161,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -396,9 +397,8 @@ const CREDITS_REGEX = /<div class="tralbum-credits"[^>]*>([\s\S]*?)<\/div>/;
 
 // ------------------------------------------------------------
 // Minimal HTML-entity decode — kept as a small local helper rather
-// than a shared import (same per-script-copy convention
-// sync-soundcloud.mjs's DOMAIN_PLATFORM_MAP comment documents for
-// small helpers like this one).
+// than a shared import; it is presentation cleanup for scraped HTML,
+// not link logic.
 // ------------------------------------------------------------
 function decodeHtmlEntities(text) {
   if (typeof text !== "string") return text;
@@ -484,45 +484,10 @@ function extractBioSidebar(html) {
 // discogs.mjs — Bandcamp itself (self-links) is excluded instead of
 // SoundCloud.
 // ------------------------------------------------------------
-const DOMAIN_PLATFORM_MAP = [
-  [/(^|\.)instagram\.com$/i, "instagram"],
-  [/(^|\.)open\.spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.link$/i, "spotify"],
-  [/(^|\.)youtube\.com$/i, "youtube"],
-  [/(^|\.)youtu\.be$/i, "youtube"],
-  [/(^|\.)music\.youtube\.com$/i, "youtube"],
-  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
-  [/(^|\.)ra\.co$/i, "resident_advisor"],
-  [/(^|\.)soundcloud\.com$/i, "soundcloud"],
-  [/(^|\.)facebook\.com$/i, "facebook"],
-  [/(^|\.)fb\.me$/i, "facebook"],
-  [/(^|\.)tiktok\.com$/i, "tiktok"],
-  [/(^|\.)linktr\.ee$/i, "linktree"],
-  [/(^|\.)beatport\.com$/i, "beatport"],
-  [/(^|\.)discogs\.com$/i, "discogs"],
-];
 
-const TWITTER_HOST_REGEX = /(^|\.)(twitter\.com|x\.com)$/i;
-const BANDCAMP_HOST_REGEX = /(^|\.)bandcamp\.com$/i;
 
 function classify(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  const host = url.hostname.toLowerCase();
-
-  if (TWITTER_HOST_REGEX.test(host)) return null; // excluded per project policy
-  if (BANDCAMP_HOST_REGEX.test(host)) return null; // self-link, not useful
-
-  for (const [hostRegex, platform] of DOMAIN_PLATFORM_MAP) {
-    if (hostRegex.test(host)) return platform;
-  }
-
-  return "other";
+  return classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.bandcamp);
 }
 
 function normalizeUrl(rawUrl, platform) {

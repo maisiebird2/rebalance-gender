@@ -112,7 +112,9 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from "../src/lib/profile-links.js";
+import { cleanLinkUrl } from "../src/lib/platforms.js";
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -455,41 +457,10 @@ async function resolveShortLink(rawUrl) {
 // same as every other per-script convention in this folder, rather
 // than a shared import).
 // ------------------------------------------------------------
-const DOMAIN_PLATFORM_MAP = [
-  [/(^|\.)instagram\.com$/i, "instagram"],
-  [/(^|\.)open\.spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.link$/i, "spotify"],
-  [/(^|\.)youtube\.com$/i, "youtube"],
-  [/(^|\.)youtu\.be$/i, "youtube"],
-  [/(^|\.)music\.youtube\.com$/i, "youtube"],
-  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
-  [/(^|\.)ra\.co$/i, "resident_advisor"],
-  [/(^|\.)bandcamp\.com$/i, "bandcamp"],
-  [/(^|\.)facebook\.com$/i, "facebook"],
-  [/(^|\.)fb\.me$/i, "facebook"],
-  [/(^|\.)tiktok\.com$/i, "tiktok"],
-  [/(^|\.)linktr\.ee$/i, "linktree"],
-  [/(^|\.)beatport\.com$/i, "beatport"],
-  [/(^|\.)discogs\.com$/i, "discogs"],
-];
 
-const TWITTER_HOST_REGEX = /(^|\.)(twitter\.com|x\.com)$/i;
-const SOUNDCLOUD_HOST_REGEX = /(^|\.)soundcloud\.com$/i;
 
 function classifyResolved(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-  const host = url.hostname.toLowerCase();
-  if (TWITTER_HOST_REGEX.test(host)) return null; // excluded per project policy
-  if (SOUNDCLOUD_HOST_REGEX.test(host)) return null; // self-link, not useful
-  for (const [hostRegex, platform] of DOMAIN_PLATFORM_MAP) {
-    if (hostRegex.test(host)) return platform;
-  }
-  return "other";
+  return classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.harvested_links);
 }
 
 // ------------------------------------------------------------
@@ -754,21 +725,36 @@ async function main() {
       continue;
     }
 
+    // Canonicalize the harvested candidate exactly as the submit/edit forms
+    // do — pre-rebrand RA host rewrite, then the shared platform cleaner
+    // (tracking params, YouTube /watch + /@handle tabs, Beatport
+    // /artist/<slug>/<id>/tracks, …). Computed once and used for BOTH the
+    // insert and the mismatch comparison below: cleaning only at insert
+    // would make a freshly inserted row instantly "mismatch" the very
+    // candidate it came from.
+    const candidateUrl = resolveProfileLinkUrl(
+      platform,
+      canonicalizeResidentAdvisorUrl(winner.parsed_url),
+      cleanLinkUrl
+    );
+
     let canonicalUrl = existing?.url;
 
     if (canonicalUrl) {
       pairsAlreadyLinked++;
     } else {
       // No existing artist_links row for this pair — promote the
-      // surviving candidate. Rewrite any pre-rebrand residentadvisor.net
-      // URL onto ra.co on the way into artist_links.
-      canonicalUrl = canonicalizeResidentAdvisorUrl(winner.parsed_url);
+      // surviving candidate.
+      canonicalUrl = candidateUrl;
       pairsNewlyLinked++;
       toInsert.push({ artist_id: artistId, platform, handle: null, url: canonicalUrl });
       if (DEBUG) console.log(`+ ${key}: inserting ${canonicalUrl} (from harvested row #${winner.id})`);
     }
 
-    const matches = urlsMatch(winner.parsed_url, canonicalUrl);
+    // Compare the CLEANED candidate against the live URL, so a link that
+    // differs only by tracking cruft or a sub-page tab no longer lands in
+    // the human mismatch-review queue as a false positive.
+    const matches = urlsMatch(candidateUrl, canonicalUrl);
     const desired = matches ? null : canonicalUrl;
     if (desired !== (winner.artist_links_url ?? null)) {
       if (matches) {
