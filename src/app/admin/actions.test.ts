@@ -25,11 +25,23 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
+}));
+vi.mock("next/server", () => ({
+  // Real `after()` defers work until the response is sent and throws if
+  // called outside a request scope. Stub it as a no-op so the callback
+  // never runs here — the background enrichment it schedules is covered
+  // by its own tests.
+  after: vi.fn(),
+}));
+vi.mock("@/lib/enrich-images", () => ({
+  enrichArtistImages: vi.fn(),
 }));
 
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -121,7 +133,11 @@ describe("addGenre", () => {
     const result = await addGenre(formData({ name: "  deep house  " }));
 
     expect(result).toEqual({ success: true });
-    expect(insertChain.insert).toHaveBeenCalledWith({ name: "deep house" });
+    // A genre the admin adds by hand is approved on the spot.
+    expect(insertChain.insert).toHaveBeenCalledWith({
+      name: "deep house",
+      status: "approved",
+    });
   });
 
   it("surfaces a database error instead of silently failing", async () => {
@@ -236,6 +252,9 @@ describe("quickApprove", () => {
     expect(result).toBeUndefined();
     expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "approved" });
     expect(updateChain.eq).toHaveBeenCalledWith("id", "artist-1");
+    // Approval is the point images become allowed for this artist, so
+    // background enrichment must be scheduled.
+    expect(after).toHaveBeenCalledOnce();
   });
 
   it("surfaces a database error instead of silently failing", async () => {
