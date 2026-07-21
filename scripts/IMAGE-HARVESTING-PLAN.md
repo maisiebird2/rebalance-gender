@@ -5,9 +5,16 @@ legible to whoever runs the scripts, and move the decisions all the owners share
 into a single module. Coverage must not regress: the current 3,621 stored images
 across 12 platforms all keep a path.
 
-Status: **plan only, nothing implemented.** Two verification checks are
-deliberately deferred (see "Deferred checks"). Any implementation goes on a new
-branch off `main` (project rule).
+Status: **all five phases implemented.** Phase 3 landed in PR #32; Phases 0, 1,
+2 and 4 followed. Two verification checks are still deliberately deferred (see
+"Deferred checks").
+
+One deviation from the plan as written: Phase 2 said to delete
+`DEDICATED_HARVEST_PLATFORMS` entirely. It was renamed
+`OWNED_BY_DEDICATED_HARVESTER` and kept instead — the refined rule (scrape an
+owned platform only after its owner fails transiently) still needs to know which
+platforms have an owner. The original "delete it" reasoning assumed the scrape
+would never touch those platforms at all.
 
 ---
 
@@ -112,10 +119,11 @@ and after and diffing the intended writes.
 ## Phase 2 — rename and narrow `scrape-images`
 
 - `enrich-images` → `scrape-images`, in both `src/lib/` and `scripts/`
-- **Delete `DEDICATED_HARVEST_PLATFORMS` entirely.** With ownership explicit
-  there is no carve-out set, no `isDedicated` branch, and no comment that can
-  drift from its implementation. The current `hadImage && isDedicated` guard —
-  the source of the original bug — goes away rather than being corrected.
+- **Renamed `DEDICATED_HARVEST_PLATFORMS` to `OWNED_BY_DEDICATED_HARVESTER`**
+  (the plan originally said delete it; see the deviation note above). The
+  `hadImage && isDedicated` guard — the source of the original bug — is gone,
+  replaced by a rule that reads the owner's recorded failure instead of
+  inferring ownership from whether an image happens to exist.
 - New gate, in order: skip if an image exists; skip if a **definitive** no-image
   result exists from any source; for the four dedicated platforms, additionally
   require a recorded **transient** failure before scraping.

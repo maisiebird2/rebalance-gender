@@ -14,7 +14,7 @@
 //   --non-directory          Every image belonging to an artist whose
 //                            directory_status is NOT 'approved' (or
 //                            who is soft-deleted). Every writer
-//                            (enrich-images.ts, sync-soundcloud.mjs,
+//                            (scrape-images.ts, sync-soundcloud.mjs,
 //                            sync-bandcamp.mjs, store-images.mjs, the
 //                            backfill migration) already restricts
 //                            itself to approved artists, so rows like
@@ -62,6 +62,10 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  imageFailureService,
+  LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
+} from "../src/lib/images/failures.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -333,8 +337,11 @@ async function main() {
     let cleared = 0;
     for (const [platform, artistIds] of groupArtistIdsByPlatform(rows)) {
       const services = [
-        `image-enrich:${platform}`,
-        `image-sync:${platform}`,
+        // Current unified acquisition key, plus the pre-unification ones
+        // so a row written by an older checkout is still swept.
+        imageFailureService(platform),
+        ...LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES.map((prefix) => `${prefix}${platform}`),
+        // Re-hosting failures keep their own namespace — different concern.
         `image-store:${platform}`,
       ];
       const { error: failuresError, count: failuresCount } = await supabase

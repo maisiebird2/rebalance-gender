@@ -148,7 +148,7 @@
 // syncArtist() function below. The CLI loop in main() is a thin driver
 // over it — the same shape a future event-triggered call (e.g. "sync
 // this one artist from SoundCloud on admin approval", the same pattern
-// src/lib/enrich-images.ts already uses for images) can call directly
+// src/lib/scrape-images.ts already uses for images) can call directly
 // for a single artist instead of a bulk run.
 //
 // Uses upserts throughout, so re-running refreshes existing rows
@@ -209,6 +209,7 @@ import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.mjs";
 import {
   createSoundcloudClient,
   sleep,
@@ -250,7 +251,10 @@ const STATUS_FILTER = statusArg ? statusArg.slice("--status=".length) : null;
 const STATE_SERVICE = "soundcloud-sync"; // resolved_artists.service / harvest_failures.service value
 // harvest_failures.service value for the image-only path — deliberately
 // separate from STATE_SERVICE; see "Image handling" above.
-const IMAGE_STATE_SERVICE = "image-sync:soundcloud";
+// Shared across every source that acquires images, so a scrape fallback
+// and this API path write the same row rather than two half-answers in
+// separate namespaces. See src/lib/images/failures.mjs.
+const IMAGE_STATE_SERVICE = imageFailureService("soundcloud");
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -727,7 +731,7 @@ export async function syncArtist(artist, opts = {}) {
     if (!isSoundCloudUrl(scUrl)) {
       console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
       if (imageOnly) {
-        await failImage("wrong_field_url", "stored soundcloud link does not resolve to a soundcloud.com domain");
+        await failImage(IMAGE_FAILURE_STATUS.UNREACHABLE, "stored soundcloud link does not resolve to a soundcloud.com domain");
         return { status: "skipped_wrong_field" };
       }
       // Marked processed, same reasoning as a 404: a domain mismatch
@@ -759,9 +763,9 @@ export async function syncArtist(artist, opts = {}) {
     console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
     if (imageOnly) {
       if (res.status === 404) {
-        await failImage("resolve_404", "resolve returned 404 (dead link)");
+        await failImage(IMAGE_FAILURE_STATUS.UNREACHABLE, "resolve returned 404 (dead link)");
       } else {
-        await failImage("resolve_failed", `resolve failed (HTTP ${res.status ?? "timeout"})`);
+        await failImage(IMAGE_FAILURE_STATUS.FETCH_FAILED, `resolve failed (HTTP ${res.status ?? "timeout"})`);
       }
       await sleep(300);
       return { status: "failed_resolve", httpStatus: res.status };
@@ -809,7 +813,7 @@ export async function syncArtist(artist, opts = {}) {
       // link changes), not automatically.
       imageStatus = "no_avatar";
       if (debug) console.log(`  [debug] ${name}: approved but no avatar_url on resolved user`);
-      await failImage("no_avatar", "resolved soundcloud user has no avatar_url");
+      await failImage(IMAGE_FAILURE_STATUS.NO_IMAGE, "resolved soundcloud user has no avatar_url");
     } else if (isDefaultAvatarUrl(user.avatar_url)) {
       // SoundCloud serves a generic placeholder avatar for accounts with
       // no real photo — not a usable image, so don't re-host a silhouette.
@@ -819,7 +823,7 @@ export async function syncArtist(artist, opts = {}) {
       // already applies to every other image failure.
       imageStatus = "default_avatar";
       if (debug) console.log(`  [debug] ${name}: approved but avatar_url is SoundCloud's default placeholder`);
-      await failImage("default_avatar", "soundcloud returned its default placeholder avatar (no real photo)");
+      await failImage(IMAGE_FAILURE_STATUS.PLACEHOLDER, "soundcloud returned its default placeholder avatar (no real photo)");
     } else if (!dryRun) {
       const { error: imageError } = await supabase.from("artist_images").upsert(
         {
@@ -833,7 +837,7 @@ export async function syncArtist(artist, opts = {}) {
       if (imageError) {
         console.error(`  failed to save soundcloud image: ${imageError.message}`);
         imageStatus = "failed";
-        await failImage("write_failed", `artist_images upsert failed: ${imageError.message}`);
+        await failImage(IMAGE_FAILURE_STATUS.WRITE_FAILED, `artist_images upsert failed: ${imageError.message}`);
       } else {
         imageStatus = "stored";
         await clearFailure(supabase, { artistId, service: IMAGE_STATE_SERVICE });

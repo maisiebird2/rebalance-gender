@@ -1,6 +1,6 @@
 // Multi-platform image enrichment — shared logic used by:
-//   - scripts/enrich-images.ts  (bulk CLI, a thin driver over
-//     enrichArtistImages() below)
+//   - scripts/scrape-images.ts  (bulk CLI, a thin driver over
+//     scrapeArtistImages() below)
 //   - src/app/admin/actions.ts  (quickApprove)
 //   - src/app/artist/[id]/edit/actions.ts  (saveArtist, when new
 //     image-capable links are added)
@@ -20,32 +20,43 @@
 // isPlaceholderImageUrl — so a generic silhouette is never stored and
 // the artist is recorded as a stable no-image result instead.
 //
-// Two platforms are deliberately off-limits here: soundcloud and
-// bandcamp have their own dedicated, better-guarded harvesters
-// (sync-soundcloud.mjs, sync-bandcamp.mjs) that pull images from a
-// trustworthy source (a proper avatar API field, or a page-shape-aware
-// scrape with a T-shirt/cover-art guard) rather than a generic
-// og:image scrape, which is more easily fooled by a redirect to a
-// track/release page. This module must never clobber their pick, even
-// with --force.
+// Ownership: this module owns the platforms that have no harvester of
+// their own (SCRAPE_ONLY_PLATFORMS) and is the only thing that ever
+// supplies their images. soundcloud and bandcamp belong to
+// sync-soundcloud.mjs and sync-bandcamp.mjs, which read a trustworthy
+// source (a proper avatar API field, or a page-shape-aware scrape with a
+// T-shirt/cover-art guard) rather than a generic og:image scrape that a
+// redirect to a track/release page can fool.
+//
+// For those two, scraping is a fallback with one trigger: the owner ran
+// and recorded a *transient* failure, so the answer is unknown rather
+// than absent. If it hasn't run yet, succeeded, or recorded a definitive
+// result, this module stays out of the way — it never races the owner
+// for a row, and never overwrites its pick.
 //
 // Directory-only, unconditionally: this only ever stores images for
 // artists.directory_status = 'approved'. There are roughly 100x as
 // many non-directory artists (follow-graph nodes, cold-start search
 // results, etc.) as directory ones, and storing images for them would
 // balloon Storage/DB use for no benefit. The check happens inside
-// enrichArtistImages() itself, not just at each call site, so no flag
+// scrapeArtistImages() itself, not just at each call site, so no flag
 // or future caller can accidentally bypass it.
 //
 // No cache file: state lives entirely in the DB (per project
 // convention) — artist_images itself is the "already got this
-// platform's image" record, and a *confirmed* no-image result (page
-// fetched fine, no og:image/twitter:image tag) is recorded in
-// harvest_failures as service = "image-enrich:<platform>", status
-// 'no_og_image', so it isn't re-fetched every run. A *transient*
-// failure (timeout, 5xx, network error) is deliberately NOT part of
-// that skip set — those are retried on every call automatically, same
-// convention sync-soundcloud.mjs uses for harvest_failures.
+// platform's image" record, and every failure goes to harvest_failures
+// under the shared key service = "image:<platform>", the same one
+// sync-soundcloud.mjs writes. One row per artist/platform describing the
+// current state, whichever source produced it, cleared as soon as any
+// source succeeds.
+//
+// The status on that row decides what happens next: a *definitive* one
+// (no_image, no_image_tag, placeholder, unreachable) means the answer is
+// known, so the platform is skipped until forced or the link changes; a
+// *transient* one (fetch_failed, write_failed) means unknown, so it's
+// always retried — and is the single condition under which a
+// dedicated-harvester platform becomes eligible for a fallback scrape.
+// See src/lib/images/failures.mjs for the vocabulary.
 //
 // The skip set is keyed to the exact link, not just the platform: both
 // records store the profile URL they came from (artist_images.source_page_url
@@ -65,17 +76,32 @@
 // row — an accepted trade for keeping artist_images consistent with the
 // live links.
 //
-// harvest_failures rows are read/written directly here (a small
-// inline upsert/delete, not an import of
-// scripts/lib/harvest-failures.mjs) — this file is bundled into the
-// Next.js app as well as run under tsx by the CLI, and
-// scripts/lib/harvest-failures.mjs is a plain-Node .mjs written for
-// the scripts/ side only. Same per-script-copy convention already
-// used for the small domain-classification tables duplicated between
-// sync-soundcloud.mjs and sync-bandcamp.mjs, and for
-// store-images.mjs's local copy of PLATFORM_PRIORITY.
+// harvest_failures rows are read/written directly here (a small inline
+// upsert/delete) rather than through scripts/lib/harvest-failures.mjs,
+// which is written for the scripts/ side and takes a client this module
+// doesn't construct. What must not diverge is the *vocabulary* — the
+// service key and status set — and that is shared, not copied:
+// src/lib/images/failures.mjs and placeholders.mjs are plain .mjs with
+// companion .d.mts declarations, so the plain-Node scripts and this
+// Next-bundled module import one definition. Prefer that pattern over
+// the older per-script copies (PLATFORM_PRIORITY in store-images.mjs,
+// the domain tables shared by sync-soundcloud/sync-bandcamp) when the
+// thing being shared is a fact both sides must agree on.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  IMAGE_FAILURE_SERVICE_PREFIX,
+  IMAGE_FAILURE_STATUS,
+  imageFailureService,
+  isDefinitiveImageFailure,
+  isTransientImageFailure,
+  platformFromImageFailureService,
+} from "@/lib/images/failures.mjs";
+import type { ImageFailureStatus } from "@/lib/images/failures.mjs";
+import {
+  describePlaceholderImageUrl,
+  isPlaceholderImageUrl,
+} from "@/lib/images/placeholders.mjs";
 
 // Platform priority: try these link types in this order. Every
 // candidate the artist has a link for gets tried (not just the
@@ -103,15 +129,21 @@ export const PLATFORM_PRIORITY = [
   "youtube",
 ] as const;
 
-// Platforms with their own dedicated image harvester. An image already
-// stored for one of these is never overwritten by enrichArtistImages(),
-// even with --force.
-export const DEDICATED_HARVEST_PLATFORMS: ReadonlySet<string> = new Set([
+// Platforms whose images belong to a dedicated harvester:
+//   soundcloud -> sync-soundcloud.mjs (the SoundCloud /resolve API)
+//   bandcamp   -> sync-bandcamp.mjs   (the artist page sidebar)
+//
+// Scraping is a fallback for these, never the primary route, and it
+// applies in exactly one situation: the owner ran and recorded a
+// *transient* failure. If the owner has not run yet, succeeded, or
+// recorded a definitive "no image exists", scraping is not this script's
+// job — the owner will get to it. See scripts/IMAGE-HARVESTING-PLAN.md.
+export const OWNED_BY_DEDICATED_HARVESTER: ReadonlySet<string> = new Set([
   "soundcloud",
   "bandcamp",
 ]);
 
-// Platforms with no dedicated harvester, so enrichArtistImages() is the
+// Platforms with no dedicated harvester, so scrapeArtistImages() is the
 // only thing that ever supplies their images.
 //
 // The web app's after() hooks are scoped to these. soundcloud/bandcamp
@@ -123,7 +155,7 @@ export const DEDICATED_HARVEST_PLATFORMS: ReadonlySet<string> = new Set([
 // such artists from DB state, so nothing needs to trigger them here.
 // See scripts/IMAGE-HARVESTING-PLAN.md (Phase 3).
 export const SCRAPE_ONLY_PLATFORMS: readonly string[] = PLATFORM_PRIORITY.filter(
-  (p) => !DEDICATED_HARVEST_PLATFORMS.has(p)
+  (p) => !OWNED_BY_DEDICATED_HARVESTER.has(p)
 );
 
 // Some platforms serve a generic placeholder in place of a 404 when an
@@ -132,17 +164,9 @@ export const SCRAPE_ONLY_PLATFORMS: readonly string[] = PLATFORM_PRIORITY.filter
 // no-image result, recorded in harvest_failures and skipped on retry).
 // Match on the stable filename/hash so every size variant of the same
 // placeholder is caught.
-const PLACEHOLDER_IMAGE_PATTERNS: readonly RegExp[] = [
-  // Last.fm's default "star" artist avatar, e.g.
-  // https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg
-  // — the same hash is served at every size variant (ar0/174s/300x300/…),
-  // so matching the hash alone catches all of them.
-  /2a96cbd8b46e442fc41c2b86b821562f/i,
-];
-
-export function isPlaceholderImageUrl(imageUrl: string): boolean {
-  return PLACEHOLDER_IMAGE_PATTERNS.some((re) => re.test(imageUrl));
-}
+// Re-exported so existing importers of this module keep their import
+// path; the patterns themselves live in the shared registry.
+export { isPlaceholderImageUrl };
 
 export type OgImageResult =
   | { found: true; imageUrl: string }
@@ -151,7 +175,16 @@ export type OgImageResult =
   // transient: false -> fetched fine but no usable meta tag, or a
   //                     definitive 4xx; stable, eligible to be
   //                     recorded as a skip-on-retry failure.
-  | { found: false; transient: boolean; detail: string };
+  //
+  // `transient` is derived from `status` rather than tracked separately —
+  // the shared vocabulary is the single place that decides which outcomes
+  // are worth retrying. See src/lib/images/failures.mjs.
+  | { found: false; status: ImageFailureStatus; detail: string };
+
+/** Whether a failed OgImageResult should be retried on the next run. */
+export function isTransientResult(result: OgImageResult): boolean {
+  return !result.found && isTransientImageFailure(result.status);
+}
 
 // Ceiling on how much of a page we'll buffer looking for a meta tag.
 // YouTube channel pages reach ~1.15MB with og:image at ~690KB.
@@ -197,7 +230,14 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
     if (!res.ok) {
       // 5xx is more likely a temporary upstream problem than a 4xx
       // (dead/moved page, which won't fix itself on retry).
-      return { found: false, transient: res.status >= 500, detail: `HTTP ${res.status}` };
+      return {
+        found: false,
+        status:
+          res.status >= 500
+            ? IMAGE_FAILURE_STATUS.FETCH_FAILED
+            : IMAGE_FAILURE_STATUS.UNREACHABLE,
+        detail: `HTTP ${res.status}`,
+      };
     }
 
     // Stream the page and stop the moment og:image turns up. Don't stop
@@ -236,23 +276,37 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
       // challenge served). Keep them distinct so the second stands out in
       // logs instead of blending into the expected background of artists
       // who genuinely have no picture.
-      const detail = EMPTY_IMAGE_META_RE.test(html)
-        ? "og:image tag present but empty (no photo set)"
-        : "no og:image/twitter:image meta tag";
-      return { found: false, transient: false, detail };
+      return EMPTY_IMAGE_META_RE.test(html)
+        ? {
+            found: false,
+            status: IMAGE_FAILURE_STATUS.NO_IMAGE,
+            detail: "og:image tag present but empty (no photo set)",
+          }
+        : {
+            found: false,
+            status: IMAGE_FAILURE_STATUS.NO_IMAGE_TAG,
+            detail: "no og:image/twitter:image meta tag",
+          };
     }
 
     const resolved = new URL(imageUrl, url).toString();
-    if (isPlaceholderImageUrl(resolved)) {
+    const placeholder = describePlaceholderImageUrl(resolved);
+    if (placeholder) {
       // A real page that returned a known "no real photo" placeholder —
       // stable, so record it as a no-image result rather than storing it.
-      return { found: false, transient: false, detail: "placeholder image (platform default, no real photo)" };
+      // Naming the specific placeholder makes a run where a platform
+      // starts serving one legible in the logs.
+      return {
+        found: false,
+        status: IMAGE_FAILURE_STATUS.PLACEHOLDER,
+        detail: `placeholder image (${placeholder})`,
+      };
     }
 
     return { found: true, imageUrl: resolved };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    return { found: false, transient: true, detail };
+    return { found: false, status: IMAGE_FAILURE_STATUS.FETCH_FAILED, detail };
   } finally {
     clearTimeout(timeout);
   }
@@ -260,7 +314,7 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export interface EnrichArtistImagesOptions {
+export interface ScrapeArtistImagesOptions {
   // Re-check platforms that already have an artist_images row (or a
   // stable no-image failure), EXCEPT soundcloud/bandcamp — those are
   // never retried here regardless of force.
@@ -271,7 +325,7 @@ export interface EnrichArtistImagesOptions {
   allowedPlatforms?: readonly string[];
 }
 
-export interface EnrichArtistImagesResult {
+export interface ScrapeArtistImagesResult {
   attempted: string[];
   stored: string[];
   removed: string[]; // stale image dropped: link changed to a page with no image
@@ -289,12 +343,12 @@ export interface EnrichArtistImagesResult {
  * Returns a per-platform breakdown rather than a boolean — a single
  * call can both find new images and skip/fail others.
  */
-export async function enrichArtistImages(
+export async function scrapeArtistImages(
   artistId: string,
   adminClient: SupabaseClient,
-  { force = false, dryRun = false, allowedPlatforms }: EnrichArtistImagesOptions = {}
-): Promise<EnrichArtistImagesResult> {
-  const result: EnrichArtistImagesResult = {
+  { force = false, dryRun = false, allowedPlatforms }: ScrapeArtistImagesOptions = {}
+): Promise<ScrapeArtistImagesResult> {
+  const result: ScrapeArtistImagesResult = {
     attempted: [],
     stored: [],
     removed: [],
@@ -310,7 +364,7 @@ export async function enrichArtistImages(
     .single();
 
   if (error || !artist) {
-    console.error(`[enrich-images] Failed to fetch artist ${artistId}:`, error?.message);
+    console.error(`[scrape-images] Failed to fetch artist ${artistId}:`, error?.message);
     return result;
   }
 
@@ -318,7 +372,7 @@ export async function enrichArtistImages(
   // regardless of what the caller already believes about this artist.
   if (artist.directory_status !== "approved") {
     console.log(
-      `[enrich-images] ${artist.name}: not a directory artist (${artist.directory_status}) — images are only harvested for approved artists, skipping`
+      `[scrape-images] ${artist.name}: not a directory artist (${artist.directory_status}) — images are only harvested for approved artists, skipping`
     );
     return result;
   }
@@ -342,28 +396,32 @@ export async function enrichArtistImages(
     candidates = candidates.filter((p) => allowed.has(p));
   }
   if (candidates.length === 0) {
-    console.log(`[enrich-images] ${artist.name}: no usable links, skipping`);
+    console.log(`[scrape-images] ${artist.name}: no usable links, skipping`);
     return result;
   }
 
-  const [{ data: existingImages, error: imagesError }, { data: stableFailures, error: failuresError }] =
+  const [{ data: existingImages, error: imagesError }, { data: priorFailures, error: failuresError }] =
     await Promise.all([
       adminClient.from("artist_images").select("platform, source_page_url").eq("artist_id", artistId),
+      // Every image-acquisition failure for this artist, from any source
+      // (the scrape here, the SoundCloud API path in sync-soundcloud).
+      // Statuses are classified below rather than filtered in SQL: a
+      // definitive result means "don't re-fetch", a transient one is what
+      // makes a dedicated-harvester platform eligible for a fallback.
       adminClient
         .from("harvest_failures")
-        .select("service, url")
+        .select("service, status, url")
         .eq("artist_id", artistId)
-        .eq("status", "no_og_image")
-        .like("service", "image-enrich:%"),
+        .like("service", `${IMAGE_FAILURE_SERVICE_PREFIX}%`),
     ]);
 
   if (imagesError) {
-    console.error(`[enrich-images] Failed to load existing images for ${artist.name}:`, imagesError.message);
+    console.error(`[scrape-images] Failed to load existing images for ${artist.name}:`, imagesError.message);
     return result;
   }
   if (failuresError) {
     // Non-fatal — worst case we re-attempt a platform already known to have no image.
-    console.error(`[enrich-images] Failed to load prior failures for ${artist.name}:`, failuresError.message);
+    console.error(`[scrape-images] Failed to load prior failures for ${artist.name}:`, failuresError.message);
   }
 
   // platform -> the profile URL we last processed for it. For a stored
@@ -373,19 +431,28 @@ export async function enrichArtistImages(
   const imagedUrlByPlatform = new Map<string, string | null>(
     (existingImages ?? []).map((r) => [r.platform as string, (r.source_page_url as string | null) ?? null])
   );
-  const failedUrlByPlatform = new Map<string, string | null>(
-    (stableFailures ?? []).map((r) => [
-      (r.service as string).slice("image-enrich:".length),
-      (r.url as string | null) ?? null,
-    ])
-  );
+  // platform -> the recorded image failure, whichever source wrote it.
+  // Split by classification: a definitive failure means the answer is
+  // known and the platform is skipped, while a transient one is the only
+  // thing that lets a dedicated-harvester platform fall back to a scrape.
+  const definitiveFailureUrlByPlatform = new Map<string, string | null>();
+  const transientFailurePlatforms = new Set<string>();
+  for (const row of priorFailures ?? []) {
+    const platform = platformFromImageFailureService(row.service as string);
+    if (!platform) continue;
+    const status = row.status as string;
+    if (isDefinitiveImageFailure(status)) {
+      definitiveFailureUrlByPlatform.set(platform, (row.url as string | null) ?? null);
+    } else if (isTransientImageFailure(status)) {
+      transientFailurePlatforms.add(platform);
+    }
+  }
 
   for (const platform of candidates) {
     const url = linksByPlatform.get(platform)!;
-    const isDedicated = DEDICATED_HARVEST_PLATFORMS.has(platform);
-    const service = `image-enrich:${platform}`;
+    const service = imageFailureService(platform);
     const hadImage = imagedUrlByPlatform.has(platform);
-    const hadFailure = !hadImage && failedUrlByPlatform.has(platform);
+    const hadFailure = !hadImage && definitiveFailureUrlByPlatform.has(platform);
 
     // The link we last processed this platform against: source_page_url
     // for a stored image, harvest_failures.url for a confirmed no-image
@@ -395,21 +462,25 @@ export async function enrichArtistImages(
     const processedUrl = hadImage
       ? imagedUrlByPlatform.get(platform)!
       : hadFailure
-        ? failedUrlByPlatform.get(platform)!
+        ? definitiveFailureUrlByPlatform.get(platform)!
         : undefined;
     const urlChanged = processedUrl != null && processedUrl !== url;
 
-    // soundcloud/bandcamp are owned by their dedicated harvesters —
-    // never re-fetched or overwritten here, even on a link change or
-    // with --force.
-    if (hadImage && isDedicated) {
-      result.skippedProtected.push(platform);
-      continue;
-    }
-    // Skip a platform already covered for its current link, unless forced
-    // or the link has changed — a changed link is re-fetched automatically.
+    // Already answered for this link — an image, or a definitive "no
+    // image exists" from any source. Re-fetch only when forced or when
+    // the link itself changed.
     if ((hadImage || hadFailure) && !force && !urlChanged) {
       result.skippedExisting.push(platform);
+      continue;
+    }
+
+    // Platforms with a dedicated harvester belong to it. Scraping is a
+    // fallback for exactly one situation: the owner ran and failed in a
+    // way that might not recur. If it has not run yet, or it succeeded,
+    // or it recorded a definitive answer, this is not our platform to
+    // fetch — see scripts/IMAGE-HARVESTING-PLAN.md.
+    if (OWNED_BY_DEDICATED_HARVESTER.has(platform) && !transientFailurePlatforms.has(platform)) {
+      result.skippedProtected.push(platform);
       continue;
     }
 
@@ -417,7 +488,7 @@ export async function enrichArtistImages(
     const fetched = await fetchOgImage(url);
 
     if (fetched.found) {
-      console.log(`[enrich-images] ${artist.name}: found image via ${platform}`);
+      console.log(`[scrape-images] ${artist.name}: found image via ${platform}`);
       if (!dryRun) {
         const { error: upsertError } = await adminClient.from("artist_images").upsert(
           {
@@ -431,7 +502,7 @@ export async function enrichArtistImages(
         );
         if (upsertError) {
           console.error(
-            `[enrich-images] ${artist.name}: failed to save ${platform} image:`,
+            `[scrape-images] ${artist.name}: failed to save ${platform} image:`,
             upsertError.message
           );
           result.failed.push(platform);
@@ -443,43 +514,49 @@ export async function enrichArtistImages(
       result.stored.push(platform);
     } else {
       result.failed.push(platform);
-      if (!fetched.transient) {
-        console.log(`[enrich-images] ${artist.name}: ${platform} — no image found (${fetched.detail})`);
-        if (hadImage && urlChanged) {
-          // The link changed to a page with no image, and a stale image
-          // survives from the previous link — drop it so a stored image
-          // always reflects the current link (see the "link changes" note
-          // in the module header). Only on a genuine link change: a --force
-          // re-check of an unchanged link whose page merely lost its image
-          // leaves the existing image in place.
-          console.log(
-            `[enrich-images] ${artist.name}: removing stale ${platform} image (link changed to a page with no image)`
-          );
-          result.removed.push(platform);
-          if (!dryRun) {
-            await adminClient
-              .from("artist_images")
-              .delete()
-              .eq("artist_id", artistId)
-              .eq("platform", platform);
-          }
-        }
-        if (!dryRun) {
-          await adminClient.from("harvest_failures").upsert(
-            {
-              artist_id: artistId,
-              service,
-              status: "no_og_image",
-              detail: fetched.detail,
-              url,
-              occurred_at: new Date().toISOString(),
-            },
-            { onConflict: "artist_id,service" }
-          );
-        }
-      } else {
+      const transient = isTransientImageFailure(fetched.status);
+      console.log(
+        transient
+          ? `[scrape-images] ${artist.name}: ${platform} — fetch failed, will retry next run (${fetched.status}: ${fetched.detail})`
+          : `[scrape-images] ${artist.name}: ${platform} — no image found (${fetched.status}: ${fetched.detail})`
+      );
+
+      // Only a definitive answer retires a stale image: the link changed
+      // to a page that genuinely has no image, so the one stored from the
+      // previous link must go (see the "link changes" note in the module
+      // header). A transient blip proves nothing and leaves it alone, as
+      // does a --force re-check of an unchanged link.
+      if (!transient && hadImage && urlChanged) {
         console.log(
-          `[enrich-images] ${artist.name}: ${platform} — fetch failed, will retry next run (${fetched.detail})`
+          `[scrape-images] ${artist.name}: removing stale ${platform} image (link changed to a page with no image)`
+        );
+        result.removed.push(platform);
+        if (!dryRun) {
+          await adminClient
+            .from("artist_images")
+            .delete()
+            .eq("artist_id", artistId)
+            .eq("platform", platform);
+        }
+      }
+
+      // Both classifications are recorded now, not just definitive ones.
+      // The row is what a later run reads to decide whether to skip (a
+      // definitive status) or to let a dedicated-harvester platform fall
+      // back to a scrape (a transient one), and it is deleted as soon as
+      // any source succeeds — so this stays one row per artist/platform
+      // describing the current state, never a growing log.
+      if (!dryRun) {
+        await adminClient.from("harvest_failures").upsert(
+          {
+            artist_id: artistId,
+            service,
+            status: fetched.status,
+            detail: fetched.detail,
+            url,
+            occurred_at: new Date().toISOString(),
+          },
+          { onConflict: "artist_id,service" }
         );
       }
     }

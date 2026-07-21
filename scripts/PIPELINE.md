@@ -51,7 +51,7 @@ flowchart TD
     P3 --> P5
     P3 --> P7
     P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
-    P5["Phase 5 · Profile images<br/>enrich-images.ts → store-images.mjs"]
+    P5["Phase 5 · Profile images<br/>scrape-images.ts → store-images.mjs"]
     P7["Phase 7 · Rec. signals<br/>follow graph, MB tags, genre harvest+integrate"]
     P2D -. as-needed .-> P8["Phase 8 · Review<br/>find-duplicates.mjs, qc-links.mjs"]
     P7 -. as-needed .-> P8G["Genre cleanup<br/>genre-report → dedupe → prune → apply-status"]
@@ -342,7 +342,7 @@ but still missing a soundcloud `artist_images` row — and runs
 `syncArtist(artist, { imageOnly: true })` for them: one `/resolve`
 call for the avatar, skipping playlists/web-profiles/bio/link writes
 and leaving `resolved_artists` untouched. Image-only failures persist
-to their own `harvest_failures` service (`image-sync:soundcloud`, via
+to their own `harvest_failures` service (`image:soundcloud`, via
 `failImage()`), separate from `soundcloud-sync`'s, with the same
 link-changed-since-failure cross-check applied independently — a 404
 found only by the image-only path doesn't pollute the main sync's
@@ -363,7 +363,7 @@ Requires `SOUNDCLOUD_CLIENT_ID` and `SOUNDCLOUD_CLIENT_SECRET` in `.env.local`.
 The per-artist sync is an exported `syncArtist()` function; the CLI
 loop in `main()` is a thin driver over it — the same shape a future
 event-triggered call (e.g. "sync this one artist from SoundCloud on
-admin approval," the pattern `src/lib/enrich-images.ts` already uses
+admin approval," the pattern `src/lib/scrape-images.ts` already uses
 for images) can call directly for a single artist instead of a bulk
 run.
 
@@ -747,9 +747,9 @@ Runs after Phase 3 so image enrichment can draw on the full link
 set, including the Last.fm, Spotify, and Wikipedia links Phase 3
 resolves (all of which are in the platform priority list below).
 
-### 5a. `enrich-images.ts` — multi-platform + `artist_images` 2026-07-09
+### 5a. `scrape-images.ts` — multi-platform + `artist_images` 2026-07-09
 For each artist with `directory_status = 'approved'` (checked inside
-`enrichArtistImages()` itself, not just at the call site — no flag or
+`scrapeArtistImages()` itself, not just at the call site — no flag or
 future caller can bypass it), tries **every** linked profile the
 artist has, not just the first hit, and pulls the `og:image` meta tag
 as a best-effort profile photo from each one. No API key required.
@@ -760,31 +760,45 @@ Writes one row per successful platform to `artist_images`
 `supabase_migration_artist_images.sql` — rather than a single
 `artists.profile_image_url` winner, so an artist can hold images from
 several platforms at once instead of one platform's pick silently
-overwriting another's. `soundcloud` and `bandcamp` are permanently
-off-limits to this script (see `DEDICATED_HARVEST_PLATFORMS` in
-`src/lib/enrich-images.ts`): those two have their own dedicated,
-better-guarded harvesters (`sync-soundcloud.mjs`, `sync-bandcamp.mjs`),
-and a generic `og:image` scrape must never clobber their pick, even
-with `--force`.
+overwriting another's. `soundcloud` and `bandcamp` belong to their own
+dedicated, better-guarded harvesters (`sync-soundcloud.mjs`,
+`sync-bandcamp.mjs`) — see `OWNED_BY_DEDICATED_HARVESTER` in
+`src/lib/scrape-images.ts`. A generic `og:image` scrape never clobbers
+their pick, and only runs for those platforms at all in one case: the
+owner recorded a *transient* failure, so the answer is unknown rather
+than absent. Owner hasn't run yet, succeeded, or recorded a definitive
+result — the scrape stays out of it, `--force` included.
+
+`npx tsx scripts/scrape-images.ts --list` prints the full ownership
+table (which source owns each platform, and where scraping is a
+fallback) without needing credentials.
 
 No cache file — state lives in the DB. A platform is skipped once
 `artist_images` has a row for it, or once `harvest_failures` has a
-*confirmed* no-image result for it (`service = "image-enrich:
-<platform>"`, `status = 'no_og_image'` — a genuinely transient failure,
+*definitive* no-image result for it (`service = "image:<platform>"`,
+with a status the shared vocabulary classifies as definitive — a
+genuinely transient failure,
 like a timeout or 5xx, is NOT part of this skip set and is retried
 every run). A brand-new link on a platform never tried before is
 always attempted, force or not.
 
-The single-artist core (`enrichArtistImages()`) lives in
-`src/lib/enrich-images.ts` and is also called automatically by the
+The single-artist core (`scrapeArtistImages()`) lives in
+`src/lib/scrape-images.ts` and is also called automatically by the
 website — on admin quick-approve (`src/app/admin/actions.ts`), when
 image-capable links are added on the artist edit page, and when a
 single link is saved from the missing-links admin page — so newly
 approved artists (or artists who just got a new link) get images
 without waiting for a bulk run.
 
+Those website hooks are scoped to `SCRAPE_ONLY_PLATFORMS`: a form
+handler never triggers a soundcloud/bandcamp scrape. A just-approved
+artist has no images yet, so an unscoped hook would always beat the
+dedicated harvester to the row and then be overwritten by it. Nothing
+needs to trigger those harvesters instead — they re-detect such artists
+from DB state on the next orchestrator run.
+
 ```bash
-npm run enrich-images
+npm run scrape-images
 ```
 
 As of 2026-07-09, `sync-soundcloud.mjs` (2a) and `sync-bandcamp.mjs`
@@ -844,7 +858,8 @@ Two independent modes, exactly one required per run:
   scraped. Deletes every Storage object re-hosted from that platform,
   the `artist_images` rows themselves, and any lingering
   `harvest_failures` rows for that platform's image services
-  (`image-enrich:`, `image-sync:`, `image-store:` + platform, cleared
+  (`image:` + platform, its legacy `image-enrich:`/`image-sync:`
+  predecessors, and `image-store:` + platform, cleared
   globally), so a future re-add starts clean.
 - `--non-directory` — every writer (5a, 2a, 2b, 5b, and the
   backfill migration) already restricts itself to `directory_status =
@@ -1298,7 +1313,7 @@ email link → /api/verify
 admin panel → quickApprove (src/app/admin/actions.ts)
   ├─ artists                directory_status = 'approved'
   └─ auto-runs single-artist image enrichment in the background
-     (src/lib/enrich-images.ts — the Phase 5a core)
+     (src/lib/scrape-images.ts — the Phase 5a core)
      [alternatives: 'rejected', 'not_eligible']
 ```
 
@@ -1389,7 +1404,7 @@ npm run integrate-harvested-links   # 2d
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios
-npm run enrich-images
+npm run scrape-images
 node scripts/store-images.mjs
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
@@ -1524,7 +1539,7 @@ got silently overwritten with the re-hosted SoundCloud image if one
 existed.
 
 Built: 5b now walks the same `PLATFORM_PRIORITY` order as
-`enrich-images.ts` (5a) — a local copy, since this script runs under
+`scrape-images.ts` (5a) — a local copy, since this script runs under
 plain `node` and 5a's list lives in a `.ts` file — picking the
 highest-priority platform with an available source image (SoundCloud's
 `sc_image_url` / enrichment row, or any other platform's
@@ -1549,7 +1564,7 @@ between them instead of one platform's pick silently overwriting
 another's. See `supabase_migration_artist_images.sql` for the schema
 and full rationale.
 
-Built: the table; `enrich-images.ts` (5a), `sync-soundcloud.mjs` (2a),
+Built: the table; `scrape-images.ts` (5a), `sync-soundcloud.mjs` (2a),
 and `sync-bandcamp.mjs` (2b) all writing to it instead of
 `artist_enrichment.profile_image_url`; `store-images.mjs` (5b)
 re-hosting every row to its own per-platform Storage path; the
@@ -1557,7 +1572,7 @@ frontend read path (5c) picking a day-seeded image per artist;
 `prune-artist-images.mjs` (5d, `--platform=X` or `--non-directory`)
 for purging one platform's images or a demoted artist's leftover ones.
 Failure persistence extends across all three writers now
-(`image-enrich:<platform>`, `image-sync:<platform>` for SoundCloud's
+(`image:<platform>`, shared by every acquisition source — SoundCloud's
 image-only pass, `image-store:<platform>` for 5b's re-hosting) —
 closing the gap flagged when 5b was still the single-winner version
 (its download/upload failures used to be console-only).

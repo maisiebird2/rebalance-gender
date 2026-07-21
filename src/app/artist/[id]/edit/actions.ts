@@ -7,7 +7,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
-import { enrichArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/enrich-images";
+import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
+import {
+  imageFailureService,
+  LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
+} from "@/lib/images/failures.mjs";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
@@ -313,12 +317,13 @@ export async function saveArtist(
     if (imgDelErr) return { error: `Image cleanup error: ${imgDelErr.message}` };
 
     // 3. Lingering image-harvest failures for those platforms, so a
-    //    re-added link can be retried cleanly. Services are named
-    //    image-<harvester>:<platform> (see enrich-images.ts,
-    //    store-images.mjs, prune-artist-images.mjs).
+    //    re-added link can be retried cleanly. Acquisition failures share
+    //    one key per platform (src/lib/images/failures.mjs); the legacy
+    //    prefixes cover rows written before that, and image-store: is the
+    //    separate re-hosting namespace owned by store-images.mjs.
     const removedServices = removedPlatforms.flatMap((p) => [
-      `image-enrich:${p}`,
-      `image-sync:${p}`,
+      imageFailureService(p),
+      ...LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES.map((prefix) => `${prefix}${p}`),
       `image-store:${p}`,
     ]);
     const { error: failErr } = await admin
@@ -355,7 +360,7 @@ export async function saveArtist(
 
   // ── 9. Trigger image enrichment if warranted ──────────────────
   // Run after the response is sent so it doesn't block the redirect.
-  // enrichArtistImages only attempts platforms that don't already have
+  // scrapeArtistImages only attempts platforms that don't already have
   // a stored image (or a confirmed no-image result) for their *current*
   // link — a platform whose image is up to date is a no-op, but one
   // whose link URL just changed is re-fetched (hasNewImageUrls, which
@@ -364,7 +369,7 @@ export async function saveArtist(
   // their own harvesters, which run from the orchestrator.
   if (directoryStatus === "approved" && hasNewImageUrls) {
     after(() =>
-      enrichArtistImages(artistId, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS })
+      scrapeArtistImages(artistId, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS })
     );
   }
 

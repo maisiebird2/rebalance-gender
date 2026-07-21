@@ -37,16 +37,16 @@ vi.mock("next/server", () => ({
 // Stub only the network-touching function; keep the real platform
 // constants so assertions about which platforms get enriched test the
 // actual lists rather than a fixture that can drift from them.
-vi.mock("@/lib/enrich-images", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/enrich-images")>()),
-  enrichArtistImages: vi.fn(),
+vi.mock("@/lib/scrape-images", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/scrape-images")>()),
+  scrapeArtistImages: vi.fn(),
 }));
 
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { enrichArtistImages } from "@/lib/enrich-images";
+import { scrapeArtistImages } from "@/lib/scrape-images";
 import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -274,11 +274,11 @@ describe("quickApprove", () => {
     const scheduled = vi.mocked(after).mock.calls[0][0] as () => Promise<unknown>;
     await scheduled();
 
-    expect(enrichArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
+    expect(scrapeArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
       allowedPlatforms: expect.not.arrayContaining(["soundcloud", "bandcamp"]),
     });
     // …and it still covers the platforms this route does own.
-    expect(enrichArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
+    expect(scrapeArtistImages).toHaveBeenCalledWith("artist-1", expect.anything(), {
       allowedPlatforms: expect.arrayContaining(["spotify", "youtube", "wikipedia"]),
     });
   });

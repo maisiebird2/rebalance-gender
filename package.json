@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
-    "enrich-images": "tsx scripts/enrich-images.ts",
+    "scrape-images": "tsx scripts/scrape-images.ts",
     "enrich-bios": "tsx scripts/enrich-bios.mjs",
     "clean-linktree-bios": "node scripts/clean-linktree-bios.mjs",
     "sync-bandcamp": "tsx scripts/sync-bandcamp.mjs",
