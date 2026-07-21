@@ -117,17 +117,27 @@ async function main() {
     console.log(`Restricted to platforms: ${ALLOWED_PLATFORMS.join(", ")}\n`);
   }
 
-  let query = supabase
-    .from("artists")
-    .select("id, name")
-    .eq("directory_status", "approved")
-    .eq("deleted", false)
-    .order("name");
-
-  if (LIMIT) query = query.limit(LIMIT);
-
-  const { data: artists, error } = await query;
-  if (error) throw error;
+  // PostgREST caps a single response at ~1000 rows, so a bare select
+  // only ever returns the first 1000 approved artists (alphabetically,
+  // most already fully covered) and never reaches the rest. Page through
+  // in 1000-row batches so every approved artist is checked. --limit
+  // still stops early, for testing.
+  const PAGE_SIZE = 1000;
+  const artists: { id: string; name: string }[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const to = LIMIT ? Math.min(from + PAGE_SIZE, LIMIT) - 1 : from + PAGE_SIZE - 1;
+    const { data: page, error } = await supabase
+      .from("artists")
+      .select("id, name")
+      .eq("directory_status", "approved")
+      .eq("deleted", false)
+      .order("name")
+      .range(from, to);
+    if (error) throw error;
+    if (!page || page.length === 0) break;
+    artists.push(...page);
+    if (page.length < PAGE_SIZE || (LIMIT && artists.length >= LIMIT)) break;
+  }
 
   console.log(`${artists.length} approved artist(s) to check.\n`);
 
