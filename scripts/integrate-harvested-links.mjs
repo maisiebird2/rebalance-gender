@@ -229,16 +229,95 @@ function runTimestamp(d = new Date()) {
   );
 }
 
+// How many times to retry a write that fails with a transient network
+// error before giving up, and the base delay for exponential backoff
+// (500ms, 1s, 2s, 4s across the retries).
+const TRANSIENT_RETRIES = 4;
+const TRANSIENT_BASE_DELAY_MS = 500;
+
+// Exit code for "ran to completion, but some rows didn't get written" —
+// deliberately distinct from 1 (a fatal error that stopped the run), so
+// a caller can tell a partial pass from a crash. harvest-links-loop
+// relies on this: it tolerates this code and keeps looping, but still
+// refuses to call the run converged. Keep the two in sync.
+const EXIT_PARTIAL_WRITE_FAILURES = 2;
+
+// Running tally of rows that never made it into the database, split by
+// cause. `main` reports these at the end and exits non-zero if either is
+// non-zero, so a caller (e.g. the orchestrator) can tell the step didn't
+// fully succeed instead of seeing a clean exit.
+const writeFailures = { network: 0, database: 0 };
+
+// Distinguishes a dropped/failed connection to Supabase from the
+// database actually rejecting the data. Matched on the message text
+// (across message/details/hint and any wrapped `cause`), since a
+// transport failure surfaces as a bare fetch/socket fault like
+// "TypeError: fetch failed" — whereas a genuine PostgREST/Postgres
+// rejection describes the constraint it violated ("duplicate key value
+// violates unique constraint ...") and never matches these patterns.
+//
+// Only a transport failure is worth retrying — and, crucially,
+// binary-splitting the batch or running the per-row `describe()`
+// diagnostic is pointless for it, since every row fails identically and
+// the diagnostic would issue yet more doomed network calls (that's what
+// produced the misleading "(no live row found?!)" output).
+function isTransientError(error) {
+  if (!error) return false;
+  const msg = [error.message, error.details, error.hint, error.cause?.message]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /fetch failed|network|timeout|timed out|econnreset|econnrefused|enotfound|etimedout|eai_again|socket hang up|und_err/.test(
+    msg
+  );
+}
+
+// Runs `doWrite(rows)` (resolving to a Supabase { error } result),
+// retrying on transient network errors with exponential backoff.
+// Returns null on success, or the last error if it exhausts retries or
+// hits a non-transient error (which is returned immediately, unretried).
+async function writeWithRetry(doWrite, rows) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= TRANSIENT_RETRIES; attempt++) {
+    const { error } = await doWrite(rows);
+    if (!error) return null;
+    lastError = error;
+    if (!isTransientError(error)) return error;
+    if (attempt < TRANSIENT_RETRIES) {
+      const delay = TRANSIENT_BASE_DELAY_MS * 2 ** attempt;
+      console.error(
+        `  … network error writing ${rows.length} row(s) ` +
+          `(attempt ${attempt + 1}/${TRANSIENT_RETRIES + 1}): ${error.message}. ` +
+          `Retrying in ${delay}ms.`
+      );
+      await sleep(delay);
+    }
+  }
+  return lastError;
+}
+
 // Runs `doWrite(rows)` (which resolves to a Supabase { error } result).
-// If the batch fails, binary-splits it and recurses until it can name
-// the individual row(s) that error — so a whole-batch failure like a
-// duplicate-key violation gets logged down to the exact offending rows
-// via `describe(row)`, instead of just a count.
+// A transient network failure that survives retries is reported once for
+// the whole batch — splitting it would just repeat the same failure. A
+// genuine database error (e.g. a duplicate-key violation) is isolated by
+// binary-splitting and recursing until it can name the individual row(s)
+// that error via `describe(row)`, instead of just a count.
 async function writeIsolatingFailures(rows, doWrite, describe) {
   if (rows.length === 0) return;
-  const { error } = await doWrite(rows);
+  const error = await writeWithRetry(doWrite, rows);
   if (!error) return;
+
+  if (isTransientError(error)) {
+    writeFailures.network += rows.length;
+    console.error(
+      `  ✗ network error — ${rows.length} row(s) not written after ` +
+        `${TRANSIENT_RETRIES + 1} attempts: ${error.message}`
+    );
+    return;
+  }
+
   if (rows.length === 1) {
+    writeFailures.database += 1;
     console.error(`  ✗ ${await describe(rows[0])} — ${error.message}`);
     return;
   }
@@ -795,6 +874,17 @@ async function main() {
       (rows) => supabase.from("artist_harvested_links").upsert(rows, { onConflict: "id" }),
       (r) => `artist_harvested_links update: id=${r.id} artist_id=${r.artist_id} parsed_url=${r.parsed_url}`
     );
+  }
+
+  if (writeFailures.network > 0 || writeFailures.database > 0) {
+    console.error(
+      `\nCompleted with write failures — ` +
+        `${writeFailures.network} row(s) not written due to network errors, ` +
+        `${writeFailures.database} due to database errors. ` +
+        `Re-run to retry (writes are idempotent).`
+    );
+    process.exitCode = EXIT_PARTIAL_WRITE_FAILURES;
+    return;
   }
 
   console.log("\nDone.");

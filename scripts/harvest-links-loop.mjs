@@ -16,6 +16,13 @@
 // and artist_links (live) before vs. after each round. If neither
 // grew, nothing new was found or promoted — stop.
 //
+// One exception: if that round's integrate stage reported unwritten rows
+// (exit code EXIT_PARTIAL_WRITE_FAILURES, typically a transient database
+// outage), unchanged counts mean "the writes failed", not "there was
+// nothing left to promote". Such a round can't declare convergence; the
+// loop keeps going so the next round retries the promotion, and exits
+// non-zero if the last round is still failing.
+//
 // This loop is deliberately the skeleton for the eventual
 // orchestrate.mjs: stage scripts as child processes, DB-tracked
 // state, convergence detection. Add future harvesters (e.g. linktree)
@@ -111,6 +118,20 @@ const HARVESTERS = [
 ];
 const INTEGRATE = "integrate-harvested-links.mjs";
 
+// The exit code integrate-harvested-links uses for "ran to completion,
+// but some rows didn't get written" (typically a transient network fault
+// that outlived its own retries). Distinct from 1, which stays fatal.
+//
+// We tolerate it rather than aborting: the staged rows are still in the
+// database and the promotion is idempotent, so the next round retries
+// them for free — far cheaper than throwing away the round's harvesting.
+// But a round that ended this way must NOT be allowed to satisfy the
+// convergence check below: "no new live links" would then mean "the
+// writes failed", not "there was nothing left to promote", and the loop
+// would report a false convergence. Keep in sync with the constant of
+// the same meaning in integrate-harvested-links.mjs.
+const EXIT_PARTIAL_WRITE_FAILURES = 2;
+
 // ------------------------------------------------------------
 // CLI args
 // ------------------------------------------------------------
@@ -170,16 +191,20 @@ async function tableCount(table) {
   return count ?? 0;
 }
 
-function runStage(script) {
+// Runs one child stage. Any non-zero exit aborts the loop, except codes
+// listed in `tolerate` — those are returned to the caller to interpret.
+// Returns the child's exit status.
+function runStage(script, { tolerate = [] } = {}) {
   const label = [script, ...STAGE_ARGS].join(" ");
   console.log(`\n──── running ${label} ${"─".repeat(Math.max(0, 40 - label.length))}`);
   const result = spawnSync("node", [path.join(__dirname, script), ...STAGE_ARGS], {
     stdio: "inherit",
     env: process.env, // DRY_RUN propagates to children
   });
-  if (result.status !== 0) {
+  if (result.status !== 0 && !tolerate.includes(result.status)) {
     throw new Error(`${script} exited with status ${result.status}`);
   }
+  return result.status;
 }
 
 // ------------------------------------------------------------
@@ -195,6 +220,12 @@ async function main() {
     console.log("--approved: every stage restricted to directory artists (directory_status = 'approved')\n");
   }
 
+  // Whether the round just run left rows unwritten. Declared out here so
+  // it survives the loop for the exit-code check below. Only the latest
+  // round matters: a later round that completes cleanly has already
+  // retried (and promoted) whatever an earlier one dropped.
+  let roundIncomplete = false;
+
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const stagedBefore = await tableCount("artist_harvested_links");
     const liveBefore = await tableCount("artist_links");
@@ -203,7 +234,8 @@ async function main() {
     console.log(`Before: ${stagedBefore} staged, ${liveBefore} live links`);
 
     for (const harvester of HARVESTERS) runStage(harvester);
-    runStage(INTEGRATE);
+    const integrateStatus = runStage(INTEGRATE, { tolerate: [EXIT_PARTIAL_WRITE_FAILURES] });
+    roundIncomplete = integrateStatus === EXIT_PARTIAL_WRITE_FAILURES;
 
     if (DRY_RUN) {
       console.log("\nDRY RUN — stopping after one round (nothing was written, so counts can't change).");
@@ -218,9 +250,32 @@ async function main() {
     console.log(`\nRound ${round} result: +${newStaged} staged, +${newLive} live links`);
 
     if (newStaged === 0 && newLive === 0) {
-      console.log(`\nConverged after ${round} round(s) — no new links found or promoted.`);
-      return;
+      // Static counts only prove convergence if the round actually
+      // managed to write. If it didn't, "nothing promoted" is a symptom
+      // of the failed writes, so keep going and give them another round.
+      if (roundIncomplete) {
+        console.log(
+          `\nRound ${round} finished with write failures — not treating ` +
+            `unchanged counts as convergence. Retrying next round.`
+        );
+      } else {
+        console.log(`\nConverged after ${round} round(s) — no new links found or promoted.`);
+        return;
+      }
     }
+  }
+
+  // Ran out of rounds with the final one still failing to write. Surface
+  // that to the caller — unlike plain non-convergence, this means rows
+  // are sitting in staging that we tried and failed to promote.
+  if (roundIncomplete) {
+    console.error(
+      `\nStopped at --max-rounds=${MAX_ROUNDS} with the final round still ` +
+        "failing to write links (see the integrate output above). " +
+        "Re-run once the database is reachable — nothing is lost."
+    );
+    process.exitCode = 1;
+    return;
   }
 
   console.log(
