@@ -64,5 +64,7 @@ supabase/.temp
 *.tsbuildinfo
 next-env.d.ts
 
-# claude local settings
-.claude/settings.local.json
+# claude local state — settings, agents, and the worktrees it creates
+# (those are checkouts of this same repo, so committing them would nest
+# a git repository inside itself)
+.claude/
