@@ -51,7 +51,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";

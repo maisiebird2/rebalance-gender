@@ -18,6 +18,7 @@ describe("isTemplatedPlatform", () => {
     expect(isTemplatedPlatform("soundcloud")).toBe(true);
     expect(isTemplatedPlatform("bandcamp")).toBe(true);
     expect(isTemplatedPlatform("resident_advisor")).toBe(true);
+    expect(isTemplatedPlatform("tiktok")).toBe(true);
   });
 
   it("is false for platforms that need more than a handle", () => {
@@ -283,6 +284,171 @@ describe("resolveProfileLinkUrl", () => {
   });
 });
 
+describe("cleanGenericUrl — YouTube /watch links", () => {
+  it("keeps the video id and start time, dropping the rest", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/watch?v=iefCRDKTSb0&t=5329s")).toBe(
+      "https://www.youtube.com/watch?v=iefCRDKTSb0&t=5329s"
+    );
+  });
+
+  it("handles a scheme-less watch URL (as pasted from a bio), keeping v and t", () => {
+    // Regression: previously the missing scheme made new URL() throw, so the
+    // whole query — video id included — was stripped down to "…/watch".
+    expect(cleanLinkUrl("youtube", "www.youtube.com/watch?v=iefCRDKTSb0&t=5329s")).toBe(
+      "www.youtube.com/watch?v=iefCRDKTSb0&t=5329s"
+    );
+  });
+
+  it("keeps the video id when there is no timestamp", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/watch?v=iefCRDKTSb0")).toBe(
+      "https://www.youtube.com/watch?v=iefCRDKTSb0"
+    );
+  });
+
+  it("drops share/tracking params while keeping v and t", () => {
+    expect(
+      cleanLinkUrl(
+        "youtube",
+        "https://www.youtube.com/watch?v=iefCRDKTSb0&t=90s&si=abc123&pp=xyz&feature=share"
+      )
+    ).toBe("https://www.youtube.com/watch?v=iefCRDKTSb0&t=90s");
+  });
+
+  it("drops a channel tab from an /@handle URL", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/@Sodomlandxx/videos")).toBe(
+      "https://www.youtube.com/@Sodomlandxx"
+    );
+  });
+
+  it("leaves a bare /@handle channel URL unchanged", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/@Sodomlandxx")).toBe(
+      "https://www.youtube.com/@Sodomlandxx"
+    );
+  });
+
+  it("drops a channel tab and its query together", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/@Sodomlandxx/streams?view=0")).toBe(
+      "https://www.youtube.com/@Sodomlandxx"
+    );
+  });
+
+  it("handles a scheme-less channel paste, staying scheme-less", () => {
+    expect(cleanLinkUrl("youtube", "www.youtube.com/@Sodomlandxx/videos")).toBe(
+      "www.youtube.com/@Sodomlandxx"
+    );
+  });
+
+  it("drops the tab from legacy /channel, /c and /user URLs", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/channel/UCabc123/videos")).toBe(
+      "https://www.youtube.com/channel/UCabc123"
+    );
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/c/SomeName/about")).toBe(
+      "https://www.youtube.com/c/SomeName"
+    );
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/user/LegacyName/playlists")).toBe(
+      "https://www.youtube.com/user/LegacyName"
+    );
+  });
+
+  it("still keeps the whole query on a /results search URL", () => {
+    expect(cleanLinkUrl("youtube", "https://www.youtube.com/results?search_query=nancy+whang")).toBe(
+      "https://www.youtube.com/results?search_query=nancy+whang"
+    );
+  });
+
+  it("save path yields the same trimmed watch URL", () => {
+    expect(
+      resolveProfileLinkUrl("youtube", "https://www.youtube.com/watch?v=iefCRDKTSb0&t=5329s", cleanLinkUrl)
+    ).toBe("https://www.youtube.com/watch?v=iefCRDKTSb0&t=5329s");
+  });
+});
+
+describe("normalizeProfileLink — TikTok (templated)", () => {
+  it("strips the ?_t/_r share-tracking tail, keeping the @handle profile", () => {
+    const result = normalizeProfileLink("tiktok", "https://www.tiktok.com/@i.am.blanka?_t=8obzsxtxw41&_r=1");
+    expect(result.url).toBe("https://www.tiktok.com/@i.am.blanka");
+    expect(result.handle).toBe("i.am.blanka");
+    expect(result.warning).toBeNull();
+  });
+
+  it("builds a canonical URL from a bare handle (with or without @)", () => {
+    expect(normalizeProfileLink("tiktok", "i.am.blanka").url).toBe("https://www.tiktok.com/@i.am.blanka");
+    expect(normalizeProfileLink("tiktok", "@i.am.blanka").url).toBe("https://www.tiktok.com/@i.am.blanka");
+  });
+
+  it("resolves a video sub-path down to the profile", () => {
+    const result = normalizeProfileLink("tiktok", "https://www.tiktok.com/@i.am.blanka/video/7123456789");
+    expect(result.url).toBe("https://www.tiktok.com/@i.am.blanka");
+    expect(result.handle).toBe("i.am.blanka");
+  });
+
+  it("leaves an opaque vm.tiktok.com share link untouched (no bogus @id profile)", () => {
+    // The path is a random id with no "@", so extractHandle returns null and the
+    // link passes through rather than becoming https://www.tiktok.com/@ZMabc123.
+    const result = normalizeProfileLink("tiktok", "https://vm.tiktok.com/ZMabc123/");
+    expect(result.url).toBe("https://vm.tiktok.com/ZMabc123/");
+    expect(result.warning).toMatch(/Couldn't find a handle/);
+  });
+
+  it("agrees with the save path", () => {
+    const input = "https://www.tiktok.com/@i.am.blanka?_t=8obzsxtxw41&_r=1";
+    expect(resolveProfileLinkUrl("tiktok", input, cleanLinkUrl)).toBe(
+      "https://www.tiktok.com/@i.am.blanka"
+    );
+  });
+
+  it("derives the bare handle (no @) for storage", () => {
+    expect(deriveHandle("tiktok", "https://www.tiktok.com/@i.am.blanka")).toBe("i.am.blanka");
+    expect(deriveHandle("tiktok", "https://www.tiktok.com/@i.am.blanka/video/7123456789")).toBe(
+      "i.am.blanka"
+    );
+  });
+});
+
+describe("cleanGenericUrl — Beatport artist links", () => {
+  it("drops a trailing sub-page, keeping /artist/<slug>/<id>", () => {
+    expect(cleanLinkUrl("beatport", "https://www.beatport.com/artist/mara-trax/62418/tracks")).toBe(
+      "https://www.beatport.com/artist/mara-trax/62418"
+    );
+  });
+
+  it("leaves an already-canonical /artist/<slug>/<id> URL unchanged", () => {
+    expect(cleanLinkUrl("beatport", "https://www.beatport.com/artist/mara-trax/62418")).toBe(
+      "https://www.beatport.com/artist/mara-trax/62418"
+    );
+  });
+
+  it("handles a scheme-less paste, staying scheme-less", () => {
+    expect(cleanLinkUrl("beatport", "www.beatport.com/artist/mara-trax/62418/tracks")).toBe(
+      "www.beatport.com/artist/mara-trax/62418"
+    );
+  });
+
+  it("drops a trailing sub-page and its query together", () => {
+    expect(
+      cleanLinkUrl("beatport", "https://www.beatport.com/artist/mara-trax/62418/charts?per-page=150")
+    ).toBe("https://www.beatport.com/artist/mara-trax/62418");
+  });
+
+  it("applies the same truncation to /label/<slug>/<id> URLs", () => {
+    expect(cleanLinkUrl("beatport", "https://www.beatport.com/label/mala-junta/98765/releases")).toBe(
+      "https://www.beatport.com/label/mala-junta/98765"
+    );
+  });
+
+  it("leaves a URL with no numeric id alone (nothing to truncate)", () => {
+    expect(cleanLinkUrl("beatport", "https://www.beatport.com/artist/mara-trax")).toBe(
+      "https://www.beatport.com/artist/mara-trax"
+    );
+  });
+
+  it("save path yields the canonical /artist/<slug>/<id> URL", () => {
+    expect(
+      resolveProfileLinkUrl("beatport", "https://www.beatport.com/artist/mara-trax/62418/tracks", cleanLinkUrl)
+    ).toBe("https://www.beatport.com/artist/mara-trax/62418");
+  });
+});
+
 describe("unwrapRedirectUrl", () => {
   const WRAPPED =
     "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fmartha_radio%3Futm_source%3Dig%26utm_medium%3Dsocial%26utm_content%3Dlink_in_bio%26fbclid%3DPAZabc&e=AUAu077sm9VUpqxy9uhJRvb";
@@ -323,6 +489,34 @@ describe("link-shim unwrapping through the save path", () => {
       "https://l.instagram.com/?u=https%3A%2F%2Fsoundcloud.com%2Freal-artist%3Fsi%3Dabc&e=x";
     const result = normalizeProfileLink("soundcloud", wrappedSc);
     expect(result.url).toBe("https://soundcloud.com/real-artist");
+    expect(result.wasTransformed).toBe(true);
+  });
+});
+
+describe("normalizeProfileLink — non-templated platforms strip tracking (blur == save)", () => {
+  const WRAPPED =
+    "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fjuli.tracks%3Futm_source%3Dig%26utm_medium%3Dsocial%26fbclid%3DPAZabc&e=AUAu077";
+
+  it("unwraps the shim AND strips the tracking tail on a wrapped Linktree URL", () => {
+    // Regression: previously the blur path only unwrapped the l.instagram.com
+    // shim and left ?utm…/?fbclid… on, so the field showed a different URL than
+    // the server stored on save. Now both strip the query.
+    const result = normalizeProfileLink("linktree", WRAPPED);
+    expect(result.url).toBe("https://linktr.ee/juli.tracks");
+    expect(result.wasTransformed).toBe(true);
+    expect(result.warning).toBeNull();
+  });
+
+  it("agrees with the save path for the same input", () => {
+    const blur = normalizeProfileLink("linktree", WRAPPED).url;
+    const save = resolveProfileLinkUrl("linktree", WRAPPED, cleanLinkUrl);
+    expect(blur).toBe(save);
+    expect(blur).toBe("https://linktr.ee/juli.tracks");
+  });
+
+  it("strips a plain tracking query on a non-templated URL (no shim)", () => {
+    const result = normalizeProfileLink("linktree", "https://linktr.ee/juli.tracks?igshid=abc");
+    expect(result.url).toBe("https://linktr.ee/juli.tracks");
     expect(result.wasTransformed).toBe(true);
   });
 });

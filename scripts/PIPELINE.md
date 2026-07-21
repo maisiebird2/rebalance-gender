@@ -649,8 +649,8 @@ known tracking/share params (Spotify's `si`/`nd`/`context`,
 param doesn't falsely flag against a clean live URL.
 
 ```bash
-node scripts/integrate-harvested-links.mjs
-node scripts/integrate-harvested-links.mjs --approved   # directory artists only
+npm run integrate-harvested-links
+npm run integrate-harvested-links -- --approved   # directory artists only
 ```
 
 `--approved` restricts promotion/flagging to directory artists (`directory_status = 'approved'`, excluding deleted).
@@ -749,7 +749,7 @@ resolves (all of which are in the platform priority list below).
 
 ### 5a. `scrape-images.ts` — multi-platform + `artist_images` 2026-07-09
 For each artist with `directory_status = 'approved'` (checked inside
-`enrichArtistImages()` itself, not just at the call site — no flag or
+`scrapeArtistImages()` itself, not just at the call site — no flag or
 future caller can bypass it), tries **every** linked profile the
 artist has, not just the first hit, and pulls the `og:image` meta tag
 as a best-effort profile photo from each one. No API key required.
@@ -1400,7 +1400,7 @@ npm run sync-soundcloud         # 2a (bio + image + staged links)
 npm run sync-discogs            # 2c
 npm run sync-linktree           # 2c (also bio + image)
 npm run sync-bandcamp           # 2b (also discography, bio, image, genres)
-node scripts/integrate-harvested-links.mjs   # 2d
+npm run integrate-harvested-links   # 2d
 npm run resolve-and-load-links
 npm run sanitize-bios
 npm run linkify-bios

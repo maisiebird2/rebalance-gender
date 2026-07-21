@@ -107,7 +107,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -262,41 +263,12 @@ async function fetchAll(table, select, applyFilters = (q) => q) {
 }
 
 // ------------------------------------------------------------
-// URL classification for staged socials. Same per-script-copy
-// convention as sync-discogs.mjs / integrate-harvested-links.mjs.
+// URL classification for staged socials. The domain -> platform key
+// table is shared (src/lib/classify-platform-url.ts);
+// CLASSIFY_CONFIGS.hoer carries this script's deviations — hoer.live/
+// .berlin self-links and YouTube (HÖR set videos are not an artist-
+// channel signal) are skipped.
 // ------------------------------------------------------------
-const DOMAIN_PLATFORM_MAP = [
-  [/(^|\.)soundcloud\.com$/i, "soundcloud"],
-  [/(^|\.)instagram\.com$/i, "instagram"],
-  [/(^|\.)open\.spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.link$/i, "spotify"],
-  [/(^|\.)youtube\.com$/i, "youtube"],
-  [/(^|\.)youtu\.be$/i, "youtube"],
-  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
-  [/(^|\.)ra\.co$/i, "resident_advisor"],
-  [/(^|\.)bandcamp\.com$/i, "bandcamp"],
-  [/(^|\.)facebook\.com$/i, "facebook"],
-  [/(^|\.)fb\.me$/i, "facebook"],
-  [/(^|\.)tiktok\.com$/i, "tiktok"],
-  [/(^|\.)linktr\.ee$/i, "linktree"],
-  [/(^|\.)beatport\.com$/i, "beatport"],
-  [/(^|\.)qobuz\.com$/i, "qobuz"],
-  [/(^|\.)tidal\.com$/i, "tidal"],
-  [/(^|\.)songkick\.com$/i, "songkick"],
-  [/(^|\.)music\.apple\.com$/i, "apple_music"],
-  [/(^|\.)itunes\.apple\.com$/i, "apple_music"],
-  [/(^|\.)last\.fm$/i, "lastfm"],
-  [/(^|\.)lastfm\.[a-z]+$/i, "lastfm"],
-  [/(^|\.)musicbrainz\.org$/i, "musicbrainz"],
-  [/(^|\.)mixcloud\.com$/i, "other"],
-];
-const SKIP_HOST_REGEXES = [
-  /(^|\.)(twitter\.com|x\.com|t\.co)$/i, // excluded per project policy
-  /(^|\.)hoer\.(live|berlin)$/i, // self-links (identity link handled directly)
-  /(^|\.)youtube\.com$/i, // HÖR set videos, not an artist channel signal here
-  /(^|\.)youtu\.be$/i,
-];
 function normalizeUrl(url) {
   const u = new URL(url.toString());
   u.protocol = "https:";
@@ -309,20 +281,11 @@ function classifyUrl(rawUrl) {
   // Rewrite pre-rebrand residentadvisor.net links onto ra.co up front, so
   // both the platform match and the stored parsed_url use the current host.
   rawUrl = canonicalizeResidentAdvisorUrl(rawUrl);
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-  if (!/^https?:$/.test(url.protocol)) return null;
-  const host = url.hostname.toLowerCase();
-  for (const re of SKIP_HOST_REGEXES) if (re.test(host)) return null;
-  if (host.endsWith(".wikipedia.org") || host === "wikipedia.org")
-    return { platform: "wikipedia", parsedUrl: normalizeUrl(url) };
-  for (const [re, platform] of DOMAIN_PLATFORM_MAP)
-    if (re.test(host)) return { platform, parsedUrl: normalizeUrl(url) };
-  return { platform: "other", parsedUrl: normalizeUrl(url) };
+  // Shared domain table + this script's deviations; returns null for
+  // unparseable/non-http(s)/skip-listed hosts.
+  const platform = classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.hoer);
+  if (!platform) return null;
+  return { platform, parsedUrl: normalizeUrl(new URL(rawUrl)) };
 }
 
 // ------------------------------------------------------------

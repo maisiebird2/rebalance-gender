@@ -218,7 +218,8 @@ import {
   upgradeAvatarUrl,
   isDefaultAvatarUrl,
 } from "./lib/soundcloud.mjs";
-import { canonicalizeResidentAdvisorUrl } from "./lib/ra-url.mjs";
+import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
+import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -480,51 +481,14 @@ function extractPlainUrls(text) {
 
 // ------------------------------------------------------------
 // Platform classification for harvested links (web-profiles + bio
-// URLs). Same per-script-copy convention as every other harvester in
-// this folder (integrate-harvested-links.mjs, sync-discogs.mjs)
-// rather than a shared import.
+// URLs). The domain -> platform key table is shared with the web forms
+// and every other harvester (see src/lib/classify-platform-url.ts);
+// CLASSIFY_CONFIGS.soundcloud skips soundcloud.com self-links on top of
+// the central Twitter/X policy skip.
 // ------------------------------------------------------------
-const DOMAIN_PLATFORM_MAP = [
-  [/(^|\.)instagram\.com$/i, "instagram"],
-  [/(^|\.)open\.spotify\.com$/i, "spotify"],
-  [/(^|\.)spotify\.link$/i, "spotify"],
-  [/(^|\.)youtube\.com$/i, "youtube"],
-  [/(^|\.)youtu\.be$/i, "youtube"],
-  [/(^|\.)music\.youtube\.com$/i, "youtube"],
-  [/(^|\.)residentadvisor\.net$/i, "resident_advisor"],
-  [/(^|\.)ra\.co$/i, "resident_advisor"],
-  [/(^|\.)bandcamp\.com$/i, "bandcamp"],
-  [/(^|\.)facebook\.com$/i, "facebook"],
-  [/(^|\.)fb\.me$/i, "facebook"],
-  [/(^|\.)tiktok\.com$/i, "tiktok"],
-  [/(^|\.)linktr\.ee$/i, "linktree"],
-  [/(^|\.)beatport\.com$/i, "beatport"],
-  [/(^|\.)discogs\.com$/i, "discogs"],
-];
-
-const TWITTER_HOST_REGEX = /(^|\.)(twitter\.com|x\.com)$/i;
 
 function classify(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  const host = url.hostname.toLowerCase();
-
-  if (TWITTER_HOST_REGEX.test(host)) return null; // excluded per project policy
-  if (SOUNDCLOUD_HOST_REGEX.test(host)) return null; // self-link, not useful
-
-  for (const [hostRegex, platform] of DOMAIN_PLATFORM_MAP) {
-    if (hostRegex.test(host)) return platform;
-  }
-
-  // Unrecognized external domain — still worth keeping as a generic
-  // candidate (e.g. a personal site). Classified as "other" to match
-  // the existing "other" key in the platforms table.
-  return "other";
+  return classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.soundcloud);
 }
 
 function normalizeUrl(rawUrl, platform) {

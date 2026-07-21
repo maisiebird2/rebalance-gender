@@ -25,8 +25,8 @@ interface Props {
  * conversion guessed wrong.
  *
  * Normalization only applies to platforms lib/profile-links.ts has a
- * template for (soundcloud, instagram, bandcamp, resident_advisor);
- * for everything else this behaves like a plain input.
+ * template for (soundcloud, instagram, tiktok, bandcamp,
+ * resident_advisor); for everything else this behaves like a plain input.
  */
 export default function ProfileLinkField({
   platform,
