@@ -209,7 +209,7 @@ import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
-import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.mjs";
+import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.js";
 import {
   createSoundcloudClient,
   sleep,
@@ -253,7 +253,7 @@ const STATE_SERVICE = "soundcloud-sync"; // resolved_artists.service / harvest_f
 // separate from STATE_SERVICE; see "Image handling" above.
 // Shared across every source that acquires images, so a scrape fallback
 // and this API path write the same row rather than two half-answers in
-// separate namespaces. See src/lib/images/failures.mjs.
+// separate namespaces. See src/lib/images/failures.ts.
 const IMAGE_STATE_SERVICE = imageFailureService("soundcloud");
 
 // ------------------------------------------------------------

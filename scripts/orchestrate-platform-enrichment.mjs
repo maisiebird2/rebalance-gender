@@ -104,7 +104,7 @@
 // ============================================================
 
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
+import { scriptRuntime } from "./lib/script-runtime.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -128,15 +128,12 @@ const maxRoundsArg = args.find((a) => a.startsWith("--max-rounds="));
 function runStage(script, stageArgs = []) {
   const label = [script, ...stageArgs].join(" ");
   console.log(`\n════════ ${label} ${"═".repeat(Math.max(0, 48 - label.length))}`);
-  // TypeScript stages run under tsx (the same runtime their npm script
-  // uses); .mjs stages run under plain node. tsx is located through
-  // node's own resolution rather than a node_modules/.bin path, so this
-  // keeps working from a git worktree, where node_modules lives in the
-  // main checkout rather than beside the script.
-  const isTs = script.endsWith(".ts");
-  const runtime = isTs ? process.execPath : "node";
-  const prefixArgs = isTs ? [createRequire(import.meta.url).resolve("tsx/cli")] : [];
-  const result = spawnSync(runtime, [...prefixArgs, path.join(__dirname, script), ...stageArgs], {
+  // Every stage runs under tsx regardless of extension: the .mjs stages
+  // import TypeScript from src/lib just as the .ts ones do, so the file
+  // extension says nothing about which runtime it needs. See
+  // scripts/lib/script-runtime.mjs.
+  const { command, prefixArgs } = scriptRuntime();
+  const result = spawnSync(command, [...prefixArgs, path.join(__dirname, script), ...stageArgs], {
     stdio: "inherit",
     env: process.env, // DRY_RUN (and everything else) propagates to children
   });

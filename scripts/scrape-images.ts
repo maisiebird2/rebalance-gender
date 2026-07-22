@@ -33,7 +33,7 @@
 // No cache file — state lives in the DB. A platform is skipped once
 // artist_images has a row for it, or once harvest_failures has a
 // definitive row for it (service = "image:<platform>" — see
-// src/lib/images/failures.mjs). The skip is keyed to the exact link: both records store
+// src/lib/images/failures.ts). The skip is keyed to the exact link: both records store
 // the profile URL they came from, so a link edited/corrected to a
 // different URL is treated as never-tried and re-fetched automatically,
 // force or not. If a link changes to a page with no image, the stale

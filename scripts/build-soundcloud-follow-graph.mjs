@@ -50,14 +50,14 @@
 //
 // Usage (from the rebalance-gender/ folder):
 //
-//   node scripts/build-soundcloud-follow-graph.mjs                  # all approved artists not yet processed
-//   node scripts/build-soundcloud-follow-graph.mjs --limit=5        # only the next 5 unprocessed source artists (for testing)
-//   node scripts/build-soundcloud-follow-graph.mjs --force          # re-pull all artists, including already-processed ones
-//   node scripts/build-soundcloud-follow-graph.mjs --debug          # log every followed account considered
-//   node scripts/build-soundcloud-follow-graph.mjs --max-followings=200
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs                  # all approved artists not yet processed
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs --limit=5        # only the next 5 unprocessed source artists (for testing)
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs --force          # re-pull all artists, including already-processed ones
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs --debug          # log every followed account considered
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs --max-followings=200
 //                                                                    # cap how many followings are pulled per source artist (default 500; 0 = unlimited)
-//   node scripts/build-soundcloud-follow-graph.mjs --name=jeanne    # only source artists whose name matches (testing a single artist)
-//   DRY_RUN=1 node scripts/build-soundcloud-follow-graph.mjs        # fetch + log, don't write to the DB
+//   npx tsx scripts/build-soundcloud-follow-graph.mjs --name=jeanne    # only source artists whose name matches (testing a single artist)
+//   DRY_RUN=1 npx tsx scripts/build-soundcloud-follow-graph.mjs        # fetch + log, don't write to the DB
 //
 // Start with --limit (and/or --name) on a small batch before running
 // the full ~1,400 — a single popular artist's followings list can run

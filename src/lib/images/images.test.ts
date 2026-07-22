@@ -5,8 +5,8 @@ import {
   isDefinitiveImageFailure,
   isTransientImageFailure,
   platformFromImageFailureService,
-} from "./failures.mjs";
-import { describePlaceholderImageUrl, isPlaceholderImageUrl } from "./placeholders.mjs";
+} from "./failures";
+import { describePlaceholderImageUrl, isPlaceholderImageUrl } from "./placeholders";
 
 const LASTFM_PLACEHOLDER =
   "https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg";

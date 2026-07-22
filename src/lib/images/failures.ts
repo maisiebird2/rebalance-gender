@@ -19,8 +19,9 @@
 // already acquired — a different concern, and folding it in here would
 // collide on the (artist_id, service) primary key.
 //
-// Plain .mjs rather than .ts so both plain-node scripts and the TS/Next
-// side can import it; types live alongside in failures.d.mts.
+// Imported by both the scripts/ side (which runs under tsx) and the
+// Next-bundled lib, so this is the single definition of the vocabulary
+// rather than a fact copied into each.
 //
 // See scripts/IMAGE-HARVESTING-PLAN.md (Phase 0).
 // ============================================================
@@ -28,12 +29,12 @@
 export const IMAGE_FAILURE_SERVICE_PREFIX = "image:";
 
 /** harvest_failures.service value for one platform's image acquisition. */
-export function imageFailureService(platform) {
+export function imageFailureService(platform: string): string {
   return `${IMAGE_FAILURE_SERVICE_PREFIX}${platform}`;
 }
 
 /** Inverse of imageFailureService(); null for any other service key. */
-export function platformFromImageFailureService(service) {
+export function platformFromImageFailureService(service: string): string | null {
   return service.startsWith(IMAGE_FAILURE_SERVICE_PREFIX)
     ? service.slice(IMAGE_FAILURE_SERVICE_PREFIX.length)
     : null;
@@ -50,7 +51,7 @@ export function platformFromImageFailureService(service) {
  * itself, and collapsing the two is what let YouTube return nothing for
  * every artist without anyone noticing.
  */
-export const IMAGE_FAILURE_STATUS = Object.freeze({
+export const IMAGE_FAILURE_STATUS = {
   /** Source says this artist has no photo (empty og:image, no avatar). */
   NO_IMAGE: "no_image",
   /** Nothing to read: no og:image/twitter:image tag anywhere on the page. */
@@ -67,14 +68,18 @@ export const IMAGE_FAILURE_STATUS = Object.freeze({
   FETCH_FAILED: "fetch_failed",
   /** Acquisition worked; persisting it didn't. */
   WRITE_FAILED: "write_failed",
-});
+} as const;
+
+/** Every status the vocabulary defines. */
+export type ImageFailureStatus =
+  (typeof IMAGE_FAILURE_STATUS)[keyof typeof IMAGE_FAILURE_STATUS];
 
 // Definitive: we know the answer, so don't spend another fetch on it
 // without --force. NO_IMAGE_TAG is definitive to preserve the existing
 // skip-on-retry behaviour, but it is the one worth watching: if a
 // platform's scrape breaks, this is the status that fills up, and
 // reclassifying it as transient is the lever to auto-heal such a run.
-const DEFINITIVE_STATUSES = new Set([
+const DEFINITIVE_STATUSES: ReadonlySet<string> = new Set([
   IMAGE_FAILURE_STATUS.NO_IMAGE,
   IMAGE_FAILURE_STATUS.NO_IMAGE_TAG,
   IMAGE_FAILURE_STATUS.PLACEHOLDER,
@@ -84,16 +89,16 @@ const DEFINITIVE_STATUSES = new Set([
 // Transient: unknown rather than absent. Always retried, and the only
 // thing that makes a dedicated-harvester platform eligible for a scrape
 // fallback (see scrape-images.ts).
-const TRANSIENT_STATUSES = new Set([
+const TRANSIENT_STATUSES: ReadonlySet<string> = new Set([
   IMAGE_FAILURE_STATUS.FETCH_FAILED,
   IMAGE_FAILURE_STATUS.WRITE_FAILED,
 ]);
 
-export function isDefinitiveImageFailure(status) {
+export function isDefinitiveImageFailure(status: string): boolean {
   return DEFINITIVE_STATUSES.has(status);
 }
 
-export function isTransientImageFailure(status) {
+export function isTransientImageFailure(status: string): boolean {
   return TRANSIENT_STATUSES.has(status);
 }
 
@@ -103,7 +108,7 @@ export function isTransientImageFailure(status) {
  * to migrate — these are kept only so cleanup paths (prune-artist-images)
  * still sweep any row written by an older checkout.
  */
-export const LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES = Object.freeze([
+export const LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES: readonly string[] = [
   "image-enrich:",
   "image-sync:",
-]);
+];

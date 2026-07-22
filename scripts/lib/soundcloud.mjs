@@ -1,4 +1,4 @@
-import { isPlaceholderImageUrl } from "../../src/lib/images/placeholders.mjs";
+import { isPlaceholderImageUrl } from "../../src/lib/images/placeholders.js";
 // ============================================================
 // Shared SoundCloud API client + URL helpers.
 //

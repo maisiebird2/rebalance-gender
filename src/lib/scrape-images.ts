@@ -56,7 +56,7 @@
 // *transient* one (fetch_failed, write_failed) means unknown, so it's
 // always retried — and is the single condition under which a
 // dedicated-harvester platform becomes eligible for a fallback scrape.
-// See src/lib/images/failures.mjs for the vocabulary.
+// See src/lib/images/failures.ts for the vocabulary.
 //
 // The skip set is keyed to the exact link, not just the platform: both
 // records store the profile URL they came from (artist_images.source_page_url
@@ -81,12 +81,12 @@
 // which is written for the scripts/ side and takes a client this module
 // doesn't construct. What must not diverge is the *vocabulary* — the
 // service key and status set — and that is shared, not copied:
-// src/lib/images/failures.mjs and placeholders.mjs are plain .mjs with
-// companion .d.mts declarations, so the plain-Node scripts and this
-// Next-bundled module import one definition. Prefer that pattern over
-// the older per-script copies (PLATFORM_PRIORITY in store-images.mjs,
-// the domain tables shared by sync-soundcloud/sync-bandcamp) when the
-// thing being shared is a fact both sides must agree on.
+// src/lib/images/failures.ts and placeholders.ts are imported by both
+// the scripts/ side (which runs under tsx) and this Next-bundled module.
+// Prefer that over the older per-script copies (PLATFORM_PRIORITY in
+// store-images.mjs, the domain tables shared by sync-soundcloud and
+// sync-bandcamp) when the thing being shared is a fact both sides must
+// agree on.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -96,12 +96,12 @@ import {
   isDefinitiveImageFailure,
   isTransientImageFailure,
   platformFromImageFailureService,
-} from "@/lib/images/failures.mjs";
-import type { ImageFailureStatus } from "@/lib/images/failures.mjs";
+} from "@/lib/images/failures";
+import type { ImageFailureStatus } from "@/lib/images/failures";
 import {
   describePlaceholderImageUrl,
   isPlaceholderImageUrl,
-} from "@/lib/images/placeholders.mjs";
+} from "@/lib/images/placeholders";
 
 // Platform priority: try these link types in this order. Every
 // candidate the artist has a link for gets tried (not just the
@@ -178,7 +178,7 @@ export type OgImageResult =
   //
   // `transient` is derived from `status` rather than tracked separately —
   // the shared vocabulary is the single place that decides which outcomes
-  // are worth retrying. See src/lib/images/failures.mjs.
+  // are worth retrying. See src/lib/images/failures.ts.
   | { found: false; status: ImageFailureStatus; detail: string };
 
 /** Whether a failed OgImageResult should be retried on the next run. */
