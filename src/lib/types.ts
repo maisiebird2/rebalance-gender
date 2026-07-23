@@ -184,6 +184,14 @@ export interface Artist {
   labels: string | null;
   notes: string | null;
   directory_status: ArtistStatus;
+  /**
+   * The artist this row duplicates, when directory_status is 'duplicate'.
+   * Null otherwise, and also null for a duplicate whose canonical entry
+   * hasn't been identified yet. Set from the edit form; cleared whenever the
+   * status moves off 'duplicate'. See
+   * supabase_migration_artist_duplicate_of.sql.
+   */
+  duplicate_of: string | null;
   submitted_by_email: string | null;
   submitted_at: string | null;
   profile_image_url: string | null;

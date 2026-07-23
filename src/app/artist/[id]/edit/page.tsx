@@ -91,7 +91,23 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
   if (!data) notFound();
 
   const artist = normalizeArtist(data);
-  
+
+  // Name of the stored duplicate_of target, so the form can show which entry
+  // the saved ID refers to without the admin having to open it. Queried
+  // separately rather than embedded in ARTIST_ADMIN_SELECT: a self-join on
+  // the FK would make this page fail outright if the column is ever missing
+  // (e.g. before supabase_migration_artist_duplicate_of.sql is applied).
+  let duplicateOfName: string | null = null;
+  if (artist.duplicate_of) {
+    const { data: target } = await admin
+      .from("artists")
+      .select("name")
+      .eq("id", artist.duplicate_of)
+      .maybeSingle();
+    duplicateOfName = target?.name ?? null;
+  }
+
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6">
@@ -107,7 +123,12 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         Editing: {artist.name}
       </h1>
 
-      <EditForm artist={artist} genreOptions={genreOptions} platforms={platforms} />
+      <EditForm
+        artist={artist}
+        genreOptions={genreOptions}
+        platforms={platforms}
+        duplicateOfName={duplicateOfName}
+      />
     </div>
   );
 }

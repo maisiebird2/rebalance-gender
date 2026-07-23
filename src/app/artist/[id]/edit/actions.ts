@@ -12,12 +12,77 @@ import {
   imageFailureService,
   LEGACY_IMAGE_FAILURE_SERVICE_PREFIXES,
 } from "@/lib/images/failures";
+import { parseArtistIdInput } from "@/lib/duplicate-of";
+import type { DuplicateTargetResult } from "@/lib/duplicate-of";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 
 interface LinkInput {
   platform: LinkPlatform;
   url: string | null;
   not_found?: boolean;
+}
+
+/**
+ * Check an entered "Duplicate of" value: that it contains an artist id at all,
+ * and that the id names an artist this row may legitimately point at.
+ *
+ * Rejects a soft-deleted target, the artist itself, and a target that is
+ * itself a duplicate — the last so duplicates always point straight at a
+ * canonical entry instead of forming chains that every reader would have to
+ * walk. Shared by the on-blur check and saveArtist, so the two can't drift.
+ */
+async function resolveDuplicateTarget(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+  raw: string,
+  selfId: string
+): Promise<DuplicateTargetResult> {
+  const targetId = parseArtistIdInput(raw);
+  if (!targetId) {
+    return {
+      ok: false,
+      error: "Enter an artist ID or paste an artist page URL.",
+    };
+  }
+  if (targetId === selfId) {
+    return { ok: false, error: "An artist can't be a duplicate of itself." };
+  }
+
+  const { data, error } = await admin
+    .from("artists")
+    .select("id, name, deleted, directory_status")
+    .eq("id", targetId)
+    .maybeSingle();
+
+  if (error) return { ok: false, error: `Lookup failed: ${error.message}` };
+  if (!data) return { ok: false, error: "No artist found with that ID." };
+  if (data.deleted) {
+    return { ok: false, error: `“${data.name}” has been deleted.` };
+  }
+  if (data.directory_status === "duplicate") {
+    return {
+      ok: false,
+      error: `“${data.name}” is itself marked a duplicate — point at the entry being kept.`,
+    };
+  }
+
+  return { ok: true, id: data.id as string, name: data.name as string };
+}
+
+/**
+ * On-blur check for the edit form's "Duplicate of" field. Returns the matched
+ * artist's name so the form can show what the pasted ID actually resolved to.
+ */
+export async function checkDuplicateTarget(
+  raw: string,
+  selfId: string
+): Promise<DuplicateTargetResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated" };
+
+  return resolveDuplicateTarget(getSupabaseAdminClient(), raw, selfId);
 }
 
 export async function saveArtist(
@@ -35,6 +100,7 @@ export async function saveArtist(
   const name = ((formData.get("name") ?? "") as string).trim();
   const pronounsValue = ((formData.get("pronouns") ?? "") as string).trim();
   const directoryStatus = formData.get("directory_status") as ArtistStatus;
+  const duplicateOfRaw = ((formData.get("duplicate_of") ?? "") as string).trim();
   const locationsRaw = (formData.get("locations") ?? "[]") as string;
   const labelListRaw = (formData.get("label_list") ?? "[]") as string;
   const aliasesRaw = (formData.get("aliases") ?? "[]") as string;
@@ -109,6 +175,20 @@ export async function saveArtist(
     }
   }
 
+  // ── 3b. Resolve the duplicate target ──────────────────────────
+  // Re-checked here rather than trusting the form's on-blur result: the field
+  // is free text, and the artist it names can change between blur and save.
+  // Any status other than 'duplicate' clears the column, so flipping an entry
+  // back to approved never leaves a stale pointer behind. An empty value is
+  // allowed — a row can be known to be a duplicate before the entry it
+  // duplicates has been found.
+  let duplicateOf: string | null = null;
+  if (directoryStatus === "duplicate" && duplicateOfRaw) {
+    const target = await resolveDuplicateTarget(admin, duplicateOfRaw, artistId);
+    if (!target.ok) return { error: `Duplicate of: ${target.error}` };
+    duplicateOf = target.id;
+  }
+
   // ── 4. Update core artist row ──────────────────────────────────
   const { error: artistErr } = await admin
     .from("artists")
@@ -116,6 +196,7 @@ export async function saveArtist(
       name,
       pronoun_id: pronounId,
       directory_status: directoryStatus,
+      duplicate_of: duplicateOf,
       notes,
       booking_info: bookingInfo,
       management_info: managementInfo,
