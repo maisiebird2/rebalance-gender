@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { saveArtist, deleteArtist } from "./actions";
+import { saveArtist, deleteArtist, checkDuplicateTarget } from "./actions";
 import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistAlias, ArtistLabel, Platform } from "@/lib/types";
 import TextList from "@/components/form/TextList";
 import GenreList from "@/components/form/GenreList";
@@ -15,6 +15,8 @@ interface Props {
   artist: ArtistWithRelations;
   genreOptions: string[];
   platforms: Platform[];
+  /** Name of the already-stored duplicate_of target, resolved by the page. */
+  duplicateOfName: string | null;
 }
 
 const STATUSES: ArtistStatus[] = [
@@ -42,7 +44,14 @@ function statusLabel(status: ArtistStatus): string {
     .join(" ");
 }
 
-export default function EditForm({ artist, genreOptions, platforms }: Props) {
+// Result of checking the "Duplicate of" entry against the database.
+type DupCheck =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "ok"; id: string; name: string }
+  | { state: "error"; message: string };
+
+export default function EditForm({ artist, genreOptions, platforms, duplicateOfName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -66,6 +75,34 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
       ? artist.locations.map((l) => ({ city: l.city ?? "", country: l.country ?? "" }))
       : [{ city: "", country: "" }]
   );
+
+  // ── Duplicate-of state ────────────────────────────────────────
+  // The status drives whether the "Duplicate of" field is shown at all, so it
+  // has to be controlled rather than left to the DOM's defaultValue.
+  const [status, setStatus] = useState<ArtistStatus>(artist.directory_status);
+  const [duplicateOf, setDuplicateOf] = useState(artist.duplicate_of ?? "");
+  const [dupCheck, setDupCheck] = useState<DupCheck>(
+    artist.duplicate_of && duplicateOfName
+      ? { state: "ok", id: artist.duplicate_of, name: duplicateOfName }
+      : { state: "idle" }
+  );
+
+  async function checkDuplicateOf() {
+    const raw = duplicateOf.trim();
+    if (!raw) {
+      setDupCheck({ state: "idle" });
+      return;
+    }
+    setDupCheck({ state: "checking" });
+    const result = await checkDuplicateTarget(raw, artist.id);
+    if (result.ok) {
+      // Collapse a pasted URL down to the bare ID that gets stored.
+      setDuplicateOf(result.id);
+      setDupCheck({ state: "ok", id: result.id, name: result.name });
+    } else {
+      setDupCheck({ state: "error", message: result.error });
+    }
+  }
 
   // ── Link state ────────────────────────────────────────────────
   const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
@@ -115,6 +152,9 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
     formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
     formData.set("aliases", JSON.stringify(aliasNames.filter(Boolean)));
+    // Always sent, even when the field is hidden: saveArtist ignores it for
+    // any status other than 'duplicate' and clears the stored value.
+    formData.set("duplicate_of", duplicateOf.trim());
     if (forceApprove) {
       formData.set("directory_status", "approved");
     } else if (forceNotEligible) {
@@ -197,7 +237,8 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
           <select
             id="directory_status"
             name="directory_status"
-            defaultValue={artist.directory_status}
+            value={status}
+            onChange={(e) => setStatus(e.target.value as ArtistStatus)}
             className="w-40 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
             {STATUSES.map((s) => (
@@ -207,6 +248,51 @@ export default function EditForm({ artist, genreOptions, platforms }: Props) {
             ))}
           </select>
         </div>
+
+        {status === "duplicate" && (
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium" htmlFor="duplicate_of">
+              Duplicate of
+            </label>
+            <input
+              id="duplicate_of"
+              type="text"
+              value={duplicateOf}
+              onChange={(e) => {
+                setDuplicateOf(e.target.value);
+                // Drop any previous result so a stale ✓ can't sit under
+                // text that has since been edited.
+                setDupCheck({ state: "idle" });
+              }}
+              onBlur={checkDuplicateOf}
+              placeholder="Artist ID, or paste the artist's page URL"
+              className="rounded-md border border-gray-300 px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
+            />
+            {dupCheck.state === "ok" ? (
+              <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                ✓ Duplicate of{" "}
+                <a
+                  href={`/artist/${dupCheck.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium underline"
+                >
+                  {dupCheck.name}
+                </a>
+              </p>
+            ) : dupCheck.state === "error" ? (
+              <p className="text-xs text-red-600 dark:text-red-400">
+                {dupCheck.message}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {dupCheck.state === "checking"
+                  ? "Checking…"
+                  : "The entry this artist duplicates. Optional — leave blank if it isn't known yet."}
+              </p>
+            )}
+          </div>
+        )}
       </fieldset>
 
       {/* ── Location ───────────────────────────────────────────── */}
