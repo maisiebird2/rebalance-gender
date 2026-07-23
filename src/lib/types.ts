@@ -10,7 +10,9 @@ export type ArtistStatus =
   | "sc_followee"
   | "duplicate"
   | "unverified"
-  | "obscure";
+  | "obscure"
+  | "not_electronic"
+  | "label_etc";
 
 // ── Submission / revision system ─────────────────────────────────────────────
 
