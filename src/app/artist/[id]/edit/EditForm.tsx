@@ -28,6 +28,8 @@ const STATUSES: ArtistStatus[] = [
   "sc_followee",
   "duplicate",
   "obscure",
+  "not_electronic",
+  "label_etc",
 ];
 
 // Words shown as acronyms rather than title-cased, e.g. "sc_followee" -> "SC followee".
