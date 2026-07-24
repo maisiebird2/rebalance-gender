@@ -854,6 +854,23 @@ console-only — this was a known gap in the original single-winner
 version (failures there only ever logged to console) and is fixed as
 part of this rewrite.
 
+**HTTP/1.1 only (2026-07-24).** Bulk runs used to die partway
+through: one TLS-level error, then every remaining Supabase request
+failing `ERR_HTTP2_INVALID_SESSION` until restart. Root cause: undici
+8 (an explicit Agent and Node ≥26's built-in fetch alike) speaks
+HTTP/2 by default, multiplexing all requests to an origin over one
+shared session — and when that session dies, undici keeps dispatching
+onto it instead of evicting it from the pool. Earlier guesses at this
+from inside store-images.mjs (`pipelining: 0`, then a short
+`keepAliveTimeout` alone) changed nothing because both tune HTTP/1.1
+socket handling and fetch was never on HTTP/1.1. The fix lives in
+`scripts/lib/http-dispatcher.mjs`: an `allowH2: false` Agent
+installed process-wide via `setGlobalDispatcher`, so each connection
+fails independently and per-request retry loops reconnect cleanly.
+Every network-touching entry point in `scripts/` imports it as its
+first import — do the same in any new script that talks to the
+network (`import "./lib/http-dispatcher.mjs";`).
+
 ```bash
 node scripts/store-images.mjs
 ```

@@ -41,6 +41,9 @@
 // and NEXT_PUBLIC_SITE_URL for the artist-page hyperlinks).
 // ============================================================
 
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

@@ -23,6 +23,9 @@
 //   node scripts/backfill-sc-followee-names.mjs --limit=50      # cap rows (test)
 //   node scripts/backfill-sc-followee-names.mjs --apply --debug # verbose errors
 
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

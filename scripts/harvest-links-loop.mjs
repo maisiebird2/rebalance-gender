@@ -43,6 +43,9 @@
 // plus whatever each harvester needs — e.g. DISCOGS_TOKEN).
 // ============================================================
 
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import { spawnSync } from "node:child_process";
 import { scriptRuntime } from "./lib/script-runtime.mjs";
 import { createClient } from "@supabase/supabase-js";
