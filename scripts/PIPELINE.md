@@ -854,6 +854,23 @@ console-only — this was a known gap in the original single-winner
 version (failures there only ever logged to console) and is fixed as
 part of this rewrite.
 
+**Dead source URLs are dropped (2026-07-24).** A download that comes
+back 4xx (except 429) is a permanent rejection: the image moved or
+was deleted since scraping (404), or the CDN refuses our client /
+the URL's signed token expired (403). Such a row is recorded in
+`harvest_failures` as `status = "source_gone"` and its
+`artist_images` row is **deleted** — three fixes in one: this script
+stops retrying it every run, `scrape-images.ts` regains the ability
+to re-discover the artist's current image URL on the next enrichment
+run (an existing row marks the platform "covered", so a dead row
+otherwise blocks re-scraping forever), and the frontend stops
+falling back to the dead `source_url` (broken images for visitors).
+soundcloud/bandcamp rows dropped this way are re-created with fresh
+URLs by their own harvesters. No naming collision: `scrape-images`'s
+skip-set reads `service LIKE "image:<platform>"`, never
+`image-store:`, so the `source_gone` record doesn't suppress the
+re-scrape.
+
 **HTTP/1.1 only (2026-07-24).** Bulk runs used to die partway
 through: one TLS-level error, then every remaining Supabase request
 failing `ERR_HTTP2_INVALID_SESSION` until restart. Root cause: undici
