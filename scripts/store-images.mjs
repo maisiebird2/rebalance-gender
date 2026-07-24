@@ -253,7 +253,11 @@ async function downloadImage(url, { retries = 3 } = {}) {
         redirect: "follow",
         dispatcher,
       });
-      if (!res.ok) return { error: `HTTP ${res.status}` };
+      // A non-OK status is still a COMPLETED HTTP exchange — the
+      // connection provably works and the source has simply rejected
+      // this URL (stale 404, hotlink-blocking 403, …). Flagged so the
+      // caller can keep it out of the connectivity early-bail count.
+      if (!res.ok) return { error: `HTTP ${res.status}`, serverResponded: true };
       const contentType = res.headers.get("content-type") ?? "image/jpeg";
       const buffer = Buffer.from(await res.arrayBuffer());
       return { buffer, contentType };
@@ -377,23 +381,34 @@ async function main() {
 
   let uploaded = 0;
   let failed = 0;
-  // If the connection-pool fix above isn't enough (or something else
-  // sustained goes wrong), stop after a run of consecutive failures
-  // instead of grinding through the rest of a 1000+ row list — a
-  // rerun is safe and cheap (only rows still missing storage_url get
-  // reprocessed), so bailing out fast beats burning through every
-  // remaining row on a doomed connection.
+  // Stop after a run of consecutive NETWORK-LEVEL failures instead of
+  // grinding through the rest of a 1000+ row list: with a genuinely
+  // dead connection every remaining row would burn ~4 retry attempts
+  // with backoff and 15s timeouts for nothing, and a rerun is safe
+  // and cheap (only rows still missing storage_url get reprocessed).
+  // Originally added for the HTTP/2 poisoned-session bug (fixed for
+  // real in scripts/lib/http-dispatcher.mjs); kept for ordinary
+  // sustained outages (wifi drop mid-run).
+  //
+  // Only failures with no HTTP response — fetch failed, timeout —
+  // count toward the bail. A completed non-OK response (stale-URL
+  // 404, hotlink 403) proves the connection works and is a per-image
+  // outcome, same category as too_large, so it RESETS the counter;
+  // stale URLs cluster by platform (dead HÖR/Last.fm images sit on
+  // adjacent rows), and counting them once misreported a stretch of
+  // 404s as "check your connection" (2026-07-24).
   const MAX_CONSECUTIVE_FAILURES = 8;
   let consecutiveFailures = 0;
   const bailIfSustainedFailure = () => {
     consecutiveFailures++;
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       console.log(
-        `\n${MAX_CONSECUTIVE_FAILURES} artists in a row failed even after retries — ` +
-          `stopping early rather than grinding through the rest. This usually means a ` +
-          `sustained connectivity problem, not anything wrong with those specific images. ` +
-          `Check your connection and re-run this script — it only reprocesses rows still ` +
-          `missing storage_url, so nothing already uploaded is redone.`
+        `\n${MAX_CONSECUTIVE_FAILURES} rows in a row hit network-level failures even after ` +
+          `retries — stopping early rather than grinding through the rest. This means a ` +
+          `sustained connectivity problem, not anything wrong with those specific images ` +
+          `(per-image rejections like a 404 don't count toward this). Check your connection ` +
+          `and re-run this script — it only reprocesses rows still missing storage_url, ` +
+          `so nothing already uploaded is redone.`
       );
       console.log(`  uploaded so far: ${uploaded}`);
       console.log(`  failed so far:   ${failed}`);
@@ -424,7 +439,14 @@ async function main() {
           url: sourceUrl,
         });
       }
-      bailIfSustainedFailure();
+      if (downloaded.serverResponded) {
+        // The source answered (404/403/…): connection is fine, this
+        // image is just gone — must not count toward the
+        // connectivity early-bail (see bailIfSustainedFailure above).
+        consecutiveFailures = 0;
+      } else {
+        bailIfSustainedFailure();
+      }
       await sleep(300);
       continue;
     }
