@@ -23,6 +23,9 @@
 // (same credentials used by sync-soundcloud.mjs). Uses the OAuth
 // client-credentials flow — app-only, public resources.
 
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

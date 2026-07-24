@@ -58,6 +58,9 @@
  *   node scripts/prune-lastfm-multi-artist.mjs --refetch       # bypass cache, re-call getInfo
  *   node scripts/prune-lastfm-multi-artist.mjs --report out.csv# also write a CSV of matches
  */
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'

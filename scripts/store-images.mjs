@@ -55,8 +55,10 @@
 // Requires .env.local with NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY.
 // ============================================================
 
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for the full story.
+import { dispatcher } from "./lib/http-dispatcher.mjs";
 import { createClient } from "@supabase/supabase-js";
-import { Agent } from "undici";
 import sharp from "sharp";
 import fs from "node:fs";
 import path from "node:path";
@@ -108,27 +110,19 @@ if (!SUPABASE_URL || !SECRET_KEY) {
   process.exit(1);
 }
 
-// Added 2026-07-10, revised same day: a long run died partway through
-// on a sustained stretch of "TypeError: fetch failed" — every
-// remaining request to Supabase (Storage upload AND a plain
-// PostgREST update) failing the same way, immune to in-process
-// retries, but a full script restart fixed it. First attempt at a
-// fix used `pipelining: 0` on the theory that it would stop undici
-// reusing a stale pooled connection — WRONG, verified against
-// undici's own docs: pipelining controls something unrelated
-// (batching multiple in-flight requests on one connection, not
-// keep-alive/reuse), and it changed nothing, confirmed by a second
-// identical failure. Replaced with the option that actually controls
-// this: a short keepAliveTimeout, so idle sockets get discarded
-// quickly instead of lingering long enough to be silently closed
-// server-side (proxy/load-balancer idle timeout) without the client
-// noticing. Still not confirmed as the actual fix — see
-// describeError() below and scripts/PIPELINE.md for how to gather
-// real diagnostic data if this happens again, since two guesses in a
-// row missed. Passed to both our own fetch() calls and, via
-// global.fetch, every call supabase-js makes internally.
-const dispatcher = new Agent({ keepAliveTimeout: 4000, keepAliveMaxTimeout: 4000 });
-
+// One TLS-level blip used to poison every remaining Supabase request
+// in a run — Storage uploads AND plain PostgREST writes alike failing
+// "ERR_HTTP2_INVALID_SESSION: The session has been destroyed", immune
+// to in-process retries, fixed only by restarting the script. Root
+// cause and fix (HTTP/1.1-only dispatcher, registered process-wide)
+// live in scripts/lib/http-dispatcher.mjs, imported first above. Two
+// earlier guesses here — `pipelining: 0` (2026-07-10), then a short
+// keepAliveTimeout alone (same day) — changed nothing because both
+// tune HTTP/1.1 socket handling, and undici 8 was negotiating HTTP/2
+// the whole time. The dispatcher is still passed explicitly to our
+// own fetch() calls and, via the createClient global.fetch override,
+// to every call supabase-js makes internally — belt and braces on
+// top of the helper's setGlobalDispatcher.
 const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
   global: { fetch: (url, opts) => fetch(url, { ...opts, dispatcher }) },

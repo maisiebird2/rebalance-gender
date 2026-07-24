@@ -27,6 +27,9 @@
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --dry-run          # score only, no DB writes or CSV
  *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --no-load          # stage candidates but skip loading into artist_links
  */
+// FIRST import: registers the HTTP/1.1-only dispatcher process-wide
+// before anything else can fetch — see that module for why.
+import "./lib/http-dispatcher.mjs";
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
