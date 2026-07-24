@@ -34,6 +34,14 @@
 // same convention as every other harvester in this pipeline. A later
 // successful run clears the row.
 //
+// A download that comes back 4xx (except 429) is a permanently dead
+// source URL: it is recorded as status "source_gone" and its
+// artist_images row is DELETED, so it stops being retried every run,
+// scrape-images.ts can re-discover the artist's current image URL
+// (an existing row would otherwise mark the platform "covered"
+// forever), and the frontend stops falling back to the dead
+// source_url. See the source-gone comment in main().
+//
 // Each download/upload/DB-write is retried on TRANSIENT failure
 // (exponential backoff, up to 3 retries) before being treated as a
 // real failure — added after a run died partway through on a
@@ -256,8 +264,12 @@ async function downloadImage(url, { retries = 3 } = {}) {
       // A non-OK status is still a COMPLETED HTTP exchange — the
       // connection provably works and the source has simply rejected
       // this URL (stale 404, hotlink-blocking 403, …). Flagged so the
-      // caller can keep it out of the connectivity early-bail count.
-      if (!res.ok) return { error: `HTTP ${res.status}`, serverResponded: true };
+      // caller can keep it out of the connectivity early-bail count;
+      // the numeric status lets it distinguish a permanent rejection
+      // (4xx — drop the row, see the source-gone handling in main)
+      // from a transient server-side error (5xx, 429 — keep retrying
+      // on later runs).
+      if (!res.ok) return { error: `HTTP ${res.status}`, serverResponded: true, status: res.status };
       const contentType = res.headers.get("content-type") ?? "image/jpeg";
       const buffer = Buffer.from(await res.arrayBuffer());
       return { buffer, contentType };
@@ -428,16 +440,57 @@ async function main() {
 
     const downloaded = await downloadImage(sourceUrl);
     if (downloaded.error) {
-      console.log(`✗ download failed: ${downloaded.error}`);
+      // A 4xx (except 429, which is rate-limiting worth retrying
+      // later) is a PERMANENT rejection of this stored URL: the image
+      // was deleted/moved since scraping (404) or the CDN refuses our
+      // client / the URL's signed token expired (403). Retrying it on
+      // every future run can never succeed — and worse, the dead row
+      // actively harms the pipeline: scrape-images.ts treats an
+      // existing artist_images row as "platform covered" and never
+      // re-scrapes for the artist's CURRENT image URL, and the
+      // frontend falls back to source_url for un-stored rows
+      // (src/lib/artist-images.ts), serving visitors a broken image.
+      // So the row is DELETED: store-images stops retrying it, the
+      // next scrape-images run re-discovers a fresh URL (its
+      // harvest_failures skip-set reads service "image:<platform>",
+      // never our "image-store:<platform>", so the source_gone record
+      // below doesn't block that), and the frontend stops picking it.
+      // soundcloud/bandcamp rows are re-created with fresh URLs by
+      // their own harvesters the same way. The harvest_failures row
+      // stays as the audit trail until a later successful store
+      // clears it.
+      const sourceGone =
+        downloaded.serverResponded &&
+        downloaded.status >= 400 &&
+        downloaded.status < 500 &&
+        downloaded.status !== 429;
+
+      if (sourceGone) {
+        console.log(
+          `✗ source gone (${downloaded.error}) — dropping row so scrape-images can re-discover a current URL`
+        );
+      } else {
+        console.log(`✗ download failed: ${downloaded.error}`);
+      }
       failed++;
       if (!DRY_RUN) {
         await recordFailure(supabase, {
           artistId,
           service,
-          status: "download_failed",
+          status: sourceGone ? "source_gone" : "download_failed",
           detail: downloaded.error,
           url: sourceUrl,
         });
+        if (sourceGone) {
+          const { error: deleteError } = await supabase
+            .from("artist_images")
+            .delete()
+            .eq("artist_id", artistId)
+            .eq("platform", platform);
+          if (deleteError) {
+            console.log(`  (failed to drop dead row: ${describeError(deleteError)})`);
+          }
+        }
       }
       if (downloaded.serverResponded) {
         // The source answered (404/403/…): connection is fine, this
