@@ -33,12 +33,20 @@
 //                                     Discogs artist is also in our DB
 //                                     (matched via its own Discogs link).
 //                                     Mirrors enrich-musicbrainz.mjs.
+//   - Profile image (`images`)     → artist_images (platform='discogs'),
+//                                     approved artists only. A field
+//                                     extraction, not a second API call —
+//                                     the Discogs analog of the avatar
+//                                     write in sync-soundcloud. See
+//                                     scripts/lib/discogs-images.mjs.
 //   - The FULL raw response        → api_response_cache (namespace
 //                                     'discogs-artist', cache_key = numeric
 //                                     Discogs id). A durable, TTL-less blob so
 //                                     fields we don't extract yet (`aliases`,
-//                                     `images`, `data_quality`, ...) can be
-//                                     mined later without re-calling the API.
+//                                     `data_quality`, ...) can be mined later
+//                                     without re-calling the API — and so
+//                                     already-cached images can be backfilled
+//                                     with no new calls (backfill-discogs-images.mjs).
 //
 // Because it stages links like any harvester, it is a full member of
 // the 2c/2d convergence loop (harvest-links-loop.mjs).
@@ -82,6 +90,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+import { writeDiscogsImage } from "./lib/discogs-images.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 
@@ -338,7 +347,7 @@ async function main() {
   // Artists with a discogs link (first link per artist wins, by id).
   const discogsLinks = await fetchAll(
     "artist_links",
-    "id, artist_id, url, artists!inner(id, name)",
+    "id, artist_id, url, artists!inner(id, name, directory_status)",
     (q) => {
       q = q.eq("platform", "discogs");
       if (APPROVED_ONLY) q = q.eq("artists.directory_status", "approved").eq("artists.deleted", false);
@@ -415,6 +424,7 @@ async function main() {
     aliases: 0,
     bios: 0,
     realnames: 0,
+    images: 0,
     collabs: 0,
     noUrls: 0,
     failed: 0,
@@ -527,8 +537,8 @@ async function main() {
 
     // ---- Full response → api_response_cache (durable blob) ----
     // Park the entire artist payload keyed by its Discogs id so fields we
-    // don't extract yet (e.g. `aliases`, `images`, `data_quality`) can be
-    // mined later without re-calling the rate-limited API. The table has no
+    // don't extract yet (e.g. `aliases`, `data_quality`) can be mined
+    // later without re-calling the rate-limited API. The table has no
     // TTL, so these rows persist. Keyed on the numeric Discogs id (stable
     // across old-format URL rewrites), not artist_id, so it doubles as a
     // by-id response cache. See supabase_migration_api_response_cache.sql.
@@ -546,6 +556,25 @@ async function main() {
         );
       if (error) writeFailed("cache blob", error);
     }
+
+    // ---- Profile image → artist_images (platform='discogs') ----
+    // The payload already carries the `images` array, so this is a field
+    // extraction, not another API call — the Discogs analog of the avatar
+    // write in sync-soundcloud. Directory-only and self-recording under
+    // 'image:discogs' (see scripts/lib/discogs-images.mjs). Kept out of
+    // allWritesOk: image completeness has its own failure service and its
+    // own retry vehicle (backfill-discogs-images.mjs), so an image hiccup
+    // doesn't force a full re-sync of this artist.
+    const isApproved = row.artists?.directory_status === "approved";
+    const imageStatus = await writeDiscogsImage({
+      supabase,
+      artistId,
+      discogsUrl: row.url,
+      images: data.images,
+      isApproved,
+      dryRun: DRY_RUN,
+    });
+    if (imageStatus === "stored") stats.images++;
 
     // ---- Links → artist_harvested_links (staged) ----
     const urls = Array.isArray(data.urls) ? data.urls : [];
@@ -666,7 +695,8 @@ async function main() {
     if (DRY_RUN) {
       console.log(
         `~ ${name}: would sync (${candidates.length} link(s), ${newAliases.length} alias(es), ` +
-          `${rawProfile ? "bio, " : ""}${realname ? "realname, " : ""}${collabPartnerIds.size} collab(s))`
+          `${rawProfile ? "bio, " : ""}${realname ? "realname, " : ""}` +
+          `${imageStatus === "stored" ? "image, " : ""}${collabPartnerIds.size} collab(s))`
       );
       continue;
     }
@@ -679,6 +709,7 @@ async function main() {
           (newAliases.length ? `, ${newAliases.length} alias(es)` : "") +
           (rawProfile ? ", bio" : "") +
           (realname ? ", realname" : "") +
+          (imageStatus === "stored" ? ", image" : "") +
           (collabPartnerIds.size ? `, ${collabPartnerIds.size} collab(s)` : "")
       );
     } else {
@@ -689,7 +720,7 @@ async function main() {
 
   console.log(
     `\nDone. ${stats.staged} link(s) staged, ${stats.aliases} alias(es), ${stats.bios} bio(s), ` +
-      `${stats.realnames} realname(s), ${stats.collabs} collab edge(s); ` +
+      `${stats.realnames} realname(s), ${stats.images} image(s), ${stats.collabs} collab edge(s); ` +
       `${stats.noUrls} artist(s) with no usable URLs, ${stats.resolvedOld} old-format URL(s) resolved, ` +
       `${stats.skippedNonArtist} wrong-field URL(s), ${stats.failed} failure(s).`
   );
