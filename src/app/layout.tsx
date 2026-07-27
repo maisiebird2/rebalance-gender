@@ -4,7 +4,6 @@ import { Space_Grotesk, Space_Mono, Inter } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
-import DiscoverMenu from "@/components/DiscoverMenu";
 import SmokeBackdrop from "@/components/SmokeBackdrop";
 import "./globals.css";
 
@@ -159,16 +158,10 @@ export default async function RootLayout({
                   <span className="grad-text">Gender</span>
                 </span>
               </Link>
-              {/* The two "find" tools, grouped: name-search + discover. */}
               <div className="hidden items-center gap-2 sm:flex">
                 <HeaderSearch />
-                <DiscoverMenu />
               </div>
               <nav className="flex items-center gap-4 text-sm">
-                {/* Mobile-only: desktop reaches Discover via the pill above. */}
-                <Link href="/discover" className="hover:underline sm:hidden">
-                  Discover
-                </Link>
                 <a href="/submit" className="hover:underline">
                   Submit an artist
                 </a>

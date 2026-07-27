@@ -31,7 +31,7 @@ export function platformLabel(platforms: Platform[], key: string): string {
 /**
  * Platform keys whose links are hidden from the public individual artist page
  * (src/app/artist/[id]/page.tsx). The underlying links are still stored and
- * used everywhere else — enrichment, genre harvesting, discover, admin QC —
+ * used everywhere else — enrichment, genre harvesting, admin QC —
  * and remain editable in the submit/edit/revise forms; they are simply not
  * surfaced as profile links to visitors. Last.fm and MusicBrainz are directory
  * data sources rather than links a visitor would want to click through to.

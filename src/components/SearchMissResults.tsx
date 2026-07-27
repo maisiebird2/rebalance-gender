@@ -1,67 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { DiscoverResponse, DiscoverResult } from "@/app/api/discover/route";
-import DiscoverResultsGrid from "@/components/DiscoverResultsGrid";
+import { useState } from "react";
 
 interface Props {
   searchTerm: string;
 }
 
-type DiscoverState =
-  | { status: "loading" }
-  | { status: "done"; results: DiscoverResult[] }
-  | { status: "error" };
-
 type SubmitState = "idle" | "submitting" | "submitted" | "exists" | "error";
 
 export default function SearchMissResults({ searchTerm }: Props) {
   const [trackedTerm, setTrackedTerm] = useState(searchTerm);
-  const [discover, setDiscover] = useState<DiscoverState>({ status: "loading" });
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
 
-  // Reset to "loading" as soon as the search term changes, during render
-  // rather than in an effect — avoids an extra render pass.
+  // Reset as soon as the search term changes, during render rather than in
+  // an effect — avoids an extra render pass.
   if (searchTerm !== trackedTerm) {
     setTrackedTerm(searchTerm);
-    setDiscover({ status: "loading" });
     setSubmitState("idle");
   }
 
-  // Fetching "similar artist" suggestions is read-only, so this can still run
-  // automatically. Saving the searched name to the review queue is not — that
-  // only happens if the visitor clicks the submit button below.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      try {
-        const res = await fetch("/api/discover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: searchTerm }),
-        });
-
-        if (cancelled) return;
-
-        if (!res.ok) {
-          setDiscover({ status: "done", results: [] });
-          return;
-        }
-
-        const data = (await res.json()) as DiscoverResponse;
-        if (!cancelled) {
-          setDiscover({ status: "done", results: data.results });
-        }
-      } catch {
-        if (!cancelled) setDiscover({ status: "error" });
-      }
-    }
-
-    run();
-    return () => { cancelled = true; };
-  }, [searchTerm]);
-
+  // Saving the searched name to the review queue only happens if the visitor
+  // clicks the submit button below.
   async function handleSubmit() {
     setSubmitState("submitting");
     try {
@@ -130,21 +89,6 @@ export default function SearchMissResults({ searchTerm }: Props) {
           </p>
         )}
       </div>
-
-      {discover.status === "loading" && (
-        <p className="mt-6 text-sm text-gray-400 dark:text-gray-500">
-          Looking for similar artists…
-        </p>
-      )}
-
-      {discover.status === "done" && discover.results.length > 0 && (
-        <div className="mt-6">
-          <p className="mb-4 text-sm font-medium text-gray-600 dark:text-gray-400">
-            You might also like these artists from the directory:
-          </p>
-          <DiscoverResultsGrid results={discover.results} />
-        </div>
-      )}
     </div>
   );
 }
