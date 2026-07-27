@@ -13,15 +13,33 @@
 //                                           design (not restricted to
 //                                           approved), so --approved is
 //                                           NOT forwarded to it.
-//   2. harvest-links-loop.mjs             — the platform-sync
+//   2. HÖR library sync (A→D)             — harvest-hoer-library →
+//                                           seed-hoer-terms → enrich-hoer-terms
+//                                           → integrate-hoer-artists. Ingests
+//                                           HÖR's set library and discovers /
+//                                           seeds artists from it, BEFORE the
+//                                           loop: only D's staged socials feed
+//                                           the loop, and its input is fixed up
+//                                           front (it can't grow mid-loop the
+//                                           way a Bandcamp/Linktree target set
+//                                           does), so running it once and
+//                                           letting round 1's integrate promote
+//                                           those socials gives the loop the
+//                                           same inputs far cheaper. Replaces
+//                                           the old in-loop sync-hoer seeder.
+//                                           Each sub-stage is OPTIONAL — a HÖR
+//                                           API/page outage must not sink the
+//                                           rest of the pipeline; the group
+//                                           tracks its own DB state and retries
+//                                           next run.
+//   3. harvest-links-loop.mjs             — the platform-sync
 //                                           convergence loop: runs every
 //                                           platform harvester —
 //                                           sync-soundcloud (2a),
 //                                           sync-bandcamp (2b), the
 //                                           direct-link harvesters
 //                                           sync-discogs/sync-linktree
-//                                           (2c), and the sync-hoer
-//                                           seeder — then
+//                                           (2c) — then
 //                                           integrate-harvested-links
 //                                           (2d) in rounds until no new
 //                                           links appear, promoting
@@ -44,7 +62,7 @@
 //                                           new links and the loop
 //                                           converges.
 //
-//   3. scrape-images.ts                  — image acquisition for every
+//   4. scrape-images.ts                  — image acquisition for every
 //                                           platform that has no
 //                                           harvester of its own
 //                                           (spotify, lastfm, wikipedia,
@@ -168,6 +186,26 @@ export function orchestratePlatformEnrichment(opts = {}) {
     // artist's name regardless of directory_status, so --approved is not
     // forwarded to it.
     { script: "clean-artist-names.mjs", args: [] },
+    // HÖR library sync (Phases A→D of the sync-hoer rework), run BEFORE the
+    // loop — only D emits something the loop consumes (staged socials), and its
+    // input is fixed before the loop starts, so running once up front and
+    // letting round 1's integrate promote those socials feeds the loop cheaply.
+    // Replaces the old in-loop sync-hoer seeder.
+    //
+    // Each sub-stage is `optional: true`: a HÖR API/page outage throws in that
+    // child, but must not abort the whole orchestration (the harvest loop below
+    // is far more valuable). Each tracks its own DB state, so a skipped run just
+    // retries next time. --approved is meaningful only to enrich-hoer-terms
+    // (gates enrichment of already-bound terms; unbound candidates are always
+    // scraped); the others are pure discovery and never gated.
+    //
+    // NOTE: harvest-hoer-library assumes the hoer_sets ledger was seeded once
+    // with --from (rollout step 2). On a truly empty ledger it errors — caught
+    // here as an optional-stage failure — rather than crawling the whole archive.
+    { script: "harvest-hoer-library.mjs", args: [], optional: true },
+    { script: "seed-hoer-terms.mjs", args: [], optional: true },
+    { script: "enrich-hoer-terms.mjs", args: [...common], optional: true },
+    { script: "integrate-hoer-artists.mjs", args: [], optional: true },
     // harvest-links-loop now runs every platform harvester — sync-soundcloud
     // (2a) and sync-bandcamp (2b) alongside the direct-link harvesters (2c)
     // and the HÖR seeder — as loop members, so there is no separate
@@ -193,8 +231,17 @@ export function orchestratePlatformEnrichment(opts = {}) {
     { script: "scrape-images.ts", args: [] },
   ];
 
-  for (const { script, args: stageArgs } of stages) {
-    runStage(script, stageArgs);
+  for (const { script, args: stageArgs, optional } of stages) {
+    try {
+      runStage(script, stageArgs);
+    } catch (err) {
+      if (!optional) throw err;
+      // An optional stage (the HÖR group) failing must not abort the rest of
+      // the pipeline — warn and carry on to the next stage.
+      console.warn(
+        `\n⚠ Optional stage ${script} failed: ${err.message}\n  Continuing with the remaining stages.`
+      );
+    }
   }
 
   return stages;

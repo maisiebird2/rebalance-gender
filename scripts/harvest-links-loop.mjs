@@ -83,15 +83,15 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // terminates naturally. The same page fetch also does the full
 // Bandcamp profile pull (discography, bio, location, image, genre
 // tags) — see sync-bandcamp.mjs / Phase 2b in PIPELINE.md.
-// sync-hoer.mjs (HÖR) is also a full member: it SEEDS new pending
-// artists from HÖR's directory and stages their page socials
-// (Instagram/SoundCloud) into artist_harvested_links, which the other
-// harvesters then feed on — so it belongs in the convergence loop, not
-// as a terminal stage. It tracks processed state in the DB
-// (resolved_artists service 'hoer-sync' + a set-date cursor in
-// hoer_sync_state), so each round only ingests new artists/sets and the
-// loop still terminates. --approved gates only its enrichment, never its
-// seeding. See sync-hoer.mjs.
+// HÖR is NO LONGER a loop member. It used to be (sync-hoer.mjs), because
+// its page socials feed the other harvesters — but it was reworked into a
+// four-script library-driven pipeline (harvest-hoer-library → seed-hoer-terms
+// → enrich-hoer-terms → integrate-hoer-artists) that the orchestrator runs
+// ONCE before this loop. Only the last of those (integrate) emits staged
+// socials, and its input is fixed before the loop starts, so it doesn't need
+// to re-run each round; round 1's integrate-harvested-links promotes its
+// socials and the loop feeds on them from there. See
+// scripts/HOER-SYNC-REWORK-PLAN.md and orchestrate-platform-enrichment.mjs.
 //
 // sync-soundcloud.mjs (Phase 2a) joined this loop on 2026-07-11 (was a
 // standalone pre-loop orchestrator stage). It stages the "Links" section
@@ -114,7 +114,6 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // other platforms (Bandcamp/Spotify/Discogs/…) that later harvesters
 // in the same round then consume.
 const HARVESTERS = [
-  "sync-hoer.mjs",
   "sync-soundcloud.mjs",
   "sync-discogs.mjs",
   "sync-linktree.mjs",
