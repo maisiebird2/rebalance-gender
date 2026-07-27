@@ -115,12 +115,23 @@ import {
 // recorded as a failure — same treatment as a not-found slot. This
 // mirrors qc-links.mjs, which omits the same two platforms from its
 // domain cross-check because any domain is valid for them.
+//
+// resident_advisor and beatport are also excluded, for a different
+// reason: both sit behind edge bot-mitigation that returns HTTP 403 to
+// any server-side fetch (confirmed with both a bot and a full browser
+// User-Agent), so a scrape can never reach their pages. Neither has a
+// usable API we harvest from either, so — unlike discogs — there is no
+// dedicated-harvester route to fall back to. Dropping them from the
+// candidate list stops ~900 pointless fetches per run and, more
+// importantly, stops recording a false 'unreachable' failure on a link
+// that is actually fine (which would also let the link-changed path at
+// the bottom of scrapeArtistImages delete a good stored image). If
+// either ever exposes an API, add a dedicated harvester the way discogs
+// has one (sync-discogs.mjs) rather than putting them back here.
 export const PLATFORM_PRIORITY = [
   "soundcloud",
   "bandcamp",
-  "resident_advisor",
   "discogs",
-  "beatport",
   "qobuz",
   "lastfm",
   "spotify",
@@ -132,6 +143,13 @@ export const PLATFORM_PRIORITY = [
 // Platforms whose images belong to a dedicated harvester:
 //   soundcloud -> sync-soundcloud.mjs (the SoundCloud /resolve API)
 //   bandcamp   -> sync-bandcamp.mjs   (the artist page sidebar)
+//   discogs    -> sync-discogs.mjs    (the artist payload's `images`
+//                                      array, via the authenticated API)
+//
+// discogs joined this set because its pages 403 every server-side fetch
+// (see the PLATFORM_PRIORITY note), but its official API returns the
+// artist image in a response sync-discogs already fetches — so the image
+// is extracted there, not scraped here. See scripts/lib/discogs-images.mjs.
 //
 // Scraping is a fallback for these, never the primary route, and it
 // applies in exactly one situation: the owner ran and recorded a
@@ -141,6 +159,7 @@ export const PLATFORM_PRIORITY = [
 export const OWNED_BY_DEDICATED_HARVESTER: ReadonlySet<string> = new Set([
   "soundcloud",
   "bandcamp",
+  "discogs",
 ]);
 
 // Platforms with no dedicated harvester, so scrapeArtistImages() is the

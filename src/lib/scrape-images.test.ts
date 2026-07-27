@@ -158,17 +158,17 @@ describe("scrapeArtistImages — URL-change handling", () => {
     const { client } = makeClient({
       artist: approvedArtist([
         { platform: "spotify", url: null, not_found: true },
-        { platform: "discogs", url: "https://discogs/real" },
+        { platform: "wikipedia", url: "https://wikipedia/real" },
       ]),
       images: [],
       failures: [],
     });
-    const fetchMock = stubFetch({ "https://discogs/real": "image" });
+    const fetchMock = stubFetch({ "https://wikipedia/real": "image" });
 
     const result = await scrapeArtistImages("a1", client);
 
-    expect(result.stored).toEqual(["discogs"]);
-    expect(result.attempted).toEqual(["discogs"]);
+    expect(result.stored).toEqual(["wikipedia"]);
+    expect(result.attempted).toEqual(["wikipedia"]);
     expect(fetchMock).not.toHaveBeenCalledWith(null, expect.anything());
   });
 
@@ -194,6 +194,51 @@ describe("scrapeArtistImages — URL-change handling", () => {
   it("excludes both catch-all platforms from PLATFORM_PRIORITY", () => {
     expect(PLATFORM_PRIORITY).not.toContain("other");
     expect(PLATFORM_PRIORITY).not.toContain("homepage");
+  });
+
+  // resident_advisor and beatport 403 every server-side fetch and have no
+  // API we harvest, so they aren't candidates at all — never fetched,
+  // never recorded as a failure (which would otherwise let the
+  // link-changed path delete a good stored image).
+  it.each(["resident_advisor", "beatport"])(
+    "excludes bot-blocked %s from PLATFORM_PRIORITY",
+    (platform) => {
+      expect(PLATFORM_PRIORITY).not.toContain(platform);
+    }
+  );
+
+  it("never tries a resident_advisor link", async () => {
+    const { client, calls } = makeClient({
+      artist: approvedArtist([{ platform: "resident_advisor", url: "https://ra.co/dj/x" }]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({ "https://ra.co/dj/x": "image" });
+
+    const result = await scrapeArtistImages("a1", client);
+
+    expect(result.attempted).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
+  it("treats discogs as owned: no scrape when there is no transient failure", async () => {
+    const { client, calls } = makeClient({
+      artist: approvedArtist([{ platform: "discogs", url: "https://discogs/NEW" }]),
+      images: [{ platform: "discogs", source_page_url: "https://discogs/OLD" }],
+      failures: [],
+    });
+    const fetchMock = stubFetch({ "https://discogs/NEW": "image" });
+
+    const result = await scrapeArtistImages("a1", client);
+
+    // Its image belongs to sync-discogs; even a changed link is left for
+    // the owner, and the existing image is not deleted by a scrape.
+    expect(result.skippedProtected).toEqual(["discogs"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+    expect(calls.deletes).toEqual([]);
   });
 
   it("skips a platform whose stored image came from the same (unchanged) link", async () => {
@@ -294,29 +339,29 @@ describe("scrapeArtistImages — URL-change handling", () => {
 
   it("skips a confirmed no-image failure recorded against the same link", async () => {
     const { client } = makeClient({
-      artist: approvedArtist([{ platform: "discogs", url: "https://discogs/same" }]),
+      artist: approvedArtist([{ platform: "spotify", url: "https://spotify/same" }]),
       images: [],
-      failures: [{ service: "image:discogs", status: "no_image", url: "https://discogs/same" }],
+      failures: [{ service: "image:spotify", status: "no_image", url: "https://spotify/same" }],
     });
     const fetchMock = stubFetch({});
 
     const result = await scrapeArtistImages("a1", client);
 
-    expect(result.skippedExisting).toEqual(["discogs"]);
+    expect(result.skippedExisting).toEqual(["spotify"]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("retries a no-image failure when its link changed, and clears the failure on success", async () => {
     const { client, calls } = makeClient({
-      artist: approvedArtist([{ platform: "discogs", url: "https://discogs/NEW" }]),
+      artist: approvedArtist([{ platform: "spotify", url: "https://spotify/NEW" }]),
       images: [],
-      failures: [{ service: "image:discogs", status: "no_image", url: "https://discogs/OLD" }],
+      failures: [{ service: "image:spotify", status: "no_image", url: "https://spotify/OLD" }],
     });
-    stubFetch({ "https://discogs/NEW": "image" });
+    stubFetch({ "https://spotify/NEW": "image" });
 
     const result = await scrapeArtistImages("a1", client);
 
-    expect(result.stored).toEqual(["discogs"]);
+    expect(result.stored).toEqual(["spotify"]);
     expect(calls.deletes.some((d) => d.table === "harvest_failures")).toBe(true);
   });
 
@@ -442,6 +487,9 @@ describe("SCRAPE_ONLY_PLATFORMS", () => {
   it("excludes the platforms owned by a dedicated harvester", () => {
     expect(SCRAPE_ONLY_PLATFORMS).not.toContain("soundcloud");
     expect(SCRAPE_ONLY_PLATFORMS).not.toContain("bandcamp");
+    // discogs 403s every scrape but its image comes from the Discogs API
+    // via sync-discogs — owned, not scraped here.
+    expect(SCRAPE_ONLY_PLATFORMS).not.toContain("discogs");
   });
 
   it("covers every other image-capable platform", () => {
