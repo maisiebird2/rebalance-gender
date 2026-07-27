@@ -15,6 +15,8 @@
 // one inventing its own failure-tracking shape.
 // ============================================================
 
+import { runWithNetworkRetry } from "./supabase-retry.mjs";
+
 /**
  * Record (or overwrite) the current failure for an (artist_id, service)
  * pair.
@@ -84,15 +86,21 @@ export async function loadFailureUrls(supabase, { service, status = null }) {
   const map = new Map();
   let from = 0;
   while (true) {
-    let query = supabase
-      .from("harvest_failures")
-      .select("artist_id, url")
-      .eq("service", service)
-      .order("artist_id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-    if (status) query = query.eq("status", status);
+    // Fresh builder per attempt (single-use thenables); retried on
+    // network-level failures because this runs in callers' bootstrap
+    // path, where one blip would otherwise be fatal to the whole run.
+    const buildQuery = () => {
+      let query = supabase
+        .from("harvest_failures")
+        .select("artist_id, url")
+        .eq("service", service)
+        .order("artist_id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (status) query = query.eq("status", status);
+      return query;
+    };
 
-    const { data, error } = await query;
+    const { data, error } = await runWithNetworkRetry(buildQuery, { label: "harvest_failures page" });
     if (error) throw error;
 
     for (const r of data ?? []) {
