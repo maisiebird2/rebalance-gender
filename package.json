@@ -27,7 +27,6 @@
     "compute-scores": "node scripts/compute-scores.mjs",
     "integrate-harvested-links": "tsx scripts/integrate-harvested-links.mjs",
     "sync-discogs": "tsx scripts/sync-discogs.mjs",
-    "sync-hoer": "tsx scripts/sync-hoer.mjs",
     "harvest-hoer-library": "tsx scripts/harvest-hoer-library.mjs",
     "seed-hoer-terms": "tsx scripts/seed-hoer-terms.mjs",
     "enrich-hoer-terms": "tsx scripts/enrich-hoer-terms.mjs",
