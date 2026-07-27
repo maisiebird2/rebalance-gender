@@ -44,6 +44,20 @@ export const dispatcher = new Agent({
   allowH2: false,
   keepAliveTimeout: 4000,
   keepAliveMaxTimeout: 4000,
+  // Forcing HTTP/1.1 put every response through undici's h1 parser,
+  // whose default header budget is 16 KiB TOTAL across a response's
+  // headers — and PostgREST echoes the full request path + query
+  // string back in a Content-Location response header. A supabase
+  // .in() filter with 500 UUIDs (the bulk scripts' usual chunk size)
+  // makes that one header ~20 KiB, so the parser throws
+  // HeadersOverflowError (UND_ERR_HEADERS_OVERFLOW), surfaced as
+  // "TypeError: fetch failed", on EVERY such request — a query shape
+  // that worked fine over HTTP/2 (diagnosed in sync-soundcloud.mjs
+  // 2026-07-25; probe showed overflow from ~400 UUIDs up, and that the
+  // server itself answers 200 even at 500). 256 KiB clears the largest
+  // chunked query many times over while still bounding a hostile
+  // server's memory use.
+  maxHeaderSize: 256 * 1024,
 });
 
 setGlobalDispatcher(dispatcher);

@@ -212,6 +212,7 @@ import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
+import { runWithNetworkRetry } from "./lib/supabase-retry.mjs";
 import { IMAGE_FAILURE_STATUS, imageFailureService } from "../src/lib/images/failures.js";
 import {
   createSoundcloudClient,
@@ -335,12 +336,22 @@ async function loadProcessedArtistIds() {
   const ids = new Set();
   let from = 0;
   while (true) {
-    const { data, error } = await supabase
-      .from("resolved_artists")
-      .select("artist_id")
-      .eq("service", STATE_SERVICE)
-      .order("artist_id", { ascending: true })
-      .range(from, from + STATE_PAGE_SIZE - 1);
+    // All of this script's bulk read loaders retry network-level
+    // failures (runWithNetworkRetry): a single connectivity blip on
+    // one page must not kill the whole run — and, under the
+    // orchestrator, the whole orchestration. Per-artist writes stay
+    // un-retried on purpose; their failure handling marks the artist
+    // for the next run instead.
+    const { data, error } = await runWithNetworkRetry(
+      () =>
+        supabase
+          .from("resolved_artists")
+          .select("artist_id")
+          .eq("service", STATE_SERVICE)
+          .order("artist_id", { ascending: true })
+          .range(from, from + STATE_PAGE_SIZE - 1),
+      { label: "resolved_artists page" }
+    );
     if (error) throw error;
     for (const r of data ?? []) ids.add(r.artist_id);
     if ((data?.length ?? 0) < STATE_PAGE_SIZE) break;
@@ -369,12 +380,16 @@ async function loadArtistIdsWithLinktreeLink() {
   const ids = new Set();
   let from = 0;
   while (true) {
-    const { data, error } = await supabase
-      .from("artist_links")
-      .select("artist_id")
-      .eq("platform", "linktree")
-      .order("artist_id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await runWithNetworkRetry(
+      () =>
+        supabase
+          .from("artist_links")
+          .select("artist_id")
+          .eq("platform", "linktree")
+          .order("artist_id", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1),
+      { label: "artist_links (linktree) page" }
+    );
     if (error) throw error;
     for (const r of data ?? []) ids.add(r.artist_id);
     if ((data?.length ?? 0) < PAGE_SIZE) break;
@@ -396,12 +411,16 @@ async function fetchArtistIdsWithSoundcloudImage() {
   const ids = new Set();
   let from = 0;
   while (true) {
-    const { data, error } = await supabase
-      .from("artist_images")
-      .select("artist_id")
-      .eq("platform", "soundcloud")
-      .order("artist_id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await runWithNetworkRetry(
+      () =>
+        supabase
+          .from("artist_images")
+          .select("artist_id")
+          .eq("platform", "soundcloud")
+          .order("artist_id", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1),
+      { label: "artist_images page" }
+    );
     if (error) throw error;
     for (const r of data ?? []) ids.add(r.artist_id);
     if ((data?.length ?? 0) < PAGE_SIZE) break;
@@ -430,12 +449,16 @@ async function fetchScUserIdsForArtists(artistIds) {
   const ids = [...new Set(artistIds)];
   for (let i = 0; i < ids.length; i += CHUNK) {
     const batch = ids.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("artist_enrichment")
-      .select("artist_id, external_id")
-      .eq("platform", "soundcloud")
-      .not("external_id", "is", null)
-      .in("artist_id", batch);
+    const { data, error } = await runWithNetworkRetry(
+      () =>
+        supabase
+          .from("artist_enrichment")
+          .select("artist_id, external_id")
+          .eq("platform", "soundcloud")
+          .not("external_id", "is", null)
+          .in("artist_id", batch),
+      { label: "artist_enrichment id chunk" }
+    );
     if (error) throw error;
     for (const r of data ?? []) {
       const id = r.external_id != null ? String(r.external_id).trim() : "";
@@ -567,20 +590,25 @@ async function fetchAllSoundCloudLinks() {
   let from = 0;
 
   while (true) {
-    let query = supabase
-      .from("artist_links")
-      .select("id, artist_id, url, artists!inner(name, directory_status)")
-      .eq("platform", "soundcloud")
-      .order("id", { ascending: true })
-      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+    // Built inside the retry callback: postgrest builders are
+    // single-use thenables, so each attempt needs a fresh one.
+    const buildQuery = () => {
+      let query = supabase
+        .from("artist_links")
+        .select("id, artist_id, url, artists!inner(name, directory_status)")
+        .eq("platform", "soundcloud")
+        .order("id", { ascending: true })
+        .range(from, from + SUPABASE_PAGE_SIZE - 1);
 
-    if (APPROVED_ONLY) {
-      query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
-    }
-    if (NAME_FILTER) query = query.ilike("artists.name", `%${NAME_FILTER}%`);
-    if (STATUS_FILTER) query = query.eq("artists.directory_status", STATUS_FILTER);
+      if (APPROVED_ONLY) {
+        query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
+      }
+      if (NAME_FILTER) query = query.ilike("artists.name", `%${NAME_FILTER}%`);
+      if (STATUS_FILTER) query = query.eq("artists.directory_status", STATUS_FILTER);
+      return query;
+    };
 
-    const { data, error } = await query;
+    const { data, error } = await runWithNetworkRetry(buildQuery, { label: "artist_links (soundcloud) page" });
     if (error) throw error;
 
     allRows.push(...data);
@@ -1473,5 +1501,11 @@ async function main() {
 
 main().catch((err) => {
   console.error("\nSync failed:", err?.message ?? err);
+  // A network-level fetch failure's message is just "fetch failed" —
+  // the real reason lives in `cause` (raw undici errors: ECONNRESET,
+  // ENOTFOUND, …) or `details` (postgrest's wrapping puts the original
+  // stack there). Print whichever exists so the log says what broke.
+  if (err?.cause) console.error("  cause:", err.cause);
+  else if (err?.details) console.error("  details:", err.details);
   process.exit(1);
 });
