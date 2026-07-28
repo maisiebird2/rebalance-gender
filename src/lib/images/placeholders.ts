@@ -43,6 +43,14 @@ const PLACEHOLDER_PATTERNS: readonly PlaceholderPattern[] = [
     pattern: /\/default_avatar[_.]/i,
     label: "SoundCloud default grey avatar",
   },
+  {
+    // Qobuz artist pages with no photo emit the Qobuz logo as og:image,
+    // e.g. https://static-www.qobuz.com/img/qobuz_logo_dark.svg. Match the
+    // filename stem so light/dark and format variants are all caught.
+    platform: "qobuz",
+    pattern: /qobuz_logo/i,
+    label: "Qobuz logo",
+  },
 ];
 
 /**
