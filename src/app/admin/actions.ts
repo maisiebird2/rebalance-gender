@@ -20,9 +20,10 @@ async function requireAuth() {
 // Admin-panel actions need more than a session: the signed-in user must be
 // on the ADMIN_EMAILS list. Non-admins are bounced to the homepage (the
 // panel UI that calls these is itself admin-only, so this only triggers on
-// direct/stale invocations). quickMarkNotEligible intentionally stays on
-// requireAuth: it's the artist-page quick action, and any signed-in user
-// can already set that status through the edit form.
+// direct/stale invocations). quickMarkNotEligible and quickApproveArtist
+// intentionally stay on requireAuth: they're the artist-page quick actions,
+// and any signed-in user can already set those statuses through the edit
+// form.
 async function requireAdmin() {
   const user = await requireAuth();
   if (!isAdminEmail(user.email)) redirect("/");
@@ -71,6 +72,22 @@ export async function quickMarkNotEligible(id: string): Promise<{ error: string 
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/artist/${id}`);
+}
+
+export async function quickApproveArtist(id: string): Promise<{ error: string } | void> {
+  await requireAuth();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("artists")
+    .update({ directory_status: "approved" })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/artist/${id}`);
+  // Same as quickApprove: approval is the moment images become allowed for
+  // this artist, so kick off enrichment after the response is sent.
+  after(() => scrapeArtistImages(id, admin, { allowedPlatforms: SCRAPE_ONLY_PLATFORMS }));
 }
 
 // ── Genres ──────────────────────────────────────────────────────────

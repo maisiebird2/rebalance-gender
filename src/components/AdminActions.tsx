@@ -2,18 +2,20 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/browser";
-import { quickMarkNotEligible } from "@/app/admin/actions";
+import { quickApproveArtist, quickMarkNotEligible } from "@/app/admin/actions";
 
 interface Props {
   artistId: string;
   currentStatus: string;
 }
 
+type QuickAction = "approve" | "not_eligible";
+
 export default function AdminActions({ artistId, currentStatus }: Props) {
   const [authed, setAuthed] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [done, setDone] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [done, setDone] = useState<QuickAction | null>(null);
+  const [confirming, setConfirming] = useState<QuickAction | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -23,36 +25,52 @@ export default function AdminActions({ artistId, currentStatus }: Props) {
   }, []);
 
   if (!authed) return null;
-  if (done) return (
+  if (done === "not_eligible") return (
     <span className="text-xs text-amber-600 dark:text-amber-400">Marked not eligible</span>
   );
-  if (currentStatus === "not_eligible") return (
-    <span className="rounded-md border border-amber-300 px-3 py-1 text-sm font-medium text-amber-700 dark:border-amber-700 dark:text-amber-400">
-      Not eligible
-    </span>
+  if (done === "approve") return (
+    <span className="text-xs text-emerald-600 dark:text-emerald-400">Approved</span>
   );
 
   if (confirming) {
+    const isApprove = confirming === "approve";
     return (
       <span className="flex items-center gap-2">
-        <span className="text-sm text-amber-700 dark:text-amber-400">Mark as not eligible?</span>
+        <span
+          className={
+            isApprove
+              ? "text-sm text-emerald-700 dark:text-emerald-400"
+              : "text-sm text-amber-700 dark:text-amber-400"
+          }
+        >
+          {isApprove ? "Approve this artist?" : "Mark as not eligible?"}
+        </span>
         <button
           type="button"
           disabled={isPending}
           onClick={() => {
             startTransition(async () => {
-              await quickMarkNotEligible(artistId);
-              setDone(true);
+              if (isApprove) {
+                await quickApproveArtist(artistId);
+                setDone("approve");
+              } else {
+                await quickMarkNotEligible(artistId);
+                setDone("not_eligible");
+              }
             });
           }}
-          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-400 dark:hover:bg-amber-900"
+          className={
+            isApprove
+              ? "rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 dark:hover:bg-emerald-900"
+              : "rounded-md border border-amber-300 bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-400 dark:hover:bg-amber-900"
+          }
         >
           {isPending ? "Saving…" : "Confirm"}
         </button>
         <button
           type="button"
           disabled={isPending}
-          onClick={() => setConfirming(false)}
+          onClick={() => setConfirming(null)}
           className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
           Cancel
@@ -62,13 +80,31 @@ export default function AdminActions({ artistId, currentStatus }: Props) {
   }
 
   return (
-    <button
-      type="button"
-      disabled={isPending}
-      onClick={() => setConfirming(true)}
-      className="rounded-md border border-amber-300 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
-    >
-      Not eligible
-    </button>
+    <span className="flex items-center gap-2">
+      {currentStatus === "not_eligible" ? (
+        <span className="rounded-md border border-amber-300 px-3 py-1 text-sm font-medium text-amber-700 dark:border-amber-700 dark:text-amber-400">
+          Not eligible
+        </span>
+      ) : (
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => setConfirming("not_eligible")}
+          className="rounded-md border border-amber-300 px-3 py-1 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+        >
+          Not eligible
+        </button>
+      )}
+      {currentStatus !== "approved" && (
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => setConfirming("approve")}
+          className="rounded-md border border-emerald-300 px-3 py-1 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950"
+        >
+          Approve
+        </button>
+      )}
+    </span>
   );
 }
