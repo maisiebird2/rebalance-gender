@@ -2,6 +2,7 @@
 // Applies the manual review decisions in "pending-hoer-artists-20260726_MOD.ods"
 // (one level above the repo) to the artists table.
 //
+// Reads the sheet named "Pending HÖR artists" (errors if it is missing).
 // Sheet columns: Artist | HÖR link | decision | duplicate of | notes
 //
 //   empty page        -> soft delete (deleted = true)
@@ -68,15 +69,26 @@ function unescapeXml(s) {
     .replace(/&amp;/g, "&");
 }
 
+const SHEET_NAME = "Pending HÖR artists";
+
 function readOdsRows(odsPath) {
   const xml = execFileSync("unzip", ["-p", odsPath, "content.xml"], {
     encoding: "utf-8",
     maxBuffer: 256 * 1024 * 1024,
   });
-  const tableMatch = xml.match(/<table:table [^>]*>([\s\S]*?)<\/table:table>/);
-  if (!tableMatch) throw new Error("No table found in ODS content.xml");
+  const sheets = new Map(); // name -> inner xml
+  for (const m of xml.matchAll(/<table:table ([^>]*)>([\s\S]*?)<\/table:table>/g)) {
+    const name = m[1].match(/table:name="([^"]*)"/)?.[1];
+    if (name != null) sheets.set(unescapeXml(name), m[2]);
+  }
+  const sheetXml = sheets.get(SHEET_NAME);
+  if (sheetXml == null)
+    throw new Error(
+      `Sheet "${SHEET_NAME}" not found in ${path.basename(odsPath)} — ` +
+        `sheets present: ${[...sheets.keys()].map((n) => `"${n}"`).join(", ") || "(none)"}`
+    );
   const rows = [];
-  for (const rowXml of tableMatch[1].matchAll(/<table:table-row[^>]*>([\s\S]*?)<\/table:table-row>/g)) {
+  for (const rowXml of sheetXml.matchAll(/<table:table-row[^>]*>([\s\S]*?)<\/table:table-row>/g)) {
     const cells = [];
     for (const cellXml of rowXml[1].matchAll(
       /<table:table-cell([^>]*)\/>|<table:table-cell([^>]*)>([\s\S]*?)<\/table:table-cell>/g
@@ -105,6 +117,15 @@ const NOOP_DECISIONS = new Set(["", "special case", "manually handled"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BARE_URL = "https://hoer.live/artist";
 
+// "duplicate of" is either a bare artist UUID or a directory profile URL like
+// https://www.rebalance-gender.app/artist/<uuid> — accept both.
+function parseDupOf(raw) {
+  const v = raw.trim().replace(/\/+$/, "");
+  if (UUID_RE.test(v)) return v.toLowerCase();
+  const tail = v.split("/").pop() ?? "";
+  return UUID_RE.test(tail) ? tail.toLowerCase() : null;
+}
+
 const normalizeUrl = (u) => u.trim().replace(/\/+$/, "");
 
 // action: soft_delete | not_eligible | duplicate | approve | hard_delete
@@ -116,7 +137,7 @@ for (const r of rows) {
   const decision = (r["decision"] ?? "").trim();
   const name = (r["Artist"] ?? "").trim();
   const url = normalizeUrl(r["HÖR link"] ?? "");
-  const dupOf = (r["duplicate of"] ?? "").trim();
+  const dupOf = parseDupOf(r["duplicate of"] ?? "");
   if (NOOP_DECISIONS.has(decision)) { noopCount++; continue; }
   let action;
   if (decision === "empty page") action = "soft_delete";
@@ -129,8 +150,10 @@ for (const r of rows) {
     unknownDecisions.get(decision).push(name);
     continue;
   }
-  if (action === "duplicate" && !UUID_RE.test(dupOf))
-    throw new Error(`Row "${name}": decision is duplicate but "duplicate of" is not a UUID: "${dupOf}"`);
+  if (action === "duplicate" && dupOf == null)
+    throw new Error(
+      `Row "${name}": decision is duplicate but "duplicate of" has no artist UUID: "${r["duplicate of"] ?? ""}"`
+    );
   actionRows.push({ name, url, action, dupOf });
 }
 
@@ -162,23 +185,33 @@ const hoerLinks = await fetchAllHoerLinks();
 console.log(`Loaded ${hoerLinks.length} hoer links from the DB.`);
 
 const byUrl = new Map(); // normalized url -> [artist rows]
-const byName = new Map(); // exact name -> [artist rows]
+const byName = new Map(); // lowercased name -> [artist rows]
 for (const l of hoerLinks) {
   if (!l.artists) continue;
   const u = normalizeUrl(l.url ?? "");
   if (!byUrl.has(u)) byUrl.set(u, []);
   byUrl.get(u).push(l.artists);
-  const n = l.artists.name;
+  const n = l.artists.name.toLowerCase();
   if (!byName.has(n)) byName.set(n, []);
   byName.get(n).push(l.artists);
 }
 
-// --- resolve each sheet row to one artist ---
-function pickCandidate(candidates) {
-  if (candidates.length === 1) return candidates[0];
-  const pending = candidates.filter((a) => a.directory_status === "pending" && !a.deleted);
-  if (pending.length === 1) return pending[0];
-  return null;
+// Bare-URL rows (the sheet lost the page slug) match by name instead. An
+// artist whose HÖR page is dead may have no artist_links rows at all, so a
+// name miss in the link index falls back to a direct case-insensitive lookup
+// in the artists table.
+const bareLookup = new Map(); // lowercased name -> [artist rows]
+for (const r of actionRows) {
+  if (r.url && r.url !== BARE_URL) continue;
+  const key = r.name.toLowerCase();
+  if (byName.has(key) || bareLookup.has(key)) continue;
+  const pattern = r.name.replace(/([\\%_])/g, "\\$1");
+  const { data, error } = await supabase
+    .from("artists")
+    .select("id, name, directory_status, duplicate_of, deleted")
+    .ilike("name", pattern);
+  if (error) throw new Error(`name lookup "${r.name}": ${error.message}`);
+  bareLookup.set(key, data);
 }
 
 // The sheet predates some manual fixes: a row's desired end-state may already
@@ -197,29 +230,51 @@ const problems = [];
 let alreadyGone = 0;
 let alreadyApplied = 0;
 
+const describe = (as) =>
+  as.map((a) => `${a.id} [${a.directory_status}${a.deleted ? ", deleted" : ""}]`).join(", ");
+
 for (const r of actionRows) {
   const candidates =
-    r.url && r.url !== BARE_URL ? byUrl.get(r.url) ?? [] : byName.get(r.name) ?? [];
+    r.url && r.url !== BARE_URL
+      ? byUrl.get(r.url) ?? []
+      : byName.get(r.name.toLowerCase()) ?? bareLookup.get(r.name.toLowerCase()) ?? [];
   if (candidates.length === 0) {
     if (r.action === "hard_delete" || r.action === "soft_delete") { alreadyGone++; continue; }
     problems.push(`NO MATCH for "${r.name}" (${r.url || "no url"}) — ${r.action}`);
     continue;
   }
-  if (candidates.some((a) => satisfies(a, r.action, r.dupOf))) { alreadyApplied++; continue; }
-  const artist = pickCandidate(candidates);
-  if (!artist) {
-    problems.push(
-      `AMBIGUOUS match for "${r.name}" (${r.url || "by name"}): ` +
-        candidates.map((a) => `${a.id} [${a.directory_status}${a.deleted ? ", deleted" : ""}]`).join(", ")
-    );
+  // One HÖR page URL can sit on several artists: dup-resolution copies the
+  // link onto survivors, and the DB holds some internal pending dupes. So a
+  // row acts on every candidate the decision still applies to:
+  //   - candidates already in the desired end-state don't need touching;
+  //   - when several candidates share the URL, only 'pending' ones are acted
+  //     on (the others are survivors or already-resolved rows);
+  //   - a duplicate row never marks its own target;
+  //   - 'yes' must resolve to exactly one artist — approving several
+  //     look-alikes at once needs a human.
+  const remaining = candidates.filter((a) => !satisfies(a, r.action, r.dupOf));
+  let targets =
+    candidates.length === 1
+      ? remaining
+      : remaining.filter((a) => a.directory_status === "pending" && !a.deleted);
+  if (r.action === "duplicate") targets = targets.filter((a) => a.id !== r.dupOf);
+  if (targets.length === 0) {
+    if (remaining.length < candidates.length) { alreadyApplied++; continue; }
+    problems.push(`NO ELIGIBLE match for "${r.name}" (${r.url || "by name"}): ${describe(candidates)}`);
     continue;
   }
-  const prev = resolved.get(artist.id);
-  if (prev && (prev.action !== r.action || prev.dupOf !== r.dupOf)) {
-    problems.push(`CONFLICT: artist ${artist.id} ("${r.name}") has both ${prev.action} and ${r.action}`);
+  if (r.action === "approve" && targets.length > 1) {
+    problems.push(`AMBIGUOUS approve for "${r.name}" (${r.url || "by name"}): ${describe(targets)}`);
     continue;
   }
-  resolved.set(artist.id, { artist, ...r });
+  for (const artist of targets) {
+    const prev = resolved.get(artist.id);
+    if (prev && (prev.action !== r.action || prev.dupOf !== r.dupOf)) {
+      problems.push(`CONFLICT: artist ${artist.id} ("${r.name}") has both ${prev.action} and ${r.action}`);
+      continue;
+    }
+    resolved.set(artist.id, { artist, ...r });
+  }
 }
 
 if (alreadyGone) console.log(`  delete rows with no DB match (already gone, skipping): ${alreadyGone}`);
