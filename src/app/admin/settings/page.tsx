@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import NotAdminNotice from "@/components/NotAdminNotice";
 import { blockEmail, unblockEmail } from "../actions";
 import GenreModerationPanel from "../GenreModerationPanel";
 import AddPlatformForm from "../AddPlatformForm";
@@ -35,10 +36,10 @@ async function fetchAllGenres(
 }
 
 export default async function AdminSettingsPage() {
-  // ── Auth guard ────────────────────────────────────────────────
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // ── Auth guard (admins only) ──────────────────────────────────
+  const { user, isAdmin } = await getViewer();
   if (!user) redirect("/login?next=/admin/settings");
+  if (!isAdmin) return <NotAdminNotice />;
 
   const admin = getSupabaseAdminClient();
 

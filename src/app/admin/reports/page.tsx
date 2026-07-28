@@ -1,18 +1,17 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { REPORTS } from "@/lib/reports";
+import NotAdminNotice from "@/components/NotAdminNotice";
 import ReportButton from "./ReportButton";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminReportsPage() {
-  // ── Auth guard (same as the rest of /admin) ───────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // ── Auth guard (admins only, same as the rest of /admin) ──────
+  const { user, isAdmin } = await getViewer();
   if (!user) redirect("/login?next=/admin/reports");
+  if (!isAdmin) return <NotAdminNotice />;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">

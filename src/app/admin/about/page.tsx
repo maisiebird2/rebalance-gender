@@ -1,16 +1,17 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import NotAdminNotice from "@/components/NotAdminNotice";
 import AboutEditForm from "./AboutEditForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminAboutPage() {
-  // ── Auth guard ────────────────────────────────────────────────
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // ── Auth guard (admins only) ──────────────────────────────────
+  const { user, isAdmin } = await getViewer();
   if (!user) redirect("/login?next=/admin/about");
+  if (!isAdmin) return <NotAdminNotice />;
 
   const admin = getSupabaseAdminClient();
   const { data } = await admin

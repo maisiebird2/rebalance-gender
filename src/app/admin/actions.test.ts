@@ -3,7 +3,7 @@
 // that precisely isn't worth it for test plumbing, so `any` is allowed
 // in this file only.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mock everything actions.ts talks to ─────────────────────────────
 // These are server/Next-only modules (cookies, redirect, cache) that
@@ -71,9 +71,26 @@ function chain(result: { data?: unknown; error?: unknown }) {
   return builder;
 }
 
+// Admin-panel actions require the signed-in user's email to be on the
+// ADMIN_EMAILS list (stubbed in beforeEach below).
 function mockAuthedUser() {
   (createClient as any).mockResolvedValue({
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "u1" } } }) },
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: "u1", email: "admin@example.com" } },
+      }),
+    },
+  });
+}
+
+// Signed in, but NOT on the ADMIN_EMAILS list.
+function mockAuthedNonAdmin() {
+  (createClient as any).mockResolvedValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: "u2", email: "someone-else@example.com" } },
+      }),
+    },
   });
 }
 
@@ -98,9 +115,14 @@ function mockAdminFrom(...chains: ReturnType<typeof chain>[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
   (redirect as any).mockImplementation(() => {
     throw new Error("NEXT_REDIRECT");
   });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // ── addGenre ─────────────────────────────────────────────────────────
@@ -109,6 +131,14 @@ describe("addGenre", () => {
   it("redirects to login when signed out", async () => {
     mockSignedOut();
     await expect(addGenre(formData({ name: "techno" }))).rejects.toThrow("NEXT_REDIRECT");
+  });
+
+  it("redirects a signed-in non-admin without touching the database", async () => {
+    mockAuthedNonAdmin();
+    const fromMock = mockAdminFrom();
+
+    await expect(addGenre(formData({ name: "techno" }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
   });
 
   it("rejects a blank name without touching the database", async () => {

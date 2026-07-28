@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import { isAdminEmail } from "@/lib/admin-auth";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 
 async function requireAuth() {
@@ -13,12 +14,24 @@ async function requireAuth() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login?next=/admin");
+  return user;
+}
+
+// Admin-panel actions need more than a session: the signed-in user must be
+// on the ADMIN_EMAILS list. Non-admins are bounced to the homepage (the
+// panel UI that calls these is itself admin-only, so this only triggers on
+// direct/stale invocations). quickMarkNotEligible intentionally stays on
+// requireAuth: it's the artist-page quick action, and any signed-in user
+// can already set that status through the edit form.
+async function requireAdmin() {
+  const user = await requireAuth();
+  if (!isAdminEmail(user.email)) redirect("/");
 }
 
 // ── Submission moderation ──────────────────────────────────────────
 
 export async function quickApprove(id: string): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")
@@ -37,7 +50,7 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
 }
 
 export async function quickReject(id: string): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")
@@ -65,7 +78,7 @@ export async function quickMarkNotEligible(id: string): Promise<{ error: string 
 export async function addGenre(
   formData: FormData
 ): Promise<{ error: string } | { success: true }> {
-  await requireAuth();
+  await requireAdmin();
 
   const name = ((formData.get("name") ?? "") as string).trim();
   if (!name) return { error: "Genre name is required" };
@@ -109,7 +122,7 @@ export async function addGenre(
 export async function approveGenre(
   id: number
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("genres")
@@ -124,7 +137,7 @@ export async function approveGenre(
 export async function deleteGenre(
   id: number
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("genres")
@@ -139,7 +152,7 @@ export async function deleteGenre(
 export async function restoreGenre(
   id: number
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("genres")
@@ -156,7 +169,7 @@ export async function restoreGenre(
 export async function approveRevision(
   revisionId: string
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
 
   // Fetch the revision and its proposed changes.
@@ -300,7 +313,7 @@ export async function approveRevision(
 export async function rejectRevision(
   revisionId: string
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artist_revisions")
@@ -316,7 +329,7 @@ export async function blockEmail(
   email: string,
   reason?: string
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("submitter_emails")
@@ -333,7 +346,7 @@ export async function blockEmail(
 export async function unblockEmail(
   email: string
 ): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("submitter_emails")
@@ -358,7 +371,7 @@ function slugify(label: string): string {
 export async function addPlatform(
   formData: FormData
 ): Promise<{ error: string } | { success: true }> {
-  await requireAuth();
+  await requireAdmin();
 
   const label = ((formData.get("label") ?? "") as string).trim();
   if (!label) return { error: "Category name is required" };
@@ -399,7 +412,7 @@ export async function saveSiteContent(
   key: string,
   value: string,
 ): Promise<{ error: string } | { success: true }> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
 
   const { error } = await admin

@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getSupabaseClient } from "./supabase";
+import { getSupabaseClient, getSupabaseAdminClient } from "./supabase";
 import { pickArtistImage } from "./artist-images";
 import type {
   ArtistPage,
@@ -81,6 +81,7 @@ const ARTIST_SELECT = `
 const CARD_SELECT = `
   id,
   name,
+  directory_status,
   pronoun:pronouns(*),
   artist_genres(genres(id, name, status)),
   locations:artist_locations(city, country),
@@ -111,11 +112,19 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
  * Genre/country filters use `!inner` joins so that only artists with a
  * matching related row are returned. Results are paginated using
  * `PAGE_SIZE`; `filters.page` is 1-indexed (defaults to 1).
+ *
+ * `includeNonApproved` (admin viewers only — never pass it for anonymous
+ * traffic) switches to the RLS-bypassing admin client and drops the
+ * approved-only filter, so artists in every directory_status are listed.
+ * Soft-deleted rows (deleted = true) stay hidden for everyone.
  */
 export async function getArtists(
-  filters: DirectoryFilters = {}
+  filters: DirectoryFilters = {},
+  { includeNonApproved = false }: { includeNonApproved?: boolean } = {}
 ): Promise<ArtistPage> {
-  const supabase = getSupabaseClient();
+  const supabase = includeNonApproved
+    ? getSupabaseAdminClient()
+    : getSupabaseClient();
 
   // The grid uses the lean CARD_SELECT (see note above) rather than the
   // full ARTIST_SELECT — the homepage renders ArtistCard, which reads only
@@ -138,9 +147,12 @@ export async function getArtists(
   let query = supabase
     .from("artists")
     .select(select)
-    .eq("directory_status", "approved")
     .eq("deleted", false)
     .order("name");
+
+  if (!includeNonApproved) {
+    query = query.eq("directory_status", "approved");
+  }
 
   if (filters.genre) {
     query = query.eq("artist_genres.genres.name", filters.genre);
@@ -253,19 +265,30 @@ export async function getArtistsMissingLink(
   };
 }
 
-/** Fetch a single approved artist (with all relations) by id, for the detail page. */
+/**
+ * Fetch a single approved artist (with all relations) by id, for the detail
+ * page. With `includeNonApproved` (admin viewers only) the artist is returned
+ * regardless of directory_status; soft-deleted rows stay hidden either way.
+ */
 export async function getArtistById(
-  id: string
+  id: string,
+  { includeNonApproved = false }: { includeNonApproved?: boolean } = {}
 ): Promise<ArtistWithRelations | null> {
-  const supabase = getSupabaseClient();
+  const supabase = includeNonApproved
+    ? getSupabaseAdminClient()
+    : getSupabaseClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("artists")
     .select(ARTIST_SELECT)
     .eq("id", id)
-    .eq("directory_status", "approved")
-    .eq("deleted", false)
-    .maybeSingle();
+    .eq("deleted", false);
+
+  if (!includeNonApproved) {
+    query = query.eq("directory_status", "approved");
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     console.error("getArtistById error:", error);

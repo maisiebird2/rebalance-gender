@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import NotAdminNotice from "@/components/NotAdminNotice";
 import SubmissionsPanel, { type SubmissionItem } from "./SubmissionsPanel";
 import type {
   ArtistWithRelations,
@@ -41,10 +42,10 @@ function normalizeArtist(row: RawSubmissionRow): ArtistWithRelations {
 }
 
 export default async function AdminPage() {
-  // ── Auth guard ────────────────────────────────────────────────
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // ── Auth guard (admins only) ──────────────────────────────────
+  const { user, isAdmin } = await getViewer();
   if (!user) redirect("/login?next=/admin");
+  if (!isAdmin) return <NotAdminNotice />;
 
   const admin = getSupabaseAdminClient();
 
