@@ -14,23 +14,20 @@ interface Props {
 }
 
 export default function GenreList({ label, values, onChange, options }: Props) {
-  const rows = values.length > 0 ? values : [""];
-
   function update(i: number, value: string) {
-    onChange(rows.map((v, idx) => (idx === i ? value : v)));
+    onChange(values.map((v, idx) => (idx === i ? value : v)));
   }
   function add() {
-    onChange([...rows, ""]);
+    onChange([...values, ""]);
   }
   function remove(i: number) {
-    const next = rows.filter((_, idx) => idx !== i);
-    onChange(next.length > 0 ? next : [""]);
+    onChange(values.filter((_, idx) => idx !== i));
   }
 
   return (
     <div className="flex flex-col gap-2">
       {label && <span className="text-sm font-medium">{label}</span>}
-      {rows.map((genre, i) => (
+      {values.map((genre, i) => (
         <div key={i} className="flex items-center gap-2">
           <select
             value={genre}
@@ -44,16 +41,14 @@ export default function GenreList({ label, values, onChange, options }: Props) {
               </option>
             ))}
           </select>
-          {rows.length > 1 && (
-            <button
-              type="button"
-              onClick={() => remove(i)}
-              className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
-              aria-label="Remove genre"
-            >
-              ✕
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="rounded-md px-2 py-2 text-sm text-gray-400 hover:text-red-500"
+            aria-label="Remove genre"
+          >
+            ✕
+          </button>
         </div>
       ))}
       <button
