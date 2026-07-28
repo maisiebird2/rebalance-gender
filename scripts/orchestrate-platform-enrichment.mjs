@@ -122,12 +122,37 @@
 // ============================================================
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { scriptRuntime } from "./lib/script-runtime.mjs";
+import { LOG_FILE_ENV } from "./lib/progress-log.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
+
+// ------------------------------------------------------------
+// One shared per-run log file for every child stage's per-artist
+// detail lines (the stages read LOG_FILE_ENV via
+// scripts/lib/progress-log.mjs and append to it). The console gets a
+// progress bar per stage instead of thousands of per-artist lines.
+// Respects an already-set env var, so a caller (or a future
+// full-pipeline orchestrator) can direct several orchestrations into
+// one file.
+// ------------------------------------------------------------
+function ensureRunLogFile() {
+  if (process.env[LOG_FILE_ENV]) return process.env[LOG_FILE_ENV];
+  const logsDir = path.join(__dirname, "..", "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp =
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const logPath = path.join(logsDir, `enrichment-${stamp}.log`);
+  process.env[LOG_FILE_ENV] = logPath; // spawnSync passes process.env to children
+  return logPath;
+}
 
 // ------------------------------------------------------------
 // CLI args
@@ -145,7 +170,12 @@ const maxRoundsArg = args.find((a) => a.startsWith("--max-rounds="));
 // ------------------------------------------------------------
 function runStage(script, stageArgs = []) {
   const label = [script, ...stageArgs].join(" ");
-  console.log(`\n════════ ${label} ${"═".repeat(Math.max(0, 48 - label.length))}`);
+  const header = `\n════════ ${label} ${"═".repeat(Math.max(0, 48 - label.length))}`;
+  console.log(header);
+  // Mirror the stage boundary into the shared run log, so the detail
+  // lines the child appends there are grouped under the right stage.
+  const logPath = process.env[LOG_FILE_ENV];
+  if (logPath) fs.appendFileSync(logPath, `${header}\n`);
   // Every stage runs under tsx regardless of extension: the .mjs stages
   // import TypeScript from src/lib just as the .ts ones do, so the file
   // extension says nothing about which runtime it needs. See
@@ -260,11 +290,15 @@ function main() {
     console.log("--approved: every stage restricted to directory artists (directory_status = 'approved')\n");
   }
 
+  const logPath = ensureRunLogFile();
+  console.log(`Per-artist details → ${logPath}\n`);
+
   const maxRounds = maxRoundsArg ? parseInt(maxRoundsArg.split("=")[1], 10) : null;
 
   const stages = orchestratePlatformEnrichment({ approvedOnly: APPROVED_ONLY, maxRounds });
 
   console.log(`\n✓ Orchestration complete — ran ${stages.length} stage(s)${DRY_RUN ? " (dry run)" : ""}.`);
+  console.log(`  Per-artist details: ${logPath}`);
 }
 
 main();

@@ -54,6 +54,7 @@ import {
   OWNED_BY_DEDICATED_HARVESTER,
   PLATFORM_PRIORITY,
 } from "../src/lib/scrape-images.js";
+import { createStageLogger } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -157,15 +158,20 @@ async function main() {
     printOwnershipTable();
     return;
   }
-  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running image scraping\n");
+  // Created after the --list early return, so the report-only mode
+  // doesn't open a log file. Per-artist detail lines go to the log file
+  // (shared with the whole orchestration when run under it), the
+  // console gets a progress bar — see scripts/lib/progress-log.mjs.
+  const logger = createStageLogger("scrape-images");
+  logger.info(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running image scraping\n");
   if (FORCE) {
-    console.log(
+    logger.info(
       `--force: re-checking platforms that already have a stored image or a definitive no-image result ` +
         `(${[...OWNED_BY_DEDICATED_HARVESTER].join(", ")} still only scraped after their owner fails transiently)\n`
     );
   }
   if (ALLOWED_PLATFORMS) {
-    console.log(`Restricted to platforms: ${ALLOWED_PLATFORMS.join(", ")}\n`);
+    logger.info(`Restricted to platforms: ${ALLOWED_PLATFORMS.join(", ")}\n`);
   }
 
   // PostgREST caps a single response at ~1000 rows, so a bare select
@@ -190,7 +196,7 @@ async function main() {
     if (page.length < PAGE_SIZE || (LIMIT && artists.length >= LIMIT)) break;
   }
 
-  console.log(`${artists.length} approved artist(s) to check.\n`);
+  logger.info(`${artists.length} approved artist(s) to check.\n`);
 
   let storedCount = 0;
   let removedCount = 0;
@@ -199,6 +205,7 @@ async function main() {
   let fullyCovered = 0;
   const bySource: Record<string, number> = {};
 
+  const bar = logger.progressBar(artists.length, "image scraping");
   for (const artist of artists) {
     const result = await scrapeArtistImages(artist.id, supabaseClient(), {
       force: FORCE,
@@ -212,28 +219,34 @@ async function main() {
     if (result.stored.length > 0) {
       storedCount += result.stored.length;
       for (const platform of result.stored) bySource[platform] = (bySource[platform] ?? 0) + 1;
-      console.log(`✓ ${artist.name}: ${result.stored.join(", ")}`);
+      logger.detail(`✓ ${artist.name}: ${result.stored.join(", ")}`);
+      bar.tick("ok");
     } else if (result.attempted.length > 0) {
-      console.log(`✗ ${artist.name}: no image found (tried ${result.attempted.join(", ")})`);
+      logger.detail(`✗ ${artist.name}: no image found (tried ${result.attempted.join(", ")})`);
+      bar.tick("fail");
     } else if (result.skippedExisting.length + result.skippedProtected.length > 0) {
       // Every candidate platform already has an image, or a confirmed
       // no-image result, or is soundcloud/bandcamp — nothing to do.
       fullyCovered++;
+      bar.tick("skip");
     } else {
       // No usable links at all.
       noActivity++;
+      bar.tick("skip");
     }
   }
+  bar.finish();
 
-  console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  images stored:   ${storedCount}`);
+  logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  logger.info(`  images stored:   ${storedCount}`);
   for (const [platform, count] of Object.entries(bySource)) {
-    console.log(`    via ${platform}: ${count}`);
+    logger.info(`    via ${platform}: ${count}`);
   }
-  console.log(`  stale images removed (link changed to a page with no image): ${removedCount}`);
-  console.log(`  platform attempts with no image found: ${attemptedCount - storedCount}`);
-  console.log(`  artists already fully covered: ${fullyCovered}`);
-  console.log(`  artists with no usable links: ${noActivity}`);
+  logger.info(`  stale images removed (link changed to a page with no image): ${removedCount}`);
+  logger.info(`  platform attempts with no image found: ${attemptedCount - storedCount}`);
+  logger.info(`  artists already fully covered: ${fullyCovered}`);
+  logger.info(`  artists with no usable links: ${noActivity}`);
+  logger.close();
 }
 
 main().catch((err) => {

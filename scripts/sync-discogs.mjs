@@ -93,6 +93,7 @@ import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-fail
 import { writeDiscogsImage } from "./lib/discogs-images.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
+import { createStageLogger, preview } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -157,6 +158,11 @@ if (!DISCOGS_TOKEN) {
 const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
+
+// Per-artist detail lines go to the log file (shared with the whole
+// orchestration when run under it), the console gets a progress bar —
+// see scripts/lib/progress-log.mjs.
+const logger = createStageLogger("sync-discogs");
 
 // ------------------------------------------------------------
 // Paginated fetch (PostgREST caps unpaginated queries at 1000 rows).
@@ -239,7 +245,7 @@ async function fetchDiscogsArtist(discogsId, { retried = false } = {}) {
   });
   if (res.status === 429 && !retried) {
     const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
-    console.log(`  rate-limited; waiting ${retryAfter}s...`);
+    logger.detail(`  rate-limited; waiting ${retryAfter}s...`);
     await sleep(retryAfter * 1000);
     return fetchDiscogsArtist(discogsId, { retried: true });
   }
@@ -342,7 +348,7 @@ function cleanDiscogsProfile(text) {
 // Main
 // ------------------------------------------------------------
 async function main() {
-  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Syncing artists from Discogs\n");
+  logger.info(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Syncing artists from Discogs\n");
 
   // Artists with a discogs link (first link per artist wins, by id).
   const discogsLinks = await fetchAll(
@@ -411,13 +417,13 @@ async function main() {
   if (LIMIT) targets = targets.slice(0, LIMIT);
 
   if (APPROVED_ONLY) {
-    console.log("--approved: restricting to directory artists (directory_status = 'approved').");
+    logger.info("--approved: restricting to directory artists (directory_status = 'approved').");
   }
-  console.log(`${byArtist.size} ${APPROVED_ONLY ? "approved " : ""}artist(s) have a Discogs link.`);
+  logger.info(`${byArtist.size} ${APPROVED_ONLY ? "approved " : ""}artist(s) have a Discogs link.`);
   if (skippedProcessed > 0 && !FORCE) {
-    console.log(`${skippedProcessed} already processed (state in resolved_artists; use --force to redo).`);
+    logger.info(`${skippedProcessed} already processed (state in resolved_artists; use --force to redo).`);
   }
-  console.log(`${targets.length} to process.\n`);
+  logger.info(`${targets.length} to process.\n`);
 
   const stats = {
     staged: 0,
@@ -433,6 +439,7 @@ async function main() {
   };
   const stagedByPlatform = {};
 
+  const bar = logger.progressBar(targets.length, "discogs sync");
   for (const row of targets) {
     const artistId = row.artist_id;
     const name = row.artists?.name ?? artistId;
@@ -445,8 +452,9 @@ async function main() {
       // id can ever exist — a wrong-field link. Mark processed (it won't
       // fix itself), but the cross-check above retries if a human fixes it.
       if (info && info.kind !== "artist") {
-        console.log(`· ${name}: wrong-field Discogs URL (${info.kind}): ${row.url}`);
+        logger.detail(`· ${name}: wrong-field Discogs URL (${info.kind}): ${row.url}`);
         stats.skippedNonArtist++;
+        bar.tick("skip");
         if (!DRY_RUN) {
           await recordFailure(supabase, {
             artistId,
@@ -464,8 +472,9 @@ async function main() {
       const wantedName = info?.slug ? decodeDiscogsName(info.slug) : (row.artists?.name ?? "");
       const resolvedId = wantedName ? await searchDiscogsArtistId(wantedName) : null;
       if (!resolvedId) {
-        console.log(`✗ ${name}: could not resolve artist id from ${row.url}`);
+        logger.detail(`✗ ${name}: could not resolve artist id from ${row.url}`);
         stats.failed++;
+        bar.tick("fail");
         if (!DRY_RUN) {
           await recordFailure(supabase, {
             artistId,
@@ -478,7 +487,7 @@ async function main() {
         continue; // leave unmarked — a later run (or link fix) can retry
       }
       const canonicalUrl = `https://www.discogs.com/artist/${resolvedId}`;
-      console.log(`  ↳ ${name}: resolved ${row.url} → ${canonicalUrl} (name "${wantedName}")`);
+      logger.detail(`  ↳ ${name}: resolved ${row.url} → ${canonicalUrl} (name "${wantedName}")`);
       discogsId = resolvedId;
       stats.resolvedOld++;
       if (!DRY_RUN && canonicalUrl !== row.url) {
@@ -490,12 +499,12 @@ async function main() {
           if (updErr.code === "23505") {
             const { error: delErr } = await supabase.from("artist_links").delete().eq("id", row.id);
             if (delErr) {
-              console.error(`  (couldn't remove old-format artist_links row for ${name}: ${delErr.message})`);
+              logger.detail(`  (couldn't remove old-format artist_links row for ${name}: ${delErr.message})`);
             } else {
-              console.log(`  ↳ ${name}: canonical URL already present — removed old-format row`);
+              logger.detail(`  ↳ ${name}: canonical URL already present — removed old-format row`);
             }
           } else {
-            console.error(`  (couldn't update artist_links url for ${name}: ${updErr.message})`);
+            logger.detail(`  (couldn't update artist_links url for ${name}: ${updErr.message})`);
           }
         }
         row.url = canonicalUrl; // so a same-run failure records the canonical url
@@ -504,8 +513,9 @@ async function main() {
 
     const res = await fetchDiscogsArtist(discogsId);
     if (!res.ok) {
-      console.log(`✗ ${name}: Discogs HTTP ${res.status} for artist ${discogsId}`);
+      logger.detail(`✗ ${name}: Discogs HTTP ${res.status} for artist ${discogsId}`);
       stats.failed++;
+      bar.tick("fail");
       if (!DRY_RUN) {
         const is404 = res.status === 404;
         await recordFailure(supabase, {
@@ -532,7 +542,7 @@ async function main() {
     let allWritesOk = true;
     const writeFailed = (label, err) => {
       allWritesOk = false;
-      console.error(`  (${name}: ${label} failed: ${err?.message ?? err})`);
+      logger.detail(`  (${name}: ${label} failed: ${err?.message ?? err})`);
     };
 
     // ---- Full response → api_response_cache (durable blob) ----
@@ -582,7 +592,7 @@ async function main() {
     for (const rawUrl of urls) {
       const classified = classifyUrl(rawUrl);
       if (!classified) {
-        if (DEBUG) console.log(`    (skipped url: ${rawUrl})`);
+        if (DEBUG) logger.detail(`    (skipped url: ${rawUrl})`);
         continue;
       }
       candidates.push({
@@ -593,7 +603,7 @@ async function main() {
         parsed_platform: classified.platform,
         parsed_url: classified.parsedUrl,
       });
-      if (DEBUG) console.log(`    link ${classified.platform.padEnd(16)} ${classified.parsedUrl}`);
+      if (DEBUG) logger.detail(`    link ${classified.platform.padEnd(16)} ${classified.parsedUrl}`);
     }
     let newLinkCount = 0;
     if (candidates.length && !DRY_RUN) {
@@ -625,7 +635,7 @@ async function main() {
       if (error) writeFailed("legal name", error);
       else stats.realnames++;
     } else if (realname && DEBUG) {
-      console.log(`    legal name (private): ${realname}`);
+      logger.detail(`    legal name (private): ${realname}`);
     }
 
     // ---- Name variations → artist_aliases (public, searchable) ----
@@ -640,7 +650,7 @@ async function main() {
       if (error) writeFailed("aliases", error);
       else stats.aliases += newAliases.length;
     } else if (newAliases.length && DEBUG) {
-      console.log(`    aliases: ${newAliases.join(" | ")}`);
+      logger.detail(`    aliases: ${newAliases.join(" | ")}`);
     }
 
     // ---- Profile → biographies (cleaned) + artist_harvested_bios (raw) ----
@@ -664,7 +674,7 @@ async function main() {
         );
       if (rawErr) writeFailed("raw bio audit", rawErr);
     } else if (rawProfile && DEBUG) {
-      console.log(`    bio: ${cleanDiscogsProfile(rawProfile).slice(0, 80)}...`);
+      logger.detail(`    bio: ${preview(cleanDiscogsProfile(rawProfile), 30)}`);
     }
 
     // ---- Membership → collaborations (source_platform='discogs') ----
@@ -682,7 +692,7 @@ async function main() {
     }
     for (const otherArtistId of collabPartnerIds) {
       if (DRY_RUN) {
-        if (DEBUG) console.log(`    collab: ${artistId} ↔ ${otherArtistId}`);
+        if (DEBUG) logger.detail(`    collab: ${artistId} ↔ ${otherArtistId}`);
         continue;
       }
       const ok = await upsertCollab(artistId, otherArtistId);
@@ -693,18 +703,19 @@ async function main() {
     if (candidates.length === 0) stats.noUrls++;
 
     if (DRY_RUN) {
-      console.log(
+      logger.detail(
         `~ ${name}: would sync (${candidates.length} link(s), ${newAliases.length} alias(es), ` +
           `${rawProfile ? "bio, " : ""}${realname ? "realname, " : ""}` +
           `${imageStatus === "stored" ? "image, " : ""}${collabPartnerIds.size} collab(s))`
       );
+      bar.tick("ok");
       continue;
     }
 
     if (allWritesOk) {
       await clearFailure(supabase, { artistId, service: STATE_SERVICE });
       await markProcessed(artistId);
-      console.log(
+      logger.detail(
         `✓ ${name}: ${newLinkCount} new link(s)` +
           (newAliases.length ? `, ${newAliases.length} alias(es)` : "") +
           (rawProfile ? ", bio" : "") +
@@ -712,27 +723,31 @@ async function main() {
           (imageStatus === "stored" ? ", image" : "") +
           (collabPartnerIds.size ? `, ${collabPartnerIds.size} collab(s)` : "")
       );
+      bar.tick("ok");
     } else {
       stats.failed++;
-      console.log(`⚠ ${name}: synced with write error(s) — left unprocessed for retry`);
+      logger.detail(`⚠ ${name}: synced with write error(s) — left unprocessed for retry`);
+      bar.tick("fail");
     }
   }
+  bar.finish();
 
-  console.log(
+  logger.info(
     `\nDone. ${stats.staged} link(s) staged, ${stats.aliases} alias(es), ${stats.bios} bio(s), ` +
       `${stats.realnames} realname(s), ${stats.images} image(s), ${stats.collabs} collab edge(s); ` +
       `${stats.noUrls} artist(s) with no usable URLs, ${stats.resolvedOld} old-format URL(s) resolved, ` +
       `${stats.skippedNonArtist} wrong-field URL(s), ${stats.failed} failure(s).`
   );
   if (Object.keys(stagedByPlatform).length > 0) {
-    console.log("New staged links by platform:");
+    logger.info("New staged links by platform:");
     for (const [platform, count] of Object.entries(stagedByPlatform).sort((a, b) => b[1] - a[1])) {
-      console.log(`  ${platform}: ${count}`);
+      logger.info(`  ${platform}: ${count}`);
     }
   }
   if (stats.staged > 0) {
-    console.log("\nNext: node scripts/integrate-harvested-links.mjs (2d) to promote staged links.");
+    logger.info("\nNext: node scripts/integrate-harvested-links.mjs (2d) to promote staged links.");
   }
+  logger.close();
 }
 
 // Return the subset of `names` not already present (case-insensitively)
@@ -742,7 +757,7 @@ async function pickNewAliases(artistId, artistName, names) {
   if (cleaned.length === 0) return [];
   const { data, error } = await supabase.from("artist_aliases").select("name").eq("artist_id", artistId);
   if (error) {
-    console.error(`  (couldn't read existing aliases: ${error.message})`);
+    logger.detail(`  (couldn't read existing aliases: ${error.message})`);
     return [];
   }
   const existing = new Set((data ?? []).map((r) => norm(r.name)));
@@ -777,7 +792,7 @@ async function upsertCollab(idA, idB) {
       .eq("source_platform", "discogs")
       .single();
     if (selErr) {
-      console.error(`  (collab select failed: ${selErr.message})`);
+      logger.detail(`  (collab select failed: ${selErr.message})`);
       return false;
     }
     const { error: updErr } = await supabase
@@ -785,12 +800,12 @@ async function upsertCollab(idA, idB) {
       .update({ collab_count: existing.collab_count + 1 })
       .eq("id", existing.id);
     if (updErr) {
-      console.error(`  (collab update failed: ${updErr.message})`);
+      logger.detail(`  (collab update failed: ${updErr.message})`);
       return false;
     }
     return true;
   }
-  console.error(`  (collab insert failed: ${insertErr.message})`);
+  logger.detail(`  (collab insert failed: ${insertErr.message})`);
   return false;
 }
 
@@ -801,7 +816,7 @@ async function markProcessed(artistId) {
       { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
       { onConflict: "artist_id,service" }
     );
-  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+  if (error) logger.detail(`  (failed to record state for ${artistId}: ${error.message})`);
 }
 
 main().catch((err) => {

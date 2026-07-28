@@ -224,6 +224,7 @@ import {
 } from "./lib/soundcloud.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
+import { createStageLogger, preview } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -318,6 +319,11 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
 
+// Per-artist detail lines go to the log file (shared with the whole
+// orchestration when run under it), the console gets a progress bar —
+// see scripts/lib/progress-log.mjs.
+const logger = createStageLogger("sync-soundcloud");
+
 // Shared SoundCloud API client (OAuth token + GET wrapper) — see
 // scripts/lib/soundcloud.mjs, shared with build-soundcloud-follow-graph.mjs.
 const sc = createSoundcloudClient({ debug: DEBUG });
@@ -367,7 +373,7 @@ async function markProcessed(artistId) {
       { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
       { onConflict: "artist_id,service" }
     );
-  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+  if (error) logger.detail(`  (failed to record state for ${artistId}: ${error.message})`);
 }
 
 // ------------------------------------------------------------
@@ -661,6 +667,10 @@ export async function syncArtist(artist, opts = {}) {
     artistIdsWithLinktree = new Set(),
     imageOnly = false,
     linksOnly = false,
+    // Per-artist lines land in the stage log file, not the console —
+    // the CLI loop shows a progress bar instead. Injectable so a future
+    // event-triggered single-artist caller can pass console.log.
+    log = logger.detail,
   } = opts;
   const { artistId, name, scUrl, scUserId = null, directoryStatus } = artist;
   const isApproved = directoryStatus === "approved";
@@ -704,17 +714,17 @@ export async function syncArtist(artist, opts = {}) {
   // failures are logged + tallied only. --
   if (linksOnly) {
     if (!scUserId) {
-      if (debug) console.log(`  [debug] ${name}: --links-only but no stored SoundCloud id — skipped`);
+      if (debug) log(`  [debug] ${name}: --links-only but no stored SoundCloud id — skipped`);
       return { status: "links_skipped_no_id" };
     }
     const urn = `soundcloud:users:${scUserId}`;
     const profilesRes = await sc.soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
     if (!profilesRes.ok || !Array.isArray(profilesRes.data)) {
-      console.log(`✗ ${name}: links-only — web-profiles fetch failed (HTTP ${profilesRes.status ?? "timeout"})`);
+      log(`✗ ${name}: links-only — web-profiles fetch failed (HTTP ${profilesRes.status ?? "timeout"})`);
       await sleep(300);
       return { status: "links_failed", httpStatus: profilesRes.status };
     }
-    if (debug) console.log("  [debug] web-profiles raw:", JSON.stringify(profilesRes.data));
+    if (debug) log(`  [debug] web-profiles raw: ${JSON.stringify(profilesRes.data)}`);
     const candidatesRaw = [];
     for (const p of profilesRes.data) {
       if (typeof p?.url === "string" && p.url.trim()) {
@@ -725,13 +735,13 @@ export async function syncArtist(artist, opts = {}) {
     if (!dryRun && candidates.length > 0) {
       const { error: insertError } = await stageHarvestedLinks(supabase, { artistId, scUrl, candidates });
       if (insertError) {
-        console.log(`✗ ${name}: links-only — artist_harvested_links upsert failed: ${insertError.message}`);
+        log(`✗ ${name}: links-only — artist_harvested_links upsert failed: ${insertError.message}`);
         await sleep(300);
         return { status: "links_failed" };
       }
     }
     const linksNote = candidates.length > 0 ? ` — ${candidates.map((c) => c.platform).join(", ")}` : "";
-    console.log(`✓ ${name}: links-only — ${candidates.length} link(s)${linksNote}`);
+    log(`✓ ${name}: links-only — ${candidates.length} link(s)${linksNote}`);
     await sleep(300);
     return {
       status: "links_synced",
@@ -752,15 +762,15 @@ export async function syncArtist(artist, opts = {}) {
   // the URL already resolved cleanly once. --
   let res;
   if (scUserId) {
-    if (debug) console.log(`  [debug] ${name}: fetching by stored id ${scUserId} (skipping /resolve)`);
+    if (debug) log(`  [debug] ${name}: fetching by stored id ${scUserId} (skipping /resolve)`);
     res = await sc.getUserById(scUserId);
   } else {
-    if (debug) console.log(`  [debug] ${name}: resolving by URL (no stored id yet)`);
+    if (debug) log(`  [debug] ${name}: resolving by URL (no stored id yet)`);
     // Wrong-field URL guard: skip before spending an API call. A stored
     // link whose domain isn't soundcloud.com (a data-entry mistake) can
     // never resolve.
     if (!isSoundCloudUrl(scUrl)) {
-      console.log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
+      log(`⚠ ${name}: skipped — stored URL is not a soundcloud.com link (${scUrl})`);
       if (imageOnly) {
         await failImage(IMAGE_FAILURE_STATUS.UNREACHABLE, "stored soundcloud link does not resolve to a soundcloud.com domain");
         return { status: "skipped_wrong_field" };
@@ -786,12 +796,12 @@ export async function syncArtist(artist, opts = {}) {
   // fetch-by-id change. Only for a 404 (transient failures just retry
   // next run) and only when the URL is a real soundcloud.com link.
   if (scUserId && !res.ok && res.status === 404 && isSoundCloudUrl(scUrl)) {
-    if (debug) console.log(`  [debug] ${name}: stored id ${scUserId} returned 404, falling back to resolve-by-URL`);
+    if (debug) log(`  [debug] ${name}: stored id ${scUserId} returned 404, falling back to resolve-by-URL`);
     res = await sc.resolveUser(scUrl);
   }
 
   if (!res.ok || !res.data) {
-    console.log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
+    log(`✗ ${name}: resolve failed (HTTP ${res.status ?? "timeout"})`);
     if (imageOnly) {
       if (res.status === 404) {
         await failImage(IMAGE_FAILURE_STATUS.UNREACHABLE, "resolve returned 404 (dead link)");
@@ -821,7 +831,7 @@ export async function syncArtist(artist, opts = {}) {
   const urn = user.urn ?? (user.id != null ? `soundcloud:users:${user.id}` : null);
 
   if (debug) {
-    console.log(
+    log(
       `  [debug] ${name}: followers=${user.followers_count} tracks=${user.track_count} ` +
         `avatar=${user.avatar_url ?? "(none)"}`
     );
@@ -843,7 +853,7 @@ export async function syncArtist(artist, opts = {}) {
       // unchanged profile URL is only picked up on --force (or if the
       // link changes), not automatically.
       imageStatus = "no_avatar";
-      if (debug) console.log(`  [debug] ${name}: approved but no avatar_url on resolved user`);
+      if (debug) log(`  [debug] ${name}: approved but no avatar_url on resolved user`);
       await failImage(IMAGE_FAILURE_STATUS.NO_IMAGE, "resolved soundcloud user has no avatar_url");
     } else if (isDefaultAvatarUrl(user.avatar_url)) {
       // SoundCloud serves a generic placeholder avatar for accounts with
@@ -853,7 +863,7 @@ export async function syncArtist(artist, opts = {}) {
       // link changes — the same link-changed-since-failure cross-check it
       // already applies to every other image failure.
       imageStatus = "default_avatar";
-      if (debug) console.log(`  [debug] ${name}: approved but avatar_url is SoundCloud's default placeholder`);
+      if (debug) log(`  [debug] ${name}: approved but avatar_url is SoundCloud's default placeholder`);
       await failImage(IMAGE_FAILURE_STATUS.PLACEHOLDER, "soundcloud returned its default placeholder avatar (no real photo)");
     } else if (!dryRun) {
       const { error: imageError } = await supabase.from("artist_images").upsert(
@@ -866,7 +876,7 @@ export async function syncArtist(artist, opts = {}) {
         { onConflict: "artist_id,platform" }
       );
       if (imageError) {
-        console.error(`  failed to save soundcloud image: ${imageError.message}`);
+        log(`  failed to save soundcloud image: ${imageError.message}`);
         imageStatus = "failed";
         await failImage(IMAGE_FAILURE_STATUS.WRITE_FAILED, `artist_images upsert failed: ${imageError.message}`);
       } else {
@@ -882,7 +892,7 @@ export async function syncArtist(artist, opts = {}) {
     // Stop here — playlists/web-profiles/bio/links are already done
     // from the main sync; resolved_artists('soundcloud-sync') is left
     // untouched since this call was never about the main sync.
-    console.log(
+    log(
       `${imageStatus === "stored" ? "✓" : imageStatus === "no_avatar" || imageStatus === "default_avatar" ? "○" : "✗"} ${name}: image-only — ${imageStatus}`
     );
     await sleep(300);
@@ -906,9 +916,9 @@ export async function syncArtist(artist, opts = {}) {
           url: p.permalink_url,
           track_count: p.track_count ?? 0,
         }));
-      if (debug) console.log(`  [debug] ${name}: 0 tracks, found ${playlists.length} playlist(s)`);
+      if (debug) log(`  [debug] ${name}: 0 tracks, found ${playlists.length} playlist(s)`);
     } else if (debug) {
-      console.log(`  [debug] ${name}: playlists fetch failed (HTTP ${playlistsRes.status ?? "timeout"})`);
+      log(`  [debug] ${name}: playlists fetch failed (HTTP ${playlistsRes.status ?? "timeout"})`);
     }
     await sleep(300);
   }
@@ -918,17 +928,17 @@ export async function syncArtist(artist, opts = {}) {
   if (urn) {
     const profilesRes = await sc.soundcloudGet(`/users/${encodeURIComponent(urn)}/web-profiles`);
     if (profilesRes.ok && Array.isArray(profilesRes.data)) {
-      if (debug) console.log("  [debug] web-profiles raw:", JSON.stringify(profilesRes.data));
+      if (debug) log(`  [debug] web-profiles raw: ${JSON.stringify(profilesRes.data)}`);
       for (const p of profilesRes.data) {
         if (typeof p?.url === "string" && p.url.trim()) {
           candidatesRaw.push({ rawUrl: p.url.trim(), source: `web-profiles:${p.service ?? "?"}` });
         }
       }
     } else if (debug) {
-      console.log(`  [debug] web-profiles fetch failed (status ${profilesRes.status})`);
+      log(`  [debug] web-profiles fetch failed (status ${profilesRes.status})`);
     }
   } else if (debug) {
-    console.log("  [debug] no urn on resolved user, skipping web-profiles");
+    log("  [debug] no urn on resolved user, skipping web-profiles");
   }
 
   // -- 4. Raw bio text — kept unconditionally (audit trail) and also
@@ -999,7 +1009,7 @@ export async function syncArtist(artist, opts = {}) {
     );
 
     if (enrichError) {
-      console.log(`✗ ${name}: artist_enrichment upsert failed — ${enrichError.message}`);
+      log(`✗ ${name}: artist_enrichment upsert failed — ${enrichError.message}`);
       // Not marked processed — same reasoning as resolve_failed: a DB
       // write error is presumed transient, so retry every run.
       await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
@@ -1022,7 +1032,7 @@ export async function syncArtist(artist, opts = {}) {
       { onConflict: "namespace,cache_key" }
     );
     if (cacheError) {
-      console.error(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
+      log(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
     }
 
     // Booking/management/contact — best-effort, doesn't fail the sync.
@@ -1033,7 +1043,7 @@ export async function syncArtist(artist, opts = {}) {
       if (contact) update.contact_info = contact;
       const { error: artistUpdateError } = await supabase.from("artists").update(update).eq("id", artistId);
       if (artistUpdateError) {
-        console.error(`  failed to save booking/management/contact: ${artistUpdateError.message}`);
+        log(`  failed to save booking/management/contact: ${artistUpdateError.message}`);
       }
     }
 
@@ -1047,7 +1057,7 @@ export async function syncArtist(artist, opts = {}) {
           { onConflict: "artist_id,platform", ignoreDuplicates: true }
         );
       if (linktreeError) {
-        console.error(`  failed to save linktree link: ${linktreeError.message}`);
+        log(`  failed to save linktree link: ${linktreeError.message}`);
       } else {
         artistIdsWithLinktree.add(artistId);
       }
@@ -1057,7 +1067,7 @@ export async function syncArtist(artist, opts = {}) {
     if (candidates.length > 0) {
       const { error: insertError } = await stageHarvestedLinks(supabase, { artistId, scUrl, candidates });
       if (insertError) {
-        console.error(`  failed to save harvested links: ${insertError.message}`);
+        log(`  failed to save harvested links: ${insertError.message}`);
         writeFailed = true;
         writeFailDetail = `artist_harvested_links upsert failed: ${insertError.message}`;
       }
@@ -1076,7 +1086,7 @@ export async function syncArtist(artist, opts = {}) {
         { onConflict: "artist_id,source_platform" }
       );
       if (bioError) {
-        console.error(`  failed to save raw bio: ${bioError.message}`);
+        log(`  failed to save raw bio: ${bioError.message}`);
         writeFailed = true;
         writeFailDetail = writeFailDetail
           ? `${writeFailDetail}; artist_harvested_bios upsert failed: ${bioError.message}`
@@ -1102,7 +1112,7 @@ export async function syncArtist(artist, opts = {}) {
         { onConflict: "artist_id,platform" }
       );
       if (biographyError) {
-        console.error(`  failed to save biography: ${biographyError.message}`);
+        log(`  failed to save biography: ${biographyError.message}`);
         writeFailed = true;
         writeFailDetail = writeFailDetail
           ? `${writeFailDetail}; biographies upsert failed: ${biographyError.message}`
@@ -1123,8 +1133,8 @@ export async function syncArtist(artist, opts = {}) {
   const playlistsNote = playlists ? `, ${playlists.length} playlist(s) as fallback` : "";
   const linksNote =
     candidates.length > 0 ? `, ${candidates.length} link(s) — ${candidates.map((c) => c.platform).join(", ")}` : "";
-  const bioPreview = rawBio ? `"${rawBio.slice(0, 60)}${rawBio.length > 60 ? "…" : ""}"` : "(no bio)";
-  console.log(
+  const bioPreview = rawBio ? preview(rawBio, 30) : "(no bio)";
+  log(
     `✓ ${name}: ${followers} followers, ${user.track_count ?? "?"} tracks${playlistsNote}${linksNote}, ${bioPreview}`
   );
 
@@ -1214,19 +1224,19 @@ async function writeFailuresCsv() {
   const outDir = path.resolve(__dirname, "..", "..");
   const outPath = path.join(outDir, `sync-soundcloud-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
-  console.log(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
+  logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }
 
 // ------------------------------------------------------------
 // Main (CLI entry) — a thin loop over syncArtist().
 // ------------------------------------------------------------
 async function main() {
-  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running SoundCloud sync\n");
-  if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status = 'approved')\n");
-  if (STATUS_FILTER) console.log(`Filtering by directory_status: ${STATUS_FILTER}\n`);
+  logger.info(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running SoundCloud sync\n");
+  if (APPROVED_ONLY) logger.info("--approved: restricting to directory artists (directory_status = 'approved')\n");
+  if (STATUS_FILTER) logger.info(`Filtering by directory_status: ${STATUS_FILTER}\n`);
 
   await sc.getAccessToken();
-  console.log("SoundCloud API token acquired.\n");
+  logger.info("SoundCloud API token acquired.\n");
 
   // --links-only: refresh just the web-profiles "Links" section for
   // every matching artist that has a stored id — one API call each, no
@@ -1257,7 +1267,7 @@ async function main() {
       }
     }
     const skippedNoId = scanned - linkRows.length;
-    console.log(
+    logger.info(
       `--links-only: refreshing ${linkRows.length} artist(s) with a stored SoundCloud id` +
         (skippedNoId > 0 ? ` (${skippedNoId} of ${scanned} scanned had none — never fully synced)` : "") +
         "\n"
@@ -1268,6 +1278,7 @@ async function main() {
     let linksFailed = 0;
     let totalLinksFound = 0;
     const byPlatform = {};
+    const bar = logger.progressBar(linkRows.length, "soundcloud links-only");
     for (const row of linkRows) {
       const name = row.artists?.name ?? row.artist_id;
       attempted++;
@@ -1287,27 +1298,33 @@ async function main() {
         for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
           byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
         }
+        bar.tick("ok");
       } else if (result.status === "links_failed") {
         linksFailed++;
+        bar.tick("fail");
+      } else {
+        bar.tick("skip");
       }
     }
+    bar.finish();
 
-    console.log(`\nDone${DRY_RUN ? " (dry run)" : ""} (links-only).`);
-    console.log(`  attempted:         ${attempted}`);
-    console.log(`  ${DRY_RUN ? "would refresh" : "refreshed"}:  ${linksSynced}`);
-    console.log(`  failed:            ${linksFailed}`);
-    console.log(`  total links found: ${totalLinksFound}`);
+    logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""} (links-only).`);
+    logger.info(`  attempted:         ${attempted}`);
+    logger.info(`  ${DRY_RUN ? "would refresh" : "refreshed"}:  ${linksSynced}`);
+    logger.info(`  failed:            ${linksFailed}`);
+    logger.info(`  total links found: ${totalLinksFound}`);
     for (const [platform, count] of Object.entries(byPlatform).sort((a, b) => b[1] - a[1])) {
-      console.log(`    ${platform}: ${count}`);
+      logger.info(`    ${platform}: ${count}`);
     }
+    logger.close();
     return;
   }
 
   const processed = FORCE ? new Set() : await loadProcessedArtistIds();
   if (FORCE) {
-    console.log("--force: bypassing resolved_artists state\n");
+    logger.info("--force: bypassing resolved_artists state\n");
   } else if (processed.size > 0) {
-    console.log(
+    logger.info(
       `State loaded: ${processed.size} artist(s) already processed (resolved_artists; pass --force to bypass)\n`
     );
   }
@@ -1392,14 +1409,14 @@ async function main() {
     [...rows, ...imageOnlyRows].map((r) => r.artist_id)
   );
 
-  console.log(
+  logger.info(
     `Found ${links.length} SoundCloud link(s)` +
       (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       (retriedLinkChanged > 0 ? `, ${retriedLinkChanged} retried (link changed since a prior failure)` : "") +
       `${LIMIT ? `, processing next ${rows.length}` : ""}\n`
   );
   if (imageOnlyRows.length > 0) {
-    console.log(
+    logger.info(
       `${imageOnlyRows.length} already-synced approved artist(s) missing a soundcloud image — running the lighter image-only pass for them.\n`
     );
   }
@@ -1414,6 +1431,7 @@ async function main() {
   let imagesStored = 0;
   const byPlatform = {};
 
+  const bar = logger.progressBar(rows.length, "soundcloud sync");
   for (const row of rows) {
     const name = row.artists?.name ?? row.artist_id;
     attempted++;
@@ -1438,21 +1456,30 @@ async function main() {
         for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
           byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
         }
+        bar.tick("ok");
         break;
       case "skipped_wrong_field":
         skippedWrongField++;
+        bar.tick("skip");
         break;
       case "failed_resolve":
         failedResolve++;
+        bar.tick("fail");
         break;
       case "failed_write":
         failedWrite++;
+        bar.tick("fail");
         break;
+      default:
+        bar.tick("skip");
     }
   }
+  bar.finish();
 
   let imageOnlyAttempted = 0;
   let imageOnlyFailed = 0;
+  const imageBar =
+    imageOnlyRows.length > 0 ? logger.progressBar(imageOnlyRows.length, "soundcloud image-only") : null;
   for (const row of imageOnlyRows) {
     const name = row.artists?.name ?? row.artist_id;
     imageOnlyAttempted++;
@@ -1470,33 +1497,37 @@ async function main() {
 
     if (result.status === "image_synced") {
       imagesStored++;
+      imageBar.tick("ok");
     } else {
       imageOnlyFailed++;
+      imageBar.tick("fail");
     }
   }
+  if (imageBar) imageBar.finish();
 
-  console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  attempted:              ${attempted}`);
-  console.log(`  skipped (processed):    ${skippedProcessed}`);
+  logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  logger.info(`  attempted:              ${attempted}`);
+  logger.info(`  skipped (processed):    ${skippedProcessed}`);
   if (retriedLinkChanged > 0) {
-    console.log(`  retried (link changed): ${retriedLinkChanged}`);
+    logger.info(`  retried (link changed): ${retriedLinkChanged}`);
   }
-  console.log(`  skipped (wrong field):  ${skippedWrongField}`);
-  console.log(`  resolve failed:         ${failedResolve}`);
-  console.log(`  write failed:           ${failedWrite}`);
-  console.log(`  ${DRY_RUN ? "would sync" : "synced"}:                ${synced}`);
-  console.log(`  total links found:      ${totalLinksFound}`);
+  logger.info(`  skipped (wrong field):  ${skippedWrongField}`);
+  logger.info(`  resolve failed:         ${failedResolve}`);
+  logger.info(`  write failed:           ${failedWrite}`);
+  logger.info(`  ${DRY_RUN ? "would sync" : "synced"}:                ${synced}`);
+  logger.info(`  total links found:      ${totalLinksFound}`);
   for (const [platform, count] of Object.entries(byPlatform).sort((a, b) => b[1] - a[1])) {
-    console.log(`    ${platform}: ${count}`);
+    logger.info(`    ${platform}: ${count}`);
   }
-  console.log(`  bios found:             ${biosFound}`);
+  logger.info(`  bios found:             ${biosFound}`);
   if (imageOnlyAttempted > 0) {
-    console.log(`  image-only attempted:   ${imageOnlyAttempted}`);
-    console.log(`  image-only failed:      ${imageOnlyFailed}`);
+    logger.info(`  image-only attempted:   ${imageOnlyAttempted}`);
+    logger.info(`  image-only failed:      ${imageOnlyFailed}`);
   }
-  console.log(`  images stored:          ${imagesStored}`);
+  logger.info(`  images stored:          ${imagesStored}`);
 
   await writeFailuresCsv();
+  logger.close();
 }
 
 main().catch((err) => {
