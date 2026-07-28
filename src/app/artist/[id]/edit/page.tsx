@@ -29,6 +29,19 @@ interface PageProps {
   searchParams: Promise<{ from?: string }>;
 }
 
+export async function generateMetadata({ params }: Pick<PageProps, "params">) {
+  const { id } = await params;
+  const { data } = await getSupabaseAdminClient()
+    .from("artists")
+    .select("name")
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return {};
+  return {
+    title: `${data.name} | Rebalance Gender`,
+  };
+}
+
 const ARTIST_ADMIN_SELECT = `
   *,
   pronoun:pronouns(*),

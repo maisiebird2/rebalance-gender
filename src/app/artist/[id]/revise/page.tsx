@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: PageProps) {
   const artist = await getArtistById(id);
   if (!artist) return {};
   return {
-    title: `Suggest a correction for ${artist.name} — Women in Electronic Music`,
+    title: `${artist.name} | Rebalance Gender`,
   };
 }
 
