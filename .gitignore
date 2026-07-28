@@ -26,6 +26,8 @@
 
 # script caches (ephemeral, not needed in git)
 .cache/
+# per-run enrichment detail logs (see scripts/lib/progress-log.mjs)
+/logs/
 scripts/*-cache.json
 resolve-candidates-*.csv
 sc-followee-duplicates-*.csv

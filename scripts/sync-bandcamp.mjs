@@ -166,6 +166,7 @@ import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
+import { createStageLogger, preview } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -229,6 +230,11 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
   auth: { persistSession: false },
 });
 
+// Per-artist detail lines go to the log file (shared with the whole
+// orchestration when run under it), the console gets a progress bar —
+// see scripts/lib/progress-log.mjs.
+const logger = createStageLogger("sync-bandcamp");
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------
@@ -263,7 +269,7 @@ async function markProcessed(artistId) {
       { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
       { onConflict: "artist_id,service" }
     );
-  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+  if (error) logger.detail(`  (failed to record state for ${artistId}: ${error.message})`);
 }
 
 // ------------------------------------------------------------
@@ -635,7 +641,15 @@ async function fetchAllBandcampLinks() {
 // preloads once (see loadArtistIdsWithLocation) and passes in.
 // ------------------------------------------------------------
 export async function syncArtist(artist, opts = {}) {
-  const { debug = false, dryRun = false, artistIdsWithLocation = new Set() } = opts;
+  const {
+    debug = false,
+    dryRun = false,
+    artistIdsWithLocation = new Set(),
+    // Per-artist lines land in the stage log file, not the console —
+    // the CLI loop shows a progress bar instead. Injectable so a future
+    // event-triggered single-artist caller can pass console.log.
+    log = logger.detail,
+  } = opts;
   const { artistId, name } = artist;
   // Normalize away a leading www. (see stripBandcampWww) so the fetch
   // and any stored source_url use Bandcamp's canonical bare-subdomain host.
@@ -649,7 +663,7 @@ export async function syncArtist(artist, opts = {}) {
 
   // -- Wrong-field / invalid URL guard --
   if (!isBandcampArtistUrl(bcUrl)) {
-    console.log(`⚠ ${name}: skipped — stored URL is not a *.bandcamp.com artist page (${bcUrl})`);
+    log(`⚠ ${name}: skipped — stored URL is not a *.bandcamp.com artist page (${bcUrl})`);
     await fail("invalid_bandcamp_url", {
       detail: "stored bandcamp link is not an artist subdomain (bare apex, search URL, or non-bandcamp domain)",
       markDone: true,
@@ -661,7 +675,7 @@ export async function syncArtist(artist, opts = {}) {
   const result = await fetchBandcampPage(bcUrl);
 
   if (!result.html) {
-    console.log(`✗ ${name}: could not fetch page (HTTP ${result.status ?? "timeout"}) (${bcUrl})`);
+    log(`✗ ${name}: could not fetch page (HTTP ${result.status ?? "timeout"}) (${bcUrl})`);
     if (result.status === 404 || result.status === 410) {
       await fail("not_found", { detail: `fetch returned HTTP ${result.status}`, markDone: true });
     } else {
@@ -674,7 +688,7 @@ export async function syncArtist(artist, opts = {}) {
   const { html, resolvedBase, finalUrl } = result;
 
   if (landedOffBandcamp(finalUrl)) {
-    console.log(`✗ ${name}: redirected off Bandcamp (${finalUrl}) — treating as dead link`);
+    log(`✗ ${name}: redirected off Bandcamp (${finalUrl}) — treating as dead link`);
     await fail("not_found", { detail: `redirected off Bandcamp to ${finalUrl}`, markDone: true });
     await sleep(300);
     return { status: "failed_fetch", httpStatus: null };
@@ -685,7 +699,7 @@ export async function syncArtist(artist, opts = {}) {
   const sidebar = extractBioSidebar(html);
 
   if (debug) {
-    console.log(
+    log(
       `  [debug] ${name}: albums=${albums.length} bio=${Boolean(sidebar.bio)} ` +
         `location=${sidebar.location ?? "(none)"} links=${sidebar.links.length} ` +
         `tags=${sidebar.tags.length} image=${sidebar.imageUrl ?? "(none)"} finalUrl=${finalUrl}`
@@ -710,7 +724,7 @@ export async function syncArtist(artist, opts = {}) {
   let writeFailDetail = null;
 
   function noteWriteFailure(label, message) {
-    console.error(`  failed to save ${label}: ${message}`);
+    log(`  failed to save ${label}: ${message}`);
     writeFailed = true;
     writeFailDetail = writeFailDetail ? `${writeFailDetail}; ${label} failed: ${message}` : `${label} failed: ${message}`;
   }
@@ -748,7 +762,7 @@ export async function syncArtist(artist, opts = {}) {
     );
 
     if (enrichError) {
-      console.log(`✗ ${name}: artist_enrichment upsert failed — ${enrichError.message}`);
+      log(`✗ ${name}: artist_enrichment upsert failed — ${enrichError.message}`);
       await fail("write_failed", { detail: `artist_enrichment upsert failed: ${enrichError.message}` });
       await sleep(300);
       return { status: "failed_write" };
@@ -776,7 +790,7 @@ export async function syncArtist(artist, opts = {}) {
       { onConflict: "namespace,cache_key" }
     );
     if (cacheError) {
-      console.error(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
+      log(`  ${name}: raw_data cache write failed (non-fatal): ${cacheError.message}`);
     }
 
     // Image → artist_images (artist_id, platform), not
@@ -883,12 +897,10 @@ export async function syncArtist(artist, opts = {}) {
   }
 
   const albumsNote = albums.length > 0 ? `${albums.length} release(s)` : "no releases";
-  const bioPreview = sidebar.bio
-    ? `"${sidebar.bio.slice(0, 60)}${sidebar.bio.length > 60 ? "…" : ""}"`
-    : "(no bio)";
+  const bioPreview = sidebar.bio ? preview(sidebar.bio, 30) : "(no bio)";
   const linksNote =
     candidates.length > 0 ? `, ${candidates.length} link(s) — ${candidates.map((c) => c.platform).join(", ")}` : "";
-  console.log(`✓ ${name}: ${albumsNote}${linksNote}, ${bioPreview}`);
+  log(`✓ ${name}: ${albumsNote}${linksNote}, ${bioPreview}`);
 
   await sleep(300);
 
@@ -960,21 +972,21 @@ async function writeFailuresCsv() {
   const outDir = path.resolve(__dirname, "..", "..");
   const outPath = path.join(outDir, `sync-bandcamp-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
-  console.log(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
+  logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }
 
 // ------------------------------------------------------------
 // Main (CLI entry) — a thin loop over syncArtist().
 // ------------------------------------------------------------
 async function main() {
-  console.log(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running Bandcamp sync\n");
-  console.log("Directory-only: processing artists with directory_status = 'approved'\n");
+  logger.info(DRY_RUN ? "Running in DRY RUN mode (no writes)\n" : "Running Bandcamp sync\n");
+  logger.info("Directory-only: processing artists with directory_status = 'approved'\n");
 
   const processed = FORCE ? new Set() : await loadProcessedArtistIds();
   if (FORCE) {
-    console.log("--force: bypassing resolved_artists state\n");
+    logger.info("--force: bypassing resolved_artists state\n");
   } else if (processed.size > 0) {
-    console.log(
+    logger.info(
       `State loaded: ${processed.size} artist(s) already processed (resolved_artists; pass --force to bypass)\n`
     );
   }
@@ -1007,7 +1019,7 @@ async function main() {
   }
   if (LIMIT) rows = rows.slice(0, LIMIT);
 
-  console.log(
+  logger.info(
     `Found ${links.length} Bandcamp link(s)` +
       (skippedProcessed > 0 ? `, ${skippedProcessed} already processed (skipped)` : "") +
       (retriedLinkChanged > 0 ? `, ${retriedLinkChanged} retried (link changed since a prior failure)` : "") +
@@ -1025,6 +1037,7 @@ async function main() {
   let locationsFound = 0;
   const byPlatform = {};
 
+  const bar = logger.progressBar(rows.length, "bandcamp sync");
   for (const row of rows) {
     const name = row.artists?.name ?? row.artist_id;
     attempted++;
@@ -1044,38 +1057,46 @@ async function main() {
         for (const [platform, count] of Object.entries(result.linksByPlatform ?? {})) {
           byPlatform[platform] = (byPlatform[platform] ?? 0) + count;
         }
+        bar.tick("ok");
         break;
       case "skipped_wrong_field":
         skippedWrongField++;
+        bar.tick("skip");
         break;
       case "failed_fetch":
         failedFetch++;
+        bar.tick("fail");
         break;
       case "failed_write":
         failedWrite++;
+        bar.tick("fail");
         break;
+      default:
+        bar.tick("skip");
     }
   }
+  bar.finish();
 
-  console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  attempted:              ${attempted}`);
-  console.log(`  skipped (processed):    ${skippedProcessed}`);
+  logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  logger.info(`  attempted:              ${attempted}`);
+  logger.info(`  skipped (processed):    ${skippedProcessed}`);
   if (retriedLinkChanged > 0) {
-    console.log(`  retried (link changed): ${retriedLinkChanged}`);
+    logger.info(`  retried (link changed): ${retriedLinkChanged}`);
   }
-  console.log(`  skipped (wrong field):  ${skippedWrongField}`);
-  console.log(`  fetch failed:           ${failedFetch}`);
-  console.log(`  write failed:           ${failedWrite}`);
-  console.log(`  ${DRY_RUN ? "would sync" : "synced"}:                ${synced}`);
-  console.log(`  total albums/tracks:    ${totalAlbums}`);
-  console.log(`  bios found:             ${biosFound}`);
-  console.log(`  locations found:        ${locationsFound}`);
-  console.log(`  total links found:      ${totalLinksFound}`);
+  logger.info(`  skipped (wrong field):  ${skippedWrongField}`);
+  logger.info(`  fetch failed:           ${failedFetch}`);
+  logger.info(`  write failed:           ${failedWrite}`);
+  logger.info(`  ${DRY_RUN ? "would sync" : "synced"}:                ${synced}`);
+  logger.info(`  total albums/tracks:    ${totalAlbums}`);
+  logger.info(`  bios found:             ${biosFound}`);
+  logger.info(`  locations found:        ${locationsFound}`);
+  logger.info(`  total links found:      ${totalLinksFound}`);
   for (const [platform, count] of Object.entries(byPlatform).sort((a, b) => b[1] - a[1])) {
-    console.log(`    ${platform}: ${count}`);
+    logger.info(`    ${platform}: ${count}`);
   }
 
   await writeFailuresCsv();
+  logger.close();
 }
 
 main().catch((err) => {

@@ -111,6 +111,7 @@ import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
+import { createStageLogger } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -168,6 +169,20 @@ if (!SUPABASE_URL || !SECRET_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SECRET_KEY, { auth: { persistSession: false } });
+
+// Per-artist detail lines go to the log file (shared with the whole
+// orchestration when run under it), the console gets a progress bar —
+// see scripts/lib/progress-log.mjs. Created lazily so importing this
+// module's parsing helpers (unit tests — see the isMain guard at the
+// bottom) doesn't open a log file.
+let _logger = null;
+const logger = {
+  stage: () => (_logger ??= createStageLogger("sync-linktree")),
+  detail: (line) => logger.stage().detail(line),
+  info: (line) => logger.stage().info(line),
+  progressBar: (total, label) => logger.stage().progressBar(total, label),
+  close: () => _logger?.close(),
+};
 
 // ------------------------------------------------------------
 // Linktree HTTP — throttled, timeout, one retry on 429/5xx. No official
@@ -449,7 +464,7 @@ async function markProcessed(artistId) {
       { artist_id: artistId, service: STATE_SERVICE, resolved_at: new Date().toISOString() },
       { onConflict: "artist_id,service" }
     );
-  if (error) console.error(`  (failed to record state for ${artistId}: ${error.message})`);
+  if (error) logger.detail(`  (failed to record state for ${artistId}: ${error.message})`);
 }
 
 // ------------------------------------------------------------
@@ -459,13 +474,20 @@ async function markProcessed(artistId) {
 // loop tallies.
 // ------------------------------------------------------------
 export async function syncArtist(artist, opts = {}) {
-  const { dryRun = false, debug = false } = opts;
+  const {
+    dryRun = false,
+    debug = false,
+    // Per-artist lines land in the stage log file, not the console —
+    // the CLI loop shows a progress bar instead. Injectable so a future
+    // event-triggered single-artist caller can pass console.log.
+    log = logger.detail,
+  } = opts;
   const { artistId, name, linktreeUrl, directoryStatus } = artist;
   const isApproved = directoryStatus === "approved";
 
   // -- Wrong-field URL guard: skip before spending a fetch --
   if (!isLinktreeUrl(linktreeUrl)) {
-    console.log(`⚠ ${name}: skipped — stored URL is not a linktr.ee link (${linktreeUrl})`);
+    log(`⚠ ${name}: skipped — stored URL is not a linktr.ee link (${linktreeUrl})`);
     if (!dryRun) {
       // Marked processed, same reasoning as a 404: a wrong-field link
       // won't fix itself on retry; the loadFailureUrls cross-check
@@ -491,7 +513,7 @@ export async function syncArtist(artist, opts = {}) {
   }
   if (!res || !res.ok) {
     const status = res?.status ?? 0;
-    console.log(`✗ ${name}: Linktree HTTP ${status}`);
+    log(`✗ ${name}: Linktree HTTP ${status}`);
     if (!dryRun) {
       const is404 = status === 404;
       await recordFailure(supabase, {
@@ -528,11 +550,11 @@ export async function syncArtist(artist, opts = {}) {
       parsed_platform: c.platform,
       parsed_url: c.parsedUrl,
     });
-    if (debug) console.log(`    link ${String(c.platform).padEnd(20)} ${c.parsedUrl}`);
+    if (debug) log(`    link ${String(c.platform).padEnd(20)} ${c.parsedUrl}`);
   }
 
   if (dryRun) {
-    console.log(
+    log(
       `~ ${name}: would stage ${candidates.length} link(s)` +
         `${parsed.bio ? ", bio" : ""}${parsed.imageUrl && isApproved ? ", image" : ""}`
     );
@@ -548,7 +570,7 @@ export async function syncArtist(artist, opts = {}) {
   let allWritesOk = true;
   const writeFailed = (label, err) => {
     allWritesOk = false;
-    console.error(`  (${name}: ${label} failed: ${err?.message ?? err})`);
+    log(`  (${name}: ${label} failed: ${err?.message ?? err})`);
   };
 
   // -- Links → artist_harvested_links (staged) --
@@ -606,7 +628,7 @@ export async function syncArtist(artist, opts = {}) {
   if (allWritesOk) {
     await clearFailure(supabase, { artistId, service: STATE_SERVICE });
     await markProcessed(artistId);
-    console.log(
+    log(
       `✓ ${name}: ${newLinkCount} new link(s)` +
         (parsed.bio ? ", bio" : "") +
         (imageStored ? ", image" : "")
@@ -629,7 +651,7 @@ export async function syncArtist(artist, opts = {}) {
     detail: "one or more writes failed",
     url: linktreeUrl,
   });
-  console.log(`⚠ ${name}: synced with write error(s) — left unprocessed for retry`);
+  log(`⚠ ${name}: synced with write error(s) — left unprocessed for retry`);
   return { status: "failed_write" };
 }
 
@@ -695,15 +717,15 @@ async function writeFailuresCsv() {
 
   const outPath = path.join(path.resolve(__dirname, "..", ".."), `sync-linktree-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
-  console.log(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
+  logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }
 
 // ------------------------------------------------------------
 // Main (CLI entry) — a thin loop over syncArtist().
 // ------------------------------------------------------------
 async function main() {
-  console.log(DRY_RUN ? "sync-linktree — DRY RUN (no writes)\n" : "sync-linktree — syncing from Linktree\n");
-  if (APPROVED_ONLY) console.log("--approved: restricting to directory artists (directory_status='approved').\n");
+  logger.info(DRY_RUN ? "sync-linktree — DRY RUN (no writes)\n" : "sync-linktree — syncing from Linktree\n");
+  if (APPROVED_ONLY) logger.info("--approved: restricting to directory artists (directory_status='approved').\n");
 
   const links = await fetchAllLinktreeLinks();
   const byArtist = new Map();
@@ -741,7 +763,7 @@ async function main() {
   const skippedProcessed = byArtist.size - targets.length;
   if (LIMIT) targets = targets.slice(0, LIMIT);
 
-  console.log(
+  logger.info(
     `${byArtist.size} ${APPROVED_ONLY ? "approved " : ""}artist(s) have a Linktree link` +
       (skippedProcessed > 0 && !FORCE ? `, ${skippedProcessed} already processed` : "") +
       (retriedLinkChanged > 0 ? `, ${retriedLinkChanged} retried (link changed)` : "") +
@@ -760,6 +782,7 @@ async function main() {
   };
   const stagedByPlatform = {};
 
+  const bar = logger.progressBar(targets.length, "linktree sync");
   for (const row of targets) {
     const name = row.artists?.name ?? row.artist_id;
     const result = await syncArtist(
@@ -775,36 +798,44 @@ async function main() {
         for (const [p, c] of Object.entries(result.newByPlatform ?? {})) {
           stagedByPlatform[p] = (stagedByPlatform[p] ?? 0) + c;
         }
+        bar.tick("ok");
         break;
       case "skipped_wrong_field":
         stats.skippedWrongField++;
+        bar.tick("skip");
         break;
       case "failed_fetch":
         stats.failedFetch++;
+        bar.tick("fail");
         break;
       case "failed_write":
         stats.failedWrite++;
+        bar.tick("fail");
         break;
+      default:
+        bar.tick("skip");
     }
   }
+  bar.finish();
 
-  console.log(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
-  console.log(`  ${DRY_RUN ? "would sync" : "synced"}:            ${stats.synced}`);
-  console.log(`  skipped (wrong field):  ${stats.skippedWrongField}`);
-  console.log(`  fetch failed:           ${stats.failedFetch}`);
-  console.log(`  write failed:           ${stats.failedWrite}`);
-  console.log(`  new links staged:       ${stats.totalNewLinks}`);
+  logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  logger.info(`  ${DRY_RUN ? "would sync" : "synced"}:            ${stats.synced}`);
+  logger.info(`  skipped (wrong field):  ${stats.skippedWrongField}`);
+  logger.info(`  fetch failed:           ${stats.failedFetch}`);
+  logger.info(`  write failed:           ${stats.failedWrite}`);
+  logger.info(`  new links staged:       ${stats.totalNewLinks}`);
   for (const [p, c] of Object.entries(stagedByPlatform).sort((a, b) => b[1] - a[1])) {
-    console.log(`    ${p}: ${c}`);
+    logger.info(`    ${p}: ${c}`);
   }
-  console.log(`  bios:                   ${stats.bios}`);
-  console.log(`  images stored:          ${stats.images}`);
+  logger.info(`  bios:                   ${stats.bios}`);
+  logger.info(`  images stored:          ${stats.images}`);
 
   if (stats.totalNewLinks > 0) {
-    console.log("\nNext: node scripts/integrate-harvested-links.mjs (2d) to promote staged links.");
+    logger.info("\nNext: node scripts/integrate-harvested-links.mjs (2d) to promote staged links.");
   }
 
   await writeFailuresCsv();
+  logger.close();
 }
 
 // Run main() only as a CLI entry point, so the pure parsing/classifying
