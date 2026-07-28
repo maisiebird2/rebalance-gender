@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import {
   hasSearchProvider,
   searchPlatformForArtist,
@@ -8,17 +8,17 @@ import {
 /**
  * GET /api/admin/platform-search?platform=discogs&name=PHLOXO
  *
- * Auth-guarded (admin login) proxy in front of lib/search-providers —
+ * Admin-guarded proxy in front of lib/search-providers —
  * lets the MissingLinkFooter client component fetch top candidates
  * without exposing platform API keys to the browser.
  */
 export async function GET(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user, isAdmin } = await getViewer();
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  if (!isAdmin) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   const platform = request.nextUrl.searchParams.get("platform") ?? "";

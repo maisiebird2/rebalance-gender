@@ -33,6 +33,7 @@ where visitors can search by any artist name or URL.
 | `NEXT_PUBLIC_SUPABASE_URL` | browser + server | project API URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | browser + server | read-only via RLS |
 | `SUPABASE_SECRET_KEY` | server only | bypasses RLS; admin routes only |
+| `ADMIN_EMAILS` | server only | comma-separated emails of auth users treated as admins (admin panel + all-statuses directory visibility); other signed-in users only get the edit form |
 | `SOUNDCLOUD_CLIENT_ID` | scripts only | SC API credential |
 | `SOUNDCLOUD_CLIENT_SECRET` | scripts only | SC API credential |
 | `SPOTIFY_CLIENT_ID` | server + scripts | Spotify API credential (also missing-links suggestions) |

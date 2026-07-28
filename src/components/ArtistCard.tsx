@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { ArtistWithRelations } from "@/lib/types";
+import { statusLabel } from "@/lib/artist-status";
 
 interface ArtistCardProps {
   artist: ArtistWithRelations;
@@ -66,6 +67,13 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
             with the name/aka/pronoun/location rather than the avatar. */}
         <div className="min-w-0 flex-1">
           <div className="space-y-0.5">
+            {/* Non-approved marker — public queries only return approved
+                artists, so this only ever renders for admin viewers. */}
+            {artist.directory_status && artist.directory_status !== "approved" && (
+              <span className="ff-mono inline-block rounded-md bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                {statusLabel(artist.directory_status)}
+              </span>
+            )}
             <h3 className="ff-display truncate text-base font-medium">
               {artist.name}
             </h3>

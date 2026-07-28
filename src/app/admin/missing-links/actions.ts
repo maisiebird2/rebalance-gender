@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
@@ -11,12 +11,11 @@ export interface ActionResult {
   error?: string;
 }
 
+// These actions back the admin-only "Missing links" page, so they require
+// an admin, not just any signed-in user.
 async function requireUser(): Promise<boolean> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return Boolean(user);
+  const { isAdmin } = await getViewer();
+  return isAdmin;
 }
 
 /**

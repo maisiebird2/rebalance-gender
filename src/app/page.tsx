@@ -6,6 +6,7 @@ import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
 import SearchMissResults from "@/components/SearchMissResults";
 import { getArtists, getRandomArtists, getCountryOptions, getGenreOptions, getApprovedArtistCount } from "@/lib/queries";
+import { getViewer } from "@/lib/admin-auth";
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -22,11 +23,18 @@ export default async function Home({ searchParams }: PageProps) {
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
 
   const isFiltered = Boolean(genre || country || search);
+  const { isAdmin } = await getViewer();
 
+  // Admins browse every non-deleted artist regardless of directory_status
+  // (ArtistCard badges the non-approved ones). Their unfiltered view is the
+  // alphabetical all-statuses list rather than the random-approved shuffle:
+  // the random_approved_artist_ids RPC only samples approved rows.
   const [{ artists, hasMore }, genres, countries, artistCount] = await Promise.all([
-    isFiltered
-      ? getArtists({ genre, country, search, page })
-      : getRandomArtists(page),
+    isAdmin
+      ? getArtists({ genre, country, search, page }, { includeNonApproved: true })
+      : isFiltered
+        ? getArtists({ genre, country, search, page })
+        : getRandomArtists(page),
     getGenreOptions(),
     getCountryOptions(),
     getApprovedArtistCount(),

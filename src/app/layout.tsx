@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Space_Grotesk, Space_Mono, Inter } from "next/font/google";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
 import SmokeBackdrop from "@/components/SmokeBackdrop";
@@ -56,10 +56,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user, isAdmin } = await getViewer();
 
   return (
     <html
@@ -73,12 +70,14 @@ export default async function RootLayout({
             {/* Admin row — only rendered when signed in, takes no space otherwise */}
             {user && (
               <div className="flex items-center justify-end gap-4 border-b border-gray-100 py-1.5 text-sm dark:border-gray-800">
-                <a
-                  href="/admin"
-                  className="font-medium text-violet-600 hover:underline dark:text-violet-400"
-                >
-                  Admin panel
-                </a>
+                {isAdmin && (
+                  <a
+                    href="/admin"
+                    className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+                  >
+                    Admin panel
+                  </a>
+                )}
                 <form action={signOut}>
                   <button
                     type="submit"

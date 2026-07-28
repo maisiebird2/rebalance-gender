@@ -10,6 +10,7 @@ import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
 import Field from "@/components/form/Field";
 import TextArea from "@/components/form/TextArea";
 import { mergeGenreOptions } from "@/lib/genre-options";
+import { STATUSES, statusLabel } from "@/lib/artist-status";
 
 interface Props {
   artist: ArtistWithRelations;
@@ -17,33 +18,6 @@ interface Props {
   platforms: Platform[];
   /** Name of the already-stored duplicate_of target, resolved by the page. */
   duplicateOfName: string | null;
-}
-
-const STATUSES: ArtistStatus[] = [
-  "approved",
-  "pending",
-  "rejected",
-  "not_eligible",
-  "search_input",
-  "sc_followee",
-  "duplicate",
-  "obscure",
-  "not_electronic",
-  "label_etc",
-];
-
-// Words shown as acronyms rather than title-cased, e.g. "sc_followee" -> "SC followee".
-const ACRONYM_WORDS = new Set(["sc", "mb"]);
-
-// Display label for a status value, e.g. "not_eligible" -> "Not eligible".
-function statusLabel(status: ArtistStatus): string {
-  const words = status.split("_");
-  return words
-    .map((w, i) => {
-      if (ACRONYM_WORDS.has(w)) return w.toUpperCase();
-      return i === 0 ? w[0].toUpperCase() + w.slice(1) : w;
-    })
-    .join(" ");
 }
 
 // Result of checking the "Duplicate of" entry against the database.
@@ -216,22 +190,8 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
         </div>
       )}
 
-      {/* ── Basic info ─────────────────────────────────────────── */}
+      {/* ── Status — first editable field, above Basic info ────── */}
       <fieldset className="space-y-4">
-        <legend className="text-base font-semibold">Basic info</legend>
-
-        <Field label="Name" name="name" defaultValue={artist.name} required />
-
-        <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
-          placeholder="e.g. DJ Name, Former name" />
-
-        <Field
-          label="Pronouns"
-          name="pronouns"
-          defaultValue={artist.pronoun?.value ?? ""}
-          placeholder="she/her"
-        />
-
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium" htmlFor="directory_status">
             Status
@@ -295,6 +255,23 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
             )}
           </div>
         )}
+      </fieldset>
+
+      {/* ── Basic info ─────────────────────────────────────────── */}
+      <fieldset className="space-y-4">
+        <legend className="text-base font-semibold">Basic info</legend>
+
+        <Field label="Name" name="name" defaultValue={artist.name} required />
+
+        <TextList label="Aliases" itemNoun="alias" values={aliasNames} onChange={setAliasNames}
+          placeholder="e.g. DJ Name, Former name" />
+
+        <Field
+          label="Pronouns"
+          name="pronouns"
+          defaultValue={artist.pronoun?.value ?? ""}
+          placeholder="she/her"
+        />
       </fieldset>
 
       {/* ── Location ───────────────────────────────────────────── */}

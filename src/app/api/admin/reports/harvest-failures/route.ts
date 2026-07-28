@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { buildOds, type Cell } from "@/lib/ods";
 
@@ -32,13 +32,13 @@ interface FailureRow {
  * replaced with the artist's name, hyperlinked to their edit page.
  */
 export async function GET() {
-  // ── Auth guard (same pattern as the rest of /admin) ────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // ── Auth guard (admins only, same pattern as the rest of /admin) ─
+  const { user, isAdmin } = await getViewer();
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  if (!isAdmin) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   const admin = getSupabaseAdminClient();

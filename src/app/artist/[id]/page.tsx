@@ -7,6 +7,7 @@ import {
   PLATFORMS_HIDDEN_ON_ARTIST_PAGE,
 } from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
+import { getViewer } from "@/lib/admin-auth";
 import EditButton from "@/components/EditButton";
 import AdminActions from "@/components/AdminActions";
 import BandcampWidget from "@/components/BandcampWidget";
@@ -14,7 +15,8 @@ import RecommendedArtists from "@/components/RecommendedArtists";
 import { linkify } from "@/lib/linkify";
 
 
-export const revalidate = 3600; // re-fetch from Supabase at most hourly
+// Rendered per request: what this page shows depends on the viewer — admins
+// can open artists in any directory_status, everyone else only approved ones.
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -22,7 +24,8 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
-  const artist = await getArtistById(id);
+  const { isAdmin } = await getViewer();
+  const artist = await getArtistById(id, { includeNonApproved: isAdmin });
   if (!artist) return {};
   return {
     title: `${artist.name} | Rebalance Gender`,
@@ -31,8 +34,9 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function ArtistPage({ params }: PageProps) {
   const { id } = await params;
+  const { isAdmin } = await getViewer();
   const [artist, platforms] = await Promise.all([
-    getArtistById(id),
+    getArtistById(id, { includeNonApproved: isAdmin }),
     getPlatforms(getSupabaseClient()),
   ]);
 
@@ -97,6 +101,13 @@ export default async function ArtistPage({ params }: PageProps) {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
+      {/* Not-approved banner — only admins can load such pages at all */}
+      {artist.directory_status !== "approved" && (
+        <div className="mb-4 rounded-md bg-red-600 px-4 py-3 text-sm font-medium text-white">
+          This artist is not approved; status: {artist.directory_status}
+        </div>
+      )}
+
       {/* Top bar — full width */}
       <div className="flex items-center justify-between">
         <Link

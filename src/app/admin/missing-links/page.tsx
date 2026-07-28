@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
+import NotAdminNotice from "@/components/NotAdminNotice";
 import { buildPlatformSearchUrl, getPlatforms } from "@/lib/platforms";
 import { getArtistsMissingLink } from "@/lib/queries";
 import { hasSearchProvider } from "@/lib/search-providers";
@@ -23,12 +24,10 @@ interface PageProps {
 }
 
 export default async function MissingLinksPage({ searchParams }: PageProps) {
-  // ── Auth guard (same as /admin) ───────────────────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // ── Auth guard (admins only, same as /admin) ──────────────────
+  const { user, isAdmin } = await getViewer();
   if (!user) redirect("/login?next=/admin/missing-links");
+  if (!isAdmin) return <NotAdminNotice />;
 
   const params = await searchParams;
   const platformKey =
