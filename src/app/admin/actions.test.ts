@@ -47,7 +47,14 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { scrapeArtistImages } from "@/lib/scrape-images";
-import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
+import {
+  addGenre,
+  addPlatform,
+  quickApprove,
+  quickReject,
+  quickApproveArtist,
+  quickMarkNotEligible,
+} from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
 
@@ -333,5 +340,63 @@ describe("quickReject", () => {
 
     expect(result).toBeUndefined();
     expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "rejected" });
+  });
+});
+
+// ── quickApproveArtist / quickMarkNotEligible ────────────────────────
+// The artist-page quick actions. These flip directory_status through the
+// service-role client, so a session alone must never be enough — with
+// public sign-up enabled, anyone can have a session.
+
+describe("quickApproveArtist", () => {
+  it("redirects to login when signed out", async () => {
+    mockSignedOut();
+    await expect(quickApproveArtist("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+  });
+
+  it("redirects a signed-in non-admin without touching the database", async () => {
+    mockAuthedNonAdmin();
+    const fromMock = mockAdminFrom();
+
+    await expect(quickApproveArtist("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("approves as an admin", async () => {
+    mockAuthedUser();
+    const updateChain = chain({ error: null });
+    mockAdminFrom(updateChain);
+
+    const result = await quickApproveArtist("artist-1");
+
+    expect(result).toBeUndefined();
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "approved" });
+    expect(updateChain.eq).toHaveBeenCalledWith("id", "artist-1");
+  });
+});
+
+describe("quickMarkNotEligible", () => {
+  it("redirects to login when signed out", async () => {
+    mockSignedOut();
+    await expect(quickMarkNotEligible("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+  });
+
+  it("redirects a signed-in non-admin without touching the database", async () => {
+    mockAuthedNonAdmin();
+    const fromMock = mockAdminFrom();
+
+    await expect(quickMarkNotEligible("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("marks not eligible as an admin", async () => {
+    mockAuthedUser();
+    const updateChain = chain({ error: null });
+    mockAdminFrom(updateChain);
+
+    const result = await quickMarkNotEligible("artist-1");
+
+    expect(result).toBeUndefined();
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "not_eligible" });
   });
 });

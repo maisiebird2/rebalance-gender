@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
@@ -20,6 +21,20 @@ interface LinkInput {
   platform: LinkPlatform;
   url: string | null;
   not_found?: boolean;
+}
+
+/**
+ * Every action in this file writes (or reads any-status data) through the
+ * service-role client, so it must be gated on ADMIN_EMAILS membership, not
+ * on merely having a session — public sign-up may be enabled on the
+ * Supabase project. Returns an error object (rather than redirecting) so
+ * the form can surface it inline.
+ */
+async function requireAdminForAction(): Promise<{ error: string } | null> {
+  const { user, isAdmin } = await getViewer();
+  if (!user) return { error: "Not authenticated" };
+  if (!isAdmin) return { error: "Not authorized" };
+  return null;
 }
 
 /**
@@ -76,11 +91,8 @@ export async function checkDuplicateTarget(
   raw: string,
   selfId: string
 ): Promise<DuplicateTargetResult> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Not authenticated" };
+  const authError = await requireAdminForAction();
+  if (authError) return { ok: false, error: authError.error };
 
   return resolveDuplicateTarget(getSupabaseAdminClient(), raw, selfId);
 }
@@ -89,11 +101,8 @@ export async function saveArtist(
   formData: FormData
 ): Promise<{ error: string } | void> {
   // ── 1. Auth check ─────────────────────────────────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  const authError = await requireAdminForAction();
+  if (authError) return authError;
 
   // ── 2. Parse form data ────────────────────────────────────────
   const artistId = formData.get("artist_id") as string;
@@ -469,11 +478,8 @@ export async function saveArtist(
 export async function deleteArtist(
   artistId: string
 ): Promise<{ error: string } | void> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  const authError = await requireAdminForAction();
+  if (authError) return authError;
 
   const admin = getSupabaseAdminClient();
   const { error } = await admin

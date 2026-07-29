@@ -3,7 +3,7 @@
 
 import SubmissionForm from "@/components/SubmissionForm";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getPlatforms } from "@/lib/platforms";
 import { getGenrePickerOptions } from "@/lib/queries"
 
@@ -13,11 +13,13 @@ export const metadata = {
 
 export default async function SubmitPage() {
   const admin = getSupabaseAdminClient();
-  const supabase = await createClient();
-  const [genreOptions, platforms, { data: { user } }] = await Promise.all([
+  // Only admins get the trusted form (no Turnstile/email, internal notes);
+  // /api/submit treats non-admin sessions exactly like anonymous visitors,
+  // so the form has to match or their submissions would be rejected.
+  const [genreOptions, platforms, { isAdmin }] = await Promise.all([
     getGenrePickerOptions(),
     getPlatforms(admin),
-    supabase.auth.getUser(),
+    getViewer(),
   ]);
 
   return (
@@ -27,7 +29,7 @@ export default async function SubmitPage() {
         Know someone who should be on this list? Submissions are reviewed
         before they appear publicly.
       </p>
-      <SubmissionForm genreOptions={genreOptions} platforms={platforms} isLoggedIn={!!user} />
+      <SubmissionForm genreOptions={genreOptions} platforms={platforms} isAdmin={isAdmin} />
     </div>
   );
 }

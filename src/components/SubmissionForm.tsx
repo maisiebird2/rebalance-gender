@@ -13,7 +13,7 @@ import Field from "./form/Field";
 interface Props {
   genreOptions: string[];
   platforms: Platform[];
-  isLoggedIn?: boolean;
+  isAdmin?: boolean;
 }
 
 type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
@@ -23,7 +23,7 @@ interface DuplicateMatch {
   name: string;
 }
 
-export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = false }: Props) {
+export default function SubmissionForm({ genreOptions, platforms, isAdmin = false }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
@@ -62,7 +62,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
       labels: labelList.filter(Boolean),
       aliases: aliasNames.filter(Boolean),
       // Internal notes are only collected from logged-in admins.
-      notes: isLoggedIn ? data.get("notes") : undefined,
+      notes: isAdmin ? data.get("notes") : undefined,
       submittedByEmail: data.get("submittedByEmail"),
       links,
       turnstileToken,
@@ -151,7 +151,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
         <ProfileLinksFieldset platforms={platforms} values={linkUrls} onChange={updateLinkUrl} />
       </fieldset>
 
-      {isLoggedIn && (
+      {isAdmin && (
         <div className="flex flex-col gap-1">
           <label htmlFor="notes" className="text-sm font-medium">
             Internal notes <span className="font-normal text-gray-500">(admin only — never shown publicly)</span>
@@ -166,7 +166,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
         </div>
       )}
 
-      {!isLoggedIn && (
+      {!isAdmin && (
         <Field
           label="Your email (required — we'll send a confirmation link)"
           name="submittedByEmail"
@@ -176,7 +176,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
       )}
 
       {/* ── Turnstile widget (not shown to logged-in admins) ────── */}
-      {siteKey && !isLoggedIn && (
+      {siteKey && !isAdmin && (
         <Turnstile
           siteKey={siteKey}
           onSuccess={(token) => setTurnstileToken(token)}
@@ -214,7 +214,7 @@ export default function SubmissionForm({ genreOptions, platforms, isLoggedIn = f
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
             type="submit"
-            disabled={status === "submitting" || (!isLoggedIn && !!siteKey && !turnstileToken)}
+            disabled={status === "submitting" || (!isAdmin && !!siteKey && !turnstileToken)}
             className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {status === "submitting" ? "Submitting…" : "Submit"}

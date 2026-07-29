@@ -1,25 +1,12 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/browser";
 
 interface Props {
   artistId: string;
 }
 
+// Rendered only for admins (the artist page gates on getViewer().isAdmin);
+// the edit page and its actions enforce the same check server-side.
 export default function EditButton({ artistId }: Props) {
-  const [authed, setAuthed] = useState(false);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) setAuthed(true);
-    });
-  }, []);
-
-  if (!authed) return null;
-
   return (
     <Link
       href={`/artist/${artistId}/edit`}

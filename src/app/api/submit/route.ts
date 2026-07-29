@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/admin-auth";
 import { getPlatforms } from "@/lib/platforms";
 import { resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import {
@@ -39,19 +40,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // ── 1. Auth: is this an authenticated (admin) submission? ───────────────────
-  // Trust to skip email verification AND bot protection is granted because the
-  // server confirms a logged-in session — not merely because the payload
-  // omitted an email or a Turnstile token.
+  // ── 1. Auth: is this an admin submission? ───────────────────────────────────
+  // Trust to skip email verification AND bot protection is granted only when
+  // the server confirms a logged-in session AND that session's email is on
+  // the ADMIN_EMAILS list. Public sign-up may be enabled on the Supabase
+  // project, so a bare session proves nothing — a non-admin session is
+  // treated exactly like an anonymous request.
   const authClient = await createClient();
   const {
     data: { user },
   } = await authClient.auth.getUser();
+  const isAdmin = isAdminEmail(user?.email);
 
-  // ── 2. Bot protection (skipped for logged-in users) ─────────────────────────
+  // ── 2. Bot protection (skipped for admins) ──────────────────────────────────
   // Logged-in admins don't get served a Turnstile challenge, so there's no
-  // token to check; the authenticated session is trust enough.
-  if (!user) {
+  // token to check; the authenticated admin session is trust enough.
+  if (!isAdmin) {
     const botError = await checkBotProtection(body.turnstileToken, body.honeypot);
     if (botError) {
       // Return a plausible success-looking response to confuse bots.
@@ -70,10 +74,10 @@ export async function POST(request: NextRequest) {
   const email = body.submittedByEmail?.trim() || null;
   const supabase = getSupabaseAdminClient();
 
-  // An email-less submission is only allowed from a logged-in user. Anonymous
-  // requests (e.g. scripted POSTs) must provide an email so they go through the
-  // verification flow rather than landing straight in the review queue.
-  if (!email && !user) {
+  // An email-less submission is only allowed from an admin. Everyone else
+  // (anonymous or merely signed-in) must provide an email so they go through
+  // the verification flow rather than landing straight in the review queue.
+  if (!email && !isAdmin) {
     return NextResponse.json(
       { error: "An email address is required." },
       { status: 400 }
@@ -109,16 +113,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── 4. Resolve email status: logged-in users and verified emails skip
+  // ── 4. Resolve email status: admins and verified emails skip
   //       email verification ────────────────────────────────────────────────
   const skipVerification =
-    !!user ||
+    isAdmin ||
     (email ? await getEmailStatus(supabase, email) === "verified" : false);
 
-  // A logged-in (admin) submission is trusted and lands directly in the public
-  // directory as "approved". Verified-email submissions from anonymous users
-  // still queue as "pending" for review; unverified emails start "unverified".
-  const initialStatus = user
+  // An admin submission is trusted and lands directly in the public directory
+  // as "approved". Verified-email submissions from everyone else still queue
+  // as "pending" for review; unverified emails start "unverified".
+  const initialStatus = isAdmin
     ? "approved"
     : skipVerification
       ? "pending"
@@ -155,8 +159,8 @@ export async function POST(request: NextRequest) {
     .insert({
       name,
       pronoun_id: pronounId,
-      // Internal notes are admin-only: ignore any notes sent by anonymous requests.
-      notes: user ? body.notes?.trim() || null : null,
+      // Internal notes are admin-only: ignore notes from non-admin requests.
+      notes: isAdmin ? body.notes?.trim() || null : null,
       directory_status: initialStatus,
       submitted_by_email: email,
       submitted_at: new Date().toISOString(),
