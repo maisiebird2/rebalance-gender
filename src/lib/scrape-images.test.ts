@@ -154,6 +154,48 @@ describe("scrapeArtistImages — URL-change handling", () => {
     expect(calls.upserts).toEqual([]);
   });
 
+  it("skips a search-URL link entirely — never fetched, never recorded as a failure", async () => {
+    // A search URL is a valid stored link (kept for artists with no profile
+    // page on the platform), but its og:image is the platform's own logo —
+    // treated like a not-found slot: not a candidate at all.
+    const { client, calls } = makeClient({
+      artist: approvedArtist([
+        { platform: "youtube", url: "https://www.youtube.com/results?search_query=vel+dj" },
+      ]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({});
+
+    const result = await scrapeArtistImages("a1", client);
+
+    expect(result.attempted).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
+  it("does not fall back to scraping a dedicated-harvester platform whose link is a search URL", async () => {
+    // Even the one case that normally opens the scrape fallback (the owner
+    // recorded a transient failure) must not fetch a search page.
+    const { client, calls } = makeClient({
+      artist: approvedArtist([
+        { platform: "soundcloud", url: "https://soundcloud.com/search?q=nancy+whang" },
+      ]),
+      images: [],
+      failures: [
+        { service: "image:soundcloud", status: "fetch_failed", url: "https://soundcloud.com/search?q=nancy+whang" },
+      ],
+    });
+    const fetchMock = stubFetch({});
+
+    const result = await scrapeArtistImages("a1", client);
+
+    expect(result.attempted).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
   it("still enriches other platforms alongside a not-found one", async () => {
     const { client } = makeClient({
       artist: approvedArtist([
