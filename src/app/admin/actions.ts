@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { isAdminEmail } from "@/lib/admin-auth";
+import { isAdminUser } from "@/lib/admin-auth";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 
 async function requireAuth() {
@@ -17,16 +17,16 @@ async function requireAuth() {
   return user;
 }
 
-// Admin-panel actions need more than a session: the signed-in user must be
-// on the ADMIN_EMAILS list. Non-admins are bounced to the homepage (the
-// panel UI that calls these is itself admin-only, so this only triggers on
-// direct/stale invocations). quickMarkNotEligible and quickApproveArtist
-// intentionally stay on requireAuth: they're the artist-page quick actions,
-// and any signed-in user can already set those statuses through the edit
-// form.
+// Every action in this file needs more than a session: the signed-in user
+// must be an admin (see src/lib/admin-auth.ts). Non-admins are bounced to
+// the homepage (the panel UI that calls these is itself admin-only, so
+// this only triggers on direct/stale invocations). Public sign-up may be
+// enabled on the Supabase project, so "has an account" must never be
+// treated as "is an admin" — a bare requireAuth() is not enough for
+// anything that writes through the service-role client.
 async function requireAdmin() {
   const user = await requireAuth();
-  if (!isAdminEmail(user.email)) redirect("/");
+  if (!isAdminUser(user)) redirect("/");
 }
 
 // ── Submission moderation ──────────────────────────────────────────
@@ -62,7 +62,7 @@ export async function quickReject(id: string): Promise<{ error: string } | void>
 }
 
 export async function quickMarkNotEligible(id: string): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")
@@ -75,7 +75,7 @@ export async function quickMarkNotEligible(id: string): Promise<{ error: string 
 }
 
 export async function quickApproveArtist(id: string): Promise<{ error: string } | void> {
-  await requireAuth();
+  await requireAdmin();
   const admin = getSupabaseAdminClient();
   const { error } = await admin
     .from("artists")

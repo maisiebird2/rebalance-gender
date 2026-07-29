@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { useState, useTransition } from "react";
 import { quickApproveArtist, quickMarkNotEligible } from "@/app/admin/actions";
 
 interface Props {
@@ -11,20 +10,13 @@ interface Props {
 
 type QuickAction = "approve" | "not_eligible";
 
+// Rendered only for admins (the artist page gates on getViewer().isAdmin);
+// the quick actions themselves enforce requireAdmin() server-side.
 export default function AdminActions({ artistId, currentStatus }: Props) {
-  const [authed, setAuthed] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [done, setDone] = useState<QuickAction | null>(null);
   const [confirming, setConfirming] = useState<QuickAction | null>(null);
 
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) setAuthed(true);
-    });
-  }, []);
-
-  if (!authed) return null;
   if (done === "not_eligible") return (
     <span className="text-xs text-amber-600 dark:text-amber-400">Marked not eligible</span>
   );

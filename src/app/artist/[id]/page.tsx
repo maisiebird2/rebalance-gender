@@ -125,8 +125,12 @@ export default async function ArtistPage({ params }: PageProps) {
               Suggest a correction
             </Link>
           )}
-          <AdminActions artistId={id} currentStatus={artist.directory_status ?? "approved"} />
-          <EditButton artistId={id} />
+          {isAdmin && (
+            <>
+              <AdminActions artistId={id} currentStatus={artist.directory_status ?? "approved"} />
+              <EditButton artistId={id} />
+            </>
+          )}
         </div>
       </div>
 

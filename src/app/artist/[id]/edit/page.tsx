@@ -3,7 +3,7 @@
 
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
@@ -76,13 +76,15 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
   const fromSubmissions = from === "admin" || from === "submissions";
 
   // ── Auth guard ────────────────────────────────────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Admins only: this page loads artists in any status through the
+  // service-role client, so a mere session must not be enough to see it.
+  const { user, isAdmin } = await getViewer();
 
   if (!user) {
     redirect(`/login?next=/artist/${id}/edit`);
+  }
+  if (!isAdmin) {
+    redirect("/");
   }
 
   // ── Load artist (all statuses), selected genres, and all platforms ──
