@@ -17,6 +17,7 @@
     "build-soundcloud-follow-graph": "tsx scripts/build-soundcloud-follow-graph.mjs",
     "apply-review-csv": "node scripts/apply-review-csv.mjs",
     "find-duplicates": "node scripts/find-duplicates.mjs",
+    "check-artists-column-grants": "node scripts/check-artists-column-grants.mjs",
     "resolve-and-load-links": "node scripts/resolve-and-load-links-lf-mb-sp.mjs",
     "clean-artist-names": "node scripts/clean-artist-names.mjs",
     "enrich-musicbrainz": "tsx scripts/enrich-musicbrainz.mjs",

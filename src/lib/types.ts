@@ -184,7 +184,15 @@ export interface Artist {
   name: string;
   pronoun_id: number | null;
   labels: string | null;
-  notes: string | null;
+  /**
+   * PRIVATE column (admin-only internal notes). anon/authenticated have no
+   * SELECT grant on it — see supabase_migration_artists_private_columns.sql —
+   * so it is absent from rows loaded through the public client (whose
+   * ARTIST_SELECT doesn't request it, and couldn't). Present only on rows
+   * loaded through the service-role client (edit page, admin panel).
+   * Same deal for submitted_by_email and submitted_at below.
+   */
+  notes?: string | null;
   directory_status: ArtistStatus;
   /**
    * The artist this row duplicates, when directory_status is 'duplicate'.
@@ -194,8 +202,10 @@ export interface Artist {
    * supabase_migration_artist_duplicate_of.sql.
    */
   duplicate_of: string | null;
-  submitted_by_email: string | null;
-  submitted_at: string | null;
+  /** PRIVATE column — see the note on `notes` above. */
+  submitted_by_email?: string | null;
+  /** PRIVATE column — see the note on `notes` above. */
+  submitted_at?: string | null;
   profile_image_url: string | null;
   profile_image_source: LinkPlatform | null;
   profile_image_fetched_at: string | null;

@@ -57,8 +57,31 @@ function normalizeSearch(s: string): string {
 // Shared select string: pulls the artist plus all joined relations
 // (pronoun, genres via the artist_genres junction table, locations,
 // links, and cached enrichment data).
+//
+// The artist columns are listed explicitly rather than `*`: anon and
+// authenticated only hold column-level SELECT grants on artists (see
+// supabase_migration_artists_private_columns.sql), and PostgREST rejects
+// `select=*` for a role that can't read every column. The list below must
+// stay a subset of the granted columns — the private ones (notes,
+// submitted_by_email, submitted_at, reviewed_at, gender_mb) are only
+// readable through the service-role client, which uses its own select
+// strings (e.g. ARTIST_ADMIN_SELECT on the edit page).
 const ARTIST_SELECT = `
-  *,
+  id,
+  name,
+  pronoun_id,
+  labels,
+  directory_status,
+  duplicate_of,
+  profile_image_url,
+  profile_image_source,
+  profile_image_fetched_at,
+  booking_info,
+  management_info,
+  contact_info,
+  deleted,
+  created_at,
+  updated_at,
   pronoun:pronouns(*),
   artist_genres(genres(*)),
   locations:artist_locations(*),
@@ -258,7 +281,10 @@ export async function getArtistsMissingLink(
     return { artists: [], hasMore: false };
   }
 
-  const rows = data ?? [];
+  // Same cast as getArtists: the select string is assembled at runtime, so
+  // supabase-js's inferred row shape doesn't match reality (it can't know
+  // the to-one embeds) — go through unknown to the shape we know we get.
+  const rows = (data ?? []) as unknown as RawArtistRow[];
   return {
     artists: rows.slice(0, PAGE_SIZE).map(normalizeArtist),
     hasMore: rows.length > PAGE_SIZE,
@@ -296,7 +322,10 @@ export async function getArtistById(
   }
   if (!data) return null;
 
-  return normalizeArtist(data);
+  // Cast through unknown for the same reason as in getArtists: supabase-js
+  // misinfers the embed shapes (e.g. pronoun as an array) from the select
+  // string.
+  return normalizeArtist(data as unknown as RawArtistRow);
 }
 
 /**
