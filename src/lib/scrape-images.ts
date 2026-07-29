@@ -342,6 +342,12 @@ export interface ScrapeArtistImagesOptions {
   dryRun?: boolean;
   // Restrict candidates to this subset of PLATFORM_PRIORITY.
   allowedPlatforms?: readonly string[];
+  // Destination for the per-artist progress/diagnostic lines. Defaults
+  // to console.log (right for the server-side callers, whose output
+  // belongs in the server log); the bulk CLI (scripts/scrape-images.ts)
+  // passes its stage logger's detail() so a 2,600-artist run doesn't
+  // interleave thousands of lines with its progress bar.
+  log?: (line: string) => void;
 }
 
 export interface ScrapeArtistImagesResult {
@@ -365,7 +371,7 @@ export interface ScrapeArtistImagesResult {
 export async function scrapeArtistImages(
   artistId: string,
   adminClient: SupabaseClient,
-  { force = false, dryRun = false, allowedPlatforms }: ScrapeArtistImagesOptions = {}
+  { force = false, dryRun = false, allowedPlatforms, log = console.log }: ScrapeArtistImagesOptions = {}
 ): Promise<ScrapeArtistImagesResult> {
   const result: ScrapeArtistImagesResult = {
     attempted: [],
@@ -383,14 +389,14 @@ export async function scrapeArtistImages(
     .single();
 
   if (error || !artist) {
-    console.error(`[scrape-images] Failed to fetch artist ${artistId}:`, error?.message);
+    log(`[scrape-images] Failed to fetch artist ${artistId}: ${error?.message}`);
     return result;
   }
 
   // Directory-only, unconditionally — see module header. Checked here
   // regardless of what the caller already believes about this artist.
   if (artist.directory_status !== "approved") {
-    console.log(
+    log(
       `[scrape-images] ${artist.name}: not a directory artist (${artist.directory_status}) — images are only harvested for approved artists, skipping`
     );
     return result;
@@ -415,7 +421,7 @@ export async function scrapeArtistImages(
     candidates = candidates.filter((p) => allowed.has(p));
   }
   if (candidates.length === 0) {
-    console.log(`[scrape-images] ${artist.name}: no usable links, skipping`);
+    log(`[scrape-images] ${artist.name}: no usable links, skipping`);
     return result;
   }
 
@@ -435,12 +441,12 @@ export async function scrapeArtistImages(
     ]);
 
   if (imagesError) {
-    console.error(`[scrape-images] Failed to load existing images for ${artist.name}:`, imagesError.message);
+    log(`[scrape-images] Failed to load existing images for ${artist.name}: ${imagesError.message}`);
     return result;
   }
   if (failuresError) {
     // Non-fatal — worst case we re-attempt a platform already known to have no image.
-    console.error(`[scrape-images] Failed to load prior failures for ${artist.name}:`, failuresError.message);
+    log(`[scrape-images] Failed to load prior failures for ${artist.name}: ${failuresError.message}`);
   }
 
   // platform -> the profile URL we last processed for it. For a stored
@@ -507,7 +513,7 @@ export async function scrapeArtistImages(
     const fetched = await fetchOgImage(url);
 
     if (fetched.found) {
-      console.log(`[scrape-images] ${artist.name}: found image via ${platform}`);
+      log(`[scrape-images] ${artist.name}: found image via ${platform}`);
       if (!dryRun) {
         const { error: upsertError } = await adminClient.from("artist_images").upsert(
           {
@@ -520,10 +526,7 @@ export async function scrapeArtistImages(
           { onConflict: "artist_id,platform" }
         );
         if (upsertError) {
-          console.error(
-            `[scrape-images] ${artist.name}: failed to save ${platform} image:`,
-            upsertError.message
-          );
+          log(`[scrape-images] ${artist.name}: failed to save ${platform} image: ${upsertError.message}`);
           result.failed.push(platform);
           await sleep(200);
           continue;
@@ -534,7 +537,7 @@ export async function scrapeArtistImages(
     } else {
       result.failed.push(platform);
       const transient = isTransientImageFailure(fetched.status);
-      console.log(
+      log(
         transient
           ? `[scrape-images] ${artist.name}: ${platform} — fetch failed, will retry next run (${fetched.status}: ${fetched.detail})`
           : `[scrape-images] ${artist.name}: ${platform} — no image found (${fetched.status}: ${fetched.detail})`
@@ -546,7 +549,7 @@ export async function scrapeArtistImages(
       // header). A transient blip proves nothing and leaves it alone, as
       // does a --force re-check of an unchanged link.
       if (!transient && hadImage && urlChanged) {
-        console.log(
+        log(
           `[scrape-images] ${artist.name}: removing stale ${platform} image (link changed to a page with no image)`
         );
         result.removed.push(platform);
