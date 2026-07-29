@@ -112,6 +112,7 @@ import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-fail
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger } from "./lib/progress-log.mjs";
+import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -398,10 +399,12 @@ async function fetchAllLinktreeLinks() {
   const allRows = [];
   let from = 0;
   while (true) {
-    let query = supabase
-      .from("artist_links")
-      .select("id, artist_id, url, artists!inner(name, directory_status, deleted)")
-      .eq("platform", "linktree")
+    let query = onlyHarvestableLinks(
+      supabase
+        .from("artist_links")
+        .select("id, artist_id, url, artists!inner(name, directory_status, deleted)")
+        .eq("platform", "linktree")
+    )
       .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (APPROVED_ONLY) {
