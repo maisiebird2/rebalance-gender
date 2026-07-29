@@ -9,6 +9,7 @@
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
     "scrape-images": "tsx scripts/scrape-images.ts",
+    "store-images": "node scripts/store-images.mjs",
     "enrich-bios": "tsx scripts/enrich-bios.mjs",
     "clean-linktree-bios": "node scripts/clean-linktree-bios.mjs",
     "sync-bandcamp": "tsx scripts/sync-bandcamp.mjs",
