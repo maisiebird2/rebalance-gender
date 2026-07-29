@@ -54,6 +54,11 @@ import {
   deleteGenreTagRule,
   quickApprove,
   quickReject,
+  addPlatform,
+  quickApprove,
+  quickReject,
+  quickApproveArtist,
+  quickMarkNotEligible,
 } from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -78,24 +83,55 @@ function chain(result: { data?: unknown; error?: unknown }) {
   return builder;
 }
 
-// Admin-panel actions require the signed-in user's email to be on the
-// ADMIN_EMAILS list (stubbed in beforeEach below).
+// Admin-panel actions require the signed-in user to be an admin:
+// app_metadata.role === "admin" (primary), or the ADMIN_EMAILS fallback
+// list (covered by its own test below).
 function mockAuthedUser() {
   (createClient as any).mockResolvedValue({
     auth: {
       getUser: vi.fn().mockResolvedValue({
-        data: { user: { id: "u1", email: "admin@example.com" } },
+        data: {
+          user: {
+            id: "u1",
+            email: "admin@example.com",
+            app_metadata: { role: "admin" },
+          },
+        },
       }),
     },
   });
 }
 
-// Signed in, but NOT on the ADMIN_EMAILS list.
+// Signed in, but with no admin role (and not on any ADMIN_EMAILS list).
 function mockAuthedNonAdmin() {
   (createClient as any).mockResolvedValue({
     auth: {
       getUser: vi.fn().mockResolvedValue({
-        data: { user: { id: "u2", email: "someone-else@example.com" } },
+        data: {
+          user: {
+            id: "u2",
+            email: "someone-else@example.com",
+            app_metadata: {},
+          },
+        },
+      }),
+    },
+  });
+}
+
+// Signed in, no admin role, but email on the ADMIN_EMAILS fallback list —
+// stub the env inside the test that uses this.
+function mockAuthedEnvFallbackAdmin() {
+  (createClient as any).mockResolvedValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: {
+          user: {
+            id: "u3",
+            email: "fallback-admin@example.com",
+            app_metadata: {},
+          },
+        },
       }),
     },
   });
@@ -122,7 +158,9 @@ function mockAdminFrom(...chains: ReturnType<typeof chain>[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
+  // No ADMIN_EMAILS by default: admin status must come from app_metadata,
+  // so a test passing via the env fallback has to opt in explicitly.
+  vi.stubEnv("ADMIN_EMAILS", "");
   (redirect as any).mockImplementation(() => {
     throw new Error("NEXT_REDIRECT");
   });
@@ -351,6 +389,15 @@ describe("addGenreTagRule", () => {
     await expect(
       addGenreTagRule(formData({ kind: "alias", raw_tag: "dnb", canonical: "drum & bass" }))
     ).rejects.toThrow("NEXT_REDIRECT");
+// ── quickApproveArtist / quickMarkNotEligible ────────────────────────
+// The artist-page quick actions. These flip directory_status through the
+// service-role client, so a session alone must never be enough — with
+// public sign-up enabled, anyone can have a session.
+
+describe("quickApproveArtist", () => {
+  it("redirects to login when signed out", async () => {
+    mockSignedOut();
+    await expect(quickApproveArtist("artist-1")).rejects.toThrow("NEXT_REDIRECT");
   });
 
   it("redirects a signed-in non-admin without touching the database", async () => {
@@ -463,6 +510,41 @@ describe("addGenreTagRule", () => {
 // ── deleteGenreTagRule ───────────────────────────────────────────────
 
 describe("deleteGenreTagRule", () => {
+    await expect(quickApproveArtist("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("approves as an admin", async () => {
+    mockAuthedUser();
+    const updateChain = chain({ error: null });
+    mockAdminFrom(updateChain);
+
+    const result = await quickApproveArtist("artist-1");
+
+    expect(result).toBeUndefined();
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "approved" });
+    expect(updateChain.eq).toHaveBeenCalledWith("id", "artist-1");
+  });
+
+  it("accepts an admin designated via the ADMIN_EMAILS fallback list", async () => {
+    vi.stubEnv("ADMIN_EMAILS", "fallback-admin@example.com");
+    mockAuthedEnvFallbackAdmin();
+    const updateChain = chain({ error: null });
+    mockAdminFrom(updateChain);
+
+    const result = await quickApproveArtist("artist-1");
+
+    expect(result).toBeUndefined();
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "approved" });
+  });
+});
+
+describe("quickMarkNotEligible", () => {
+  it("redirects to login when signed out", async () => {
+    mockSignedOut();
+    await expect(quickMarkNotEligible("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+  });
+
   it("redirects a signed-in non-admin without touching the database", async () => {
     mockAuthedNonAdmin();
     const fromMock = mockAdminFrom();
@@ -490,5 +572,18 @@ describe("deleteGenreTagRule", () => {
     const result = await deleteGenreTagRule(7);
 
     expect(result).toEqual({ error: "db down" });
+    await expect(quickMarkNotEligible("artist-1")).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("marks not eligible as an admin", async () => {
+    mockAuthedUser();
+    const updateChain = chain({ error: null });
+    mockAdminFrom(updateChain);
+
+    const result = await quickMarkNotEligible("artist-1");
+
+    expect(result).toBeUndefined();
+    expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "not_eligible" });
   });
 });
