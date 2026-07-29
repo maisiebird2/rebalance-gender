@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
-import { isAdminEmail } from "@/lib/admin-auth";
+import { isAdminUser } from "@/lib/admin-auth";
 import { getPlatforms } from "@/lib/platforms";
 import { resolveProfileLinkUrlAsync } from "@/lib/profile-links";
 import {
@@ -42,15 +42,15 @@ export async function POST(request: NextRequest) {
 
   // ── 1. Auth: is this an admin submission? ───────────────────────────────────
   // Trust to skip email verification AND bot protection is granted only when
-  // the server confirms a logged-in session AND that session's email is on
-  // the ADMIN_EMAILS list. Public sign-up may be enabled on the Supabase
+  // the server confirms a logged-in session AND that user is an admin (see
+  // src/lib/admin-auth.ts). Public sign-up may be enabled on the Supabase
   // project, so a bare session proves nothing — a non-admin session is
   // treated exactly like an anonymous request.
   const authClient = await createClient();
   const {
     data: { user },
   } = await authClient.auth.getUser();
-  const isAdmin = isAdminEmail(user?.email);
+  const isAdmin = isAdminUser(user);
 
   // ── 2. Bot protection (skipped for admins) ──────────────────────────────────
   // Logged-in admins don't get served a Turnstile challenge, so there's no
