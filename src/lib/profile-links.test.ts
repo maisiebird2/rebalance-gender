@@ -9,6 +9,7 @@ import {
   deriveHandle,
   unwrapRedirectUrl,
   canonicalizeResidentAdvisorUrl,
+  isSearchPageUrl,
 } from "./profile-links";
 import { cleanLinkUrl } from "./platforms";
 
@@ -202,6 +203,49 @@ describe("normalizeProfileLink — search URLs (no profile page)", () => {
     const result = normalizeProfileLink("bandcamp", "https://bandcamp.com/search?q=nancy%2Bwhang");
     expect(result.url).toBe("https://bandcamp.com/search?q=nancy%2Bwhang");
     expect(result.warning).toBeNull();
+  });
+});
+
+describe("isSearchPageUrl", () => {
+  it("matches the /search page across platforms", () => {
+    expect(isSearchPageUrl("https://bandcamp.com/search?q=Kitsta")).toBe(true);
+    expect(isSearchPageUrl("https://soundcloud.com/search?q=nancy+whang")).toBe(true);
+    expect(isSearchPageUrl("https://soundcloud.com/search/people?q=nancy+whang")).toBe(true);
+    expect(isSearchPageUrl("https://www.discogs.com/search?q=dj%20sunroof&type=all")).toBe(true);
+    expect(isSearchPageUrl("https://www.beatport.com/search?q=luis%20retreo")).toBe(true);
+    expect(isSearchPageUrl("https://www.last.fm/search/artists?q=kitsta")).toBe(true);
+    expect(isSearchPageUrl("https://open.spotify.com/search/liturgy")).toBe(true);
+    expect(isSearchPageUrl("https://ra.co/search?searchValue=kitsta")).toBe(true);
+  });
+
+  it("skips a leading locale segment (Qobuz)", () => {
+    expect(isSearchPageUrl("https://www.qobuz.com/us-en/search?q=kitsta")).toBe(true);
+  });
+
+  it("matches YouTube's /results search page, but only on YouTube hosts", () => {
+    expect(isSearchPageUrl("https://www.youtube.com/results?search_query=vel+dj")).toBe(true);
+    expect(isSearchPageUrl("https://example.com/results?search_query=vel+dj")).toBe(false);
+  });
+
+  it("matches Instagram's keyword search under /explore/search", () => {
+    expect(isSearchPageUrl("https://www.instagram.com/explore/search/keyword/?q=kitsta")).toBe(true);
+  });
+
+  it("does NOT match a trailing /search segment on a profile URL (YouTube channel search tab)", () => {
+    expect(isSearchPageUrl("https://www.youtube.com/@lun7448/search")).toBe(false);
+    expect(isSearchPageUrl("https://www.youtube.com/user/netdmuzikk/search")).toBe(false);
+  });
+
+  it("does NOT match ordinary profile URLs", () => {
+    expect(isSearchPageUrl("https://soundcloud.com/laura-indorf")).toBe(false);
+    expect(isSearchPageUrl("https://kitsta.bandcamp.com")).toBe(false);
+    expect(isSearchPageUrl("https://www.qobuz.com/us-en/interpreter/kitsta/123")).toBe(false);
+    expect(isSearchPageUrl("https://en.wikipedia.org/wiki/Nancy_Whang")).toBe(false);
+  });
+
+  it("is false for unparseable input", () => {
+    expect(isSearchPageUrl("not a url at all")).toBe(false);
+    expect(isSearchPageUrl("")).toBe(false);
   });
 });
 

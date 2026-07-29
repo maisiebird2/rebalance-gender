@@ -102,6 +102,7 @@ import {
   describePlaceholderImageUrl,
   isPlaceholderImageUrl,
 } from "@/lib/images/placeholders";
+import { isSearchPageUrl } from "@/lib/profile-links";
 
 // Platform priority: try these link types in this order. Every
 // candidate the artist has a link for gets tried (not just the
@@ -403,9 +404,16 @@ export async function scrapeArtistImages(
   // only comes back into play if a real URL is later entered for that slot
   // (which clears not_found). Also drops any row that somehow has no url,
   // which would otherwise fail with "Failed to parse URL from null".
+  //
+  // A search URL (bandcamp.com/search?q=…, soundcloud.com/search?q=… — a
+  // valid stored link for artists with no profile page on the platform)
+  // gets the same treatment: a search-results page is not the artist's
+  // page, and its og:image is the platform's own logo/branding, so it is
+  // never fetched and never recorded as a failure. It becomes a candidate
+  // again only if the link is later replaced with a real profile URL.
   const linksByPlatform = new Map(
     ((artist.links ?? []) as { platform: string; url: string; not_found?: boolean }[])
-      .filter((l) => !l.not_found && l.url)
+      .filter((l) => !l.not_found && l.url && !isSearchPageUrl(l.url))
       .map((l) => [l.platform, l.url])
   );
 

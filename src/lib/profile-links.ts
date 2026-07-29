@@ -626,6 +626,42 @@ export function cleanGenericUrl(platform: string, url: string): string {
 }
 
 /**
+ * True when `url` is a platform's search-results page rather than a profile —
+ * e.g. https://bandcamp.com/search?q=Kitsta, https://soundcloud.com/search?q=…,
+ * https://open.spotify.com/search/…, https://www.youtube.com/results?search_query=…,
+ * https://www.qobuz.com/us-en/search?q=… . Such links are legitimately stored
+ * (kept for artists with no profile page on the platform — see
+ * CONFIG.*.searchPaths), but nothing scraped from them describes the artist:
+ * og:image on a search page is the platform's own logo/branding, which is why
+ * scrapeArtistImages() excludes these links from its candidates.
+ *
+ * Anchored to the START of the path — a trailing /search segment on a profile
+ * URL (a YouTube channel's search tab, youtube.com/@handle/search) is still
+ * that profile's page and must NOT match.
+ */
+export function isSearchPageUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+  } catch {
+    return false;
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  // Qobuz prefixes every path with a locale segment (/us-en/search?q=…);
+  // skip one so its search page anchors like the others.
+  const start = /^[a-z]{2}-[a-z]{2}$/i.test(segments[0] ?? "") ? 1 : 0;
+  // Covers soundcloud/bandcamp/discogs/beatport/musicbrainz (/search?q=…),
+  // spotify (/search/<term>), lastfm (/search/artists), RA (/search?searchValue=…).
+  if (segments[start] === "search") return true;
+  // YouTube's search results live at /results?search_query=…, not /search.
+  const host = parsed.hostname.toLowerCase();
+  if (segments[start] === "results" && hostMatchesDomain(host, "youtube.com")) return true;
+  // Instagram's keyword search: instagram.com/explore/search/…
+  if (segments[start] === "explore" && segments[start + 1] === "search") return true;
+  return false;
+}
+
+/**
  * Server-side convenience: resolves the URL to store for a link field.
  * Templated platforms get the full normalize/construct treatment; everything
  * else is run through cleanGenericUrl (overridable via `fallbackClean`). The
