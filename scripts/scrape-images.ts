@@ -211,6 +211,9 @@ async function main() {
       force: FORCE,
       dryRun: DRY_RUN,
       allowedPlatforms: ALLOWED_PLATFORMS,
+      // Per-artist lines go to the stage log file, not the console —
+      // the console shows the progress bar below.
+      log: logger.detail,
     });
 
     attemptedCount += result.attempted.length;
