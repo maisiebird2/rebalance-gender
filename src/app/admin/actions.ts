@@ -181,6 +181,66 @@ export async function restoreGenre(
   revalidateTag("genres", "max");
 }
 
+// ── Genre tag rules ─────────────────────────────────────────────────
+// The harvest normalisation vocabulary (genre_tag_rules): alias
+// spellings → canonical names, discard rules for non-genre tags, and
+// word fixes. Read at startup by the harvest scripts via
+// scripts/lib/genre-vocab.mjs; rules only affect future script runs,
+// so no public pages need revalidating here.
+
+const GENRE_TAG_RULE_KINDS = ["alias", "discard", "word_fix"] as const;
+export type GenreTagRuleKind = (typeof GENRE_TAG_RULE_KINDS)[number];
+
+export async function addGenreTagRule(
+  formData: FormData
+): Promise<{ error: string } | { success: true }> {
+  await requireAdmin();
+
+  const kind = ((formData.get("kind") ?? "") as string).trim();
+  if (!(GENRE_TAG_RULE_KINDS as readonly string[]).includes(kind)) {
+    return { error: "Invalid rule kind" };
+  }
+
+  // Stored lowercase — the scripts lowercase incoming tags before lookup,
+  // and the table CHECK constraint rejects anything else.
+  const rawTag = ((formData.get("raw_tag") ?? "") as string).trim().toLowerCase();
+  if (!rawTag) return { error: "Raw tag is required" };
+
+  const canonical = ((formData.get("canonical") ?? "") as string).trim();
+  if (kind !== "discard" && !canonical) {
+    return { error: "Canonical name is required for alias and word-fix rules" };
+  }
+
+  const note = ((formData.get("note") ?? "") as string).trim();
+
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin.from("genre_tag_rules").insert({
+    kind,
+    raw_tag: rawTag,
+    canonical: kind === "discard" ? null : canonical,
+    note: note || null,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      return { error: `A ${kind} rule for "${rawTag}" already exists` };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/admin/settings");
+  return { success: true };
+}
+
+export async function deleteGenreTagRule(
+  id: number
+): Promise<{ error: string } | void> {
+  await requireAdmin();
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin.from("genre_tag_rules").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin/settings");
+}
+
 // ── Revision moderation ────────────────────────────────────────────────
 
 export async function approveRevision(

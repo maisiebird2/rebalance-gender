@@ -47,7 +47,14 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { scrapeArtistImages } from "@/lib/scrape-images";
-import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
+import {
+  addGenre,
+  addGenreTagRule,
+  addPlatform,
+  deleteGenreTagRule,
+  quickApprove,
+  quickReject,
+} from "./actions";
 
 // ── Test helpers ─────────────────────────────────────────────────────
 
@@ -61,7 +68,7 @@ import { addGenre, addPlatform, quickApprove, quickReject } from "./actions";
  */
 function chain(result: { data?: unknown; error?: unknown }) {
   const builder: any = {};
-  for (const method of ["select", "eq", "order", "limit", "update"]) {
+  for (const method of ["select", "eq", "order", "limit", "update", "delete"]) {
     builder[method] = vi.fn(() => builder);
   }
   builder.maybeSingle = vi.fn(() => Promise.resolve(result));
@@ -333,5 +340,155 @@ describe("quickReject", () => {
 
     expect(result).toBeUndefined();
     expect(updateChain.update).toHaveBeenCalledWith({ directory_status: "rejected" });
+  });
+});
+
+// ── addGenreTagRule ──────────────────────────────────────────────────
+
+describe("addGenreTagRule", () => {
+  it("redirects to login when signed out", async () => {
+    mockSignedOut();
+    await expect(
+      addGenreTagRule(formData({ kind: "alias", raw_tag: "dnb", canonical: "drum & bass" }))
+    ).rejects.toThrow("NEXT_REDIRECT");
+  });
+
+  it("redirects a signed-in non-admin without touching the database", async () => {
+    mockAuthedNonAdmin();
+    const fromMock = mockAdminFrom();
+
+    await expect(
+      addGenreTagRule(formData({ kind: "alias", raw_tag: "dnb", canonical: "drum & bass" }))
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown rule kind without touching the database", async () => {
+    mockAuthedUser();
+    const fromMock = mockAdminFrom();
+
+    const result = await addGenreTagRule(
+      formData({ kind: "rollup", raw_tag: "deep house", canonical: "house" })
+    );
+
+    expect(result).toEqual({ error: "Invalid rule kind" });
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a blank raw tag", async () => {
+    mockAuthedUser();
+    const fromMock = mockAdminFrom();
+
+    const result = await addGenreTagRule(
+      formData({ kind: "discard", raw_tag: "   " })
+    );
+
+    expect(result).toEqual({ error: "Raw tag is required" });
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a canonical name for alias rules", async () => {
+    mockAuthedUser();
+    const fromMock = mockAdminFrom();
+
+    const result = await addGenreTagRule(
+      formData({ kind: "alias", raw_tag: "dnb", canonical: "  " })
+    );
+
+    expect(result).toEqual({
+      error: "Canonical name is required for alias and word-fix rules",
+    });
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("lowercases and trims the raw tag before inserting", async () => {
+    mockAuthedUser();
+    const insertChain = chain({ error: null });
+    mockAdminFrom(insertChain);
+
+    const result = await addGenreTagRule(
+      formData({ kind: "alias", raw_tag: "  DnB  ", canonical: "drum & bass", note: "" })
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(insertChain.insert).toHaveBeenCalledWith({
+      kind: "alias",
+      raw_tag: "dnb",
+      canonical: "drum & bass",
+      note: null,
+    });
+  });
+
+  it("stores discard rules with a null canonical even if one was sent", async () => {
+    mockAuthedUser();
+    const insertChain = chain({ error: null });
+    mockAdminFrom(insertChain);
+
+    const result = await addGenreTagRule(
+      formData({ kind: "discard", raw_tag: "seen live", canonical: "ignored", note: "not a genre" })
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(insertChain.insert).toHaveBeenCalledWith({
+      kind: "discard",
+      raw_tag: "seen live",
+      canonical: null,
+      note: "not a genre",
+    });
+  });
+
+  it("reports a duplicate rule as such", async () => {
+    mockAuthedUser();
+    mockAdminFrom(chain({ error: { code: "23505", message: "duplicate key" } }));
+
+    const result = await addGenreTagRule(
+      formData({ kind: "alias", raw_tag: "dnb", canonical: "drum & bass" })
+    );
+
+    expect(result).toEqual({ error: 'A alias rule for "dnb" already exists' });
+  });
+
+  it("surfaces other database errors", async () => {
+    mockAuthedUser();
+    mockAdminFrom(chain({ error: { code: "XX000", message: "db down" } }));
+
+    const result = await addGenreTagRule(
+      formData({ kind: "alias", raw_tag: "dnb", canonical: "drum & bass" })
+    );
+
+    expect(result).toEqual({ error: "db down" });
+  });
+});
+
+// ── deleteGenreTagRule ───────────────────────────────────────────────
+
+describe("deleteGenreTagRule", () => {
+  it("redirects a signed-in non-admin without touching the database", async () => {
+    mockAuthedNonAdmin();
+    const fromMock = mockAdminFrom();
+
+    await expect(deleteGenreTagRule(7)).rejects.toThrow("NEXT_REDIRECT");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes the rule by id", async () => {
+    mockAuthedUser();
+    const deleteChain = chain({ error: null });
+    mockAdminFrom(deleteChain);
+
+    const result = await deleteGenreTagRule(7);
+
+    expect(result).toBeUndefined();
+    expect(deleteChain.delete).toHaveBeenCalled();
+    expect(deleteChain.eq).toHaveBeenCalledWith("id", 7);
+  });
+
+  it("surfaces a database error", async () => {
+    mockAuthedUser();
+    mockAdminFrom(chain({ error: { message: "db down" } }));
+
+    const result = await deleteGenreTagRule(7);
+
+    expect(result).toEqual({ error: "db down" });
   });
 });

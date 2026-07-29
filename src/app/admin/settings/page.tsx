@@ -5,6 +5,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import NotAdminNotice from "@/components/NotAdminNotice";
 import { blockEmail, unblockEmail } from "../actions";
 import GenreModerationPanel from "../GenreModerationPanel";
+import GenreTagRulesPanel, { type GenreTagRule } from "../GenreTagRulesPanel";
 import AddPlatformForm from "../AddPlatformForm";
 import type { SubmitterEmail } from "@/lib/types";
 
@@ -35,6 +36,32 @@ async function fetchAllGenres(
   return all;
 }
 
+// The harvest normalisation vocabulary (see scripts/lib/genre-vocab.mjs).
+// Same .range() pagination as genres, for the same PostgREST-cap reason.
+async function fetchAllGenreTagRules(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+): Promise<GenreTagRule[]> {
+  const PAGE_SIZE = 1000;
+  const all: GenreTagRule[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await admin
+      .from("genre_tag_rules")
+      .select("id, kind, raw_tag, canonical, note")
+      .order("raw_tag")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      // Table not created yet (migration not run) — render the panel
+      // empty rather than crashing the whole settings page.
+      if (error.code === "42P01") return [];
+      throw error;
+    }
+    const rows = (data ?? []) as GenreTagRule[];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export default async function AdminSettingsPage() {
   // ── Auth guard (admins only) ──────────────────────────────────
   const { user, isAdmin } = await getViewer();
@@ -45,10 +72,12 @@ export default async function AdminSettingsPage() {
 
   const [
     genres,
+    tagRules,
     { data: platformRows },
     { data: emailRows },
   ] = await Promise.all([
     fetchAllGenres(admin),
+    fetchAllGenreTagRules(admin),
     admin.from("platforms").select("key, label").order("sort_order").order("label"),
     admin.from("submitter_emails").select("*")
       .order("first_seen_at", { ascending: false }).limit(100),
@@ -73,6 +102,17 @@ export default async function AdminSettingsPage() {
           <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
             <h2 className="mb-3 text-lg font-semibold">Genres</h2>
             <GenreModerationPanel genres={genres} />
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+            <h2 className="mb-3 text-lg font-semibold">Genre tag rules</h2>
+            <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
+              The harvest normalisation vocabulary: aliases collapse alternate
+              spellings into one canonical genre, discards drop tags that
+              aren&apos;t genres, word fixes correct spellings inside compound
+              tags. Applied by the harvest scripts on their next run.
+            </p>
+            <GenreTagRulesPanel rules={tagRules} />
           </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">

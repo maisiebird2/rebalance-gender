@@ -35,32 +35,41 @@ cascades and removes its `artist_genres` links.
 
 ## The vocabulary (single source of truth)
 
-`scripts/integrate-harvested-genres.mjs` defines and **exports** the
-normalisation logic. Other scripts import it rather than re-implementing:
+The vocabulary lives in the **`genre_tag_rules` table** (created by
+`supabase_migration_genre_tag_rules.sql`, seeded once from the old
+hard-coded constants by `scripts/seed-genre-tag-rules.mjs`). One row
+per rule; `kind` says how it is applied:
 
-- `normaliseTag(rawTag)` → `{ canonical, skip }`. The one function that
-  turns any raw tag or genre name into its canonical form. Order:
-  1. lowercase + trim, apply `WORD_FIXES` (spelling fixes like
-     `avantgarde` → `avant-garde`);
+- `alias` — alternate spelling → canonical name (e.g. `rnb`,
+  `rhythm & blues` → `R&B`; the drum & bass family → `drum & bass`).
+  **This is what you edit** when you spot duplicate spellings —
+  in the admin panel (`/admin/settings` → "Genre tag rules") or SQL.
+  `raw_tag` is lowercase; `canonical` sets the display casing.
+- `discard` — tags to drop entirely (too vague or not a genre,
+  e.g. "seen live", "electronic"). `canonical` is NULL.
+- `word_fix` — word-boundary substitution applied before alias lookup
+  (`avantgarde` → `avant-garde`), so compound forms are fixed too.
+
+`scripts/lib/genre-vocab.mjs` loads the table and provides the
+normalisation logic; scripts call `loadGenreVocab(supabase)` at
+startup and **fail hard if the table is missing or empty** (an empty
+vocabulary would silently re-create every duplicate genre).
+
+- `vocab.normaliseTag(rawTag)` → `{ canonical, skip }`. The one
+  function that turns any raw tag or genre name into its canonical
+  form. Order:
+  1. lowercase + trim, apply `word_fix` rules;
   2. `collapseSpacedLetters` — collapse stylised single-letter spacing
      (`t e c h n o` → `techno`, `e-l-e-c-t-r-o` → `electro`). Only fires
      on 3+ tokens that are *all* single characters, so real multi-word
      genres (`drum & bass`, `2-step garage`, `a cappella`) are untouched;
-  3. `BROAD_TAGS` check → if matched, `skip: true` (tag is too vague to
-     be a genre, e.g. "seen live"); it is dropped, not stored;
-  4. `GENRE_ALIASES` lookup (exact, then accent/hyphen-normalised) →
+  3. `discard` check (exact, then accent/hyphen-normalised) → if
+     matched, `skip: true`; the tag is dropped, not stored;
+  4. `alias` lookup (exact, then accent/hyphen-normalised) →
      canonical display name;
   5. otherwise store the accent-stripped lowercase tag as-is.
-- `GENRE_ALIASES` — a `Map` of alternate spelling → canonical name
-  (e.g. `rnb`, `rhythm & blues` → `r&b`; the drum & bass family →
-  `drum & bass`). **This is the file you edit** when you spot duplicate
-  spellings. Keys are lowercase; values set the display casing.
-- `BROAD_TAGS` — tags to discard entirely.
 - `normalizeForLookup(str)` — accent/hyphen-insensitive key used for
-  matching and grouping.
-
-Because these are exported and `main()` is guarded, importing the file
-does not run the pipeline.
+  matching and grouping (a pure export of `lib/genre-vocab.mjs`).
 
 ---
 
@@ -130,15 +139,16 @@ node scripts/dedupe-genres-by-alias.mjs                        # all groups
 
 ### `prune-genres.mjs` — shrink the vocabulary
 
-Two phases, run rollup *before* cut:
-- **Rollup** — merge each subgenre in the editable `ROLLUP` map into its
-  parent (so artists in a tiny subgenre keep a broader tag).
-- **Cut** — genres under `--threshold` (default 3) get `status='deleted'`
-  (reversible) or, with `--hard`, are deleted outright.
+Cuts the long tail: genres under `--threshold` (default 3) get
+`status='deleted'` (reversible) or, with `--hard`, are deleted
+outright.
+
+(The old hard-coded `ROLLUP` map — subgenre → parent merges before the
+cut — was removed; see `GENRE_CONFIDENCE.md` for where a parent/child
+system would live if one is built.)
 
 ```bash
 node scripts/prune-genres.mjs --dry-run --threshold=3
-node scripts/prune-genres.mjs --rollup-only
 node scripts/prune-genres.mjs --threshold=3
 ```
 
@@ -181,14 +191,14 @@ caps a single query at ~1000 rows).
 
 ## Recipes
 
-**Deduplicate some spellings.** Add `spelling → canonical` entries to
-`GENRE_ALIASES` in `integrate-harvested-genres.mjs`, then
-`node scripts/dedupe-genres-by-alias.mjs --dry-run` → apply. This also
-stops future harvests recreating them.
+**Deduplicate some spellings.** Add `alias` rules (spelling →
+canonical) in the admin panel (`/admin/settings` → "Genre tag rules")
+or SQL, then `node scripts/dedupe-genres-by-alias.mjs --dry-run` →
+apply. This also stops future harvests recreating them.
 
 **Do a full cull toward ~N genres.** Run `genre-report.mjs`; read the
-≤N-artists distribution to pick a cut threshold; fill `ROLLUP` in
-`prune-genres.mjs` from the long tail; `--dry-run` → apply.
+≤N-artists distribution to pick a cut threshold;
+`node scripts/prune-genres.mjs --dry-run` → apply.
 
 **Delete specific genres by hand.** Edit `status` → `deleted` in the CSV,
 run `apply-genre-status.mjs`.
