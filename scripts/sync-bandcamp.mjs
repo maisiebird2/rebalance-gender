@@ -167,6 +167,7 @@ import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-fail
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
+import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -324,6 +325,10 @@ function isBandcampArtistUrl(rawUrl) {
 // reject.
 // ------------------------------------------------------------
 function stripBandcampWww(rawUrl) {
+  // Null-safe: the link loaders filter out url-less rows, but this must
+  // never be the thing that sinks a whole stage if one slips through
+  // (it runs before isBandcampArtistUrl gets a chance to reject).
+  if (typeof rawUrl !== "string") return rawUrl;
   return rawUrl.replace(
     /^(https?:\/\/)www\.([a-z0-9-]+\.bandcamp\.com)/i,
     "$1$2"
@@ -607,10 +612,12 @@ async function fetchAllBandcampLinks() {
   let from = 0;
 
   while (true) {
-    let query = supabase
-      .from("artist_links")
-      .select("id, artist_id, url, artists!inner(name, directory_status, deleted)")
-      .eq("platform", "bandcamp")
+    let query = onlyHarvestableLinks(
+      supabase
+        .from("artist_links")
+        .select("id, artist_id, url, artists!inner(name, directory_status, deleted)")
+        .eq("platform", "bandcamp")
+    )
       .eq("artists.directory_status", "approved")
       .eq("artists.deleted", false)
       .order("id", { ascending: true })

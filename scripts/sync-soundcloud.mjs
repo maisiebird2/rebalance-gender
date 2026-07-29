@@ -225,6 +225,7 @@ import {
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
+import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -599,10 +600,12 @@ async function fetchAllSoundCloudLinks() {
     // Built inside the retry callback: postgrest builders are
     // single-use thenables, so each attempt needs a fresh one.
     const buildQuery = () => {
-      let query = supabase
-        .from("artist_links")
-        .select("id, artist_id, url, artists!inner(name, directory_status)")
-        .eq("platform", "soundcloud")
+      let query = onlyHarvestableLinks(
+        supabase
+          .from("artist_links")
+          .select("id, artist_id, url, artists!inner(name, directory_status)")
+          .eq("platform", "soundcloud")
+      )
         .order("id", { ascending: true })
         .range(from, from + SUPABASE_PAGE_SIZE - 1);
 

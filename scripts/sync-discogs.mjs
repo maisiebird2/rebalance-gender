@@ -94,6 +94,7 @@ import { writeDiscogsImage } from "./lib/discogs-images.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
+import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -355,7 +356,7 @@ async function main() {
     "artist_links",
     "id, artist_id, url, artists!inner(id, name, directory_status)",
     (q) => {
-      q = q.eq("platform", "discogs");
+      q = onlyHarvestableLinks(q.eq("platform", "discogs"));
       if (APPROVED_ONLY) q = q.eq("artists.directory_status", "approved").eq("artists.deleted", false);
       if (NAME_FILTER) q = q.ilike("artists.name", `%${NAME_FILTER}%`);
       return q;
