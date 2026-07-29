@@ -4,19 +4,20 @@
 //
 // Retroactively merges duplicate genre rows that already exist in
 // the `genres` table but resolve to the same canonical name through
-// the alias vocabulary in integrate-harvested-genres.mjs.
+// the alias vocabulary in the genre_tag_rules table (loaded via
+// lib/genre-vocab.mjs).
 //
 // Why this exists:
 //   integrate-harvested-genres.mjs already collapses raw tags to a
-//   canonical name at harvest time (GENRE_ALIASES), and its built-in
+//   canonical name at harvest time (alias rules), and its built-in
 //   deduplicateGenres() pass merges genres whose *names* normalise to
 //   the same string (accents / hyphens). But it does NOT merge genres
-//   that only become equal *through the alias map* — e.g.
+//   that only become equal *through the alias rules* — e.g.
 //
 //       "drum & bass", "drum u bass", "drum'n'bass", "drumandbass"
 //
 //   These differ in their connective (& / u / 'n' / and), so their
-//   normalised names are all different; only GENRE_ALIASES knows they
+//   normalised names are all different; only the alias rules know they
 //   are the same genre. Rows created before an alias was added (or
 //   inserted by some other path) therefore linger as duplicates.
 //
@@ -64,8 +65,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Reuse the single source of truth for the genre vocabulary.
-import { normaliseTag, normalizeForLookup } from './integrate-harvested-genres.mjs'
+// Reuse the single source of truth for the genre vocabulary
+// (the genre_tag_rules table, loaded at startup).
+import { loadGenreVocab, normalizeForLookup } from './lib/genre-vocab.mjs'
 
 // ------------------------------------------------------------
 // CLI
@@ -129,12 +131,12 @@ async function fetchAllPages(buildQuery) {
 // ------------------------------------------------------------
 // Resolve a genre name to its canonical grouping key.
 // Returns { canonical, key, skip }.
-//   canonical – the alias-resolved display name (null if broad tag)
+//   canonical – the alias-resolved display name (null if discarded)
 //   key       – normalised grouping key used to bucket duplicates
-//   skip      – true if the name matches a BROAD_TAGS entry
+//   skip      – true if the name matches a 'discard' rule
 // ------------------------------------------------------------
-function resolveGroup(name) {
-  const { canonical, skip } = normaliseTag(name)
+function resolveGroup(vocab, name) {
+  const { canonical, skip } = vocab.normaliseTag(name)
   if (skip || !canonical) return { canonical: null, key: null, skip: true }
   return { canonical, key: normalizeForLookup(canonical), skip: false }
 }
@@ -143,6 +145,9 @@ function resolveGroup(name) {
 async function main() {
   console.log(DRY_RUN ? '── DRY RUN (no changes) ──' : '── LIVE RUN ──')
   if (ONLY) console.log(`Filter: canonical name contains "${ONLY}"`)
+
+  // Load the vocabulary first (throws if genre_tag_rules is missing/empty).
+  const vocab = await loadGenreVocab(supabase)
 
   // 1. Load everything we need.
   const allGenres = await fetchAllPages(() =>
@@ -159,7 +164,7 @@ async function main() {
   const groups = new Map()   // key -> { canonical, members: [genre] }
   const broadTagGenres = []
   for (const g of allGenres) {
-    const { canonical, key, skip } = resolveGroup(g.name)
+    const { canonical, key, skip } = resolveGroup(vocab, g.name)
     if (skip) { broadTagGenres.push(g); continue }
     if (!groups.has(key)) groups.set(key, { canonical, members: [] })
     groups.get(key).members.push(g)
@@ -183,7 +188,7 @@ async function main() {
   }
 
   if (broadTagGenres.length) {
-    console.log(`\nNote: ${broadTagGenres.length} existing genre row(s) match BROAD_TAGS ` +
+    console.log(`\nNote: ${broadTagGenres.length} existing genre row(s) match a 'discard' rule ` +
       `and were left untouched (they should probably be removed separately):`)
     for (const g of broadTagGenres) console.log(`    • "${g.name}" (id ${g.id})`)
   }

@@ -16,8 +16,9 @@ harvest ──▶ [ score + corroborate ] ──▶ integrate ──▶ live tab
 ```
 
 The vocabulary layer is unchanged: everything is still normalised
-through `normaliseTag` / `GENRE_ALIASES` before it is scored, so
-`dnb` and `drum & bass` corroborate each other rather than splitting.
+through `normaliseTag` (backed by the `genre_tag_rules` table, loaded
+via `scripts/lib/genre-vocab.mjs`) before it is scored, so `dnb` and
+`drum & bass` corroborate each other rather than splitting.
 
 ---
 
@@ -55,7 +56,7 @@ multiplied.
 | Signal | Weight | Notes |
 |---|---|---|
 | Structured genre field | **1.0** | SoundCloud `track.genre`, Bandcamp primary tag, Beatport genre |
-| Self-applied free tag | **0.7** | SoundCloud `tag_list` — filter through `BROAD_TAGS` + `non-genre-hints` first |
+| Self-applied free tag | **0.7** | SoundCloud `tag_list` — filter through the `discard` rules + `non-genre-hints` first |
 | Editorial / community tag | **0.6** | last.fm community tags, Discogs styles |
 | Bio mention | **0.5** | genre name found in bio via vocabulary match or LLM extraction |
 
@@ -104,8 +105,14 @@ Two derived quantities drive the decision:
 - **S** — the total weighted evidence.
 - **corroboration** — the number of *distinct sources* supporting the
   genre (SoundCloud, Bandcamp, Discogs, last.fm, bio … each counts
-  once). Parent/child genres related by the `ROLLUP` map count as
-  agreeing, not competing (techno + melodic techno → same vote).
+  once). Ideally, parent/child genres would count as agreeing, not
+  competing (techno + melodic techno → same vote) — but there is
+  currently **no parent/child mapping in the system**. The old
+  hard-coded `ROLLUP` map in `prune-genres.mjs` was removed without
+  ever being populated; if we want parent/child handling, we'll build
+  it in the future as part of implementing this scheme (e.g. a
+  `genre_parents` table alongside `genre_tag_rules`). Until then,
+  corroboration treats every canonical genre as independent.
 
 ---
 
@@ -225,6 +232,7 @@ working with tooling that already exists.
 - Do we let a very strong single direct source (100% of a large
   catalogue) auto-accept a *second* and *third* genre, or cap auto to
   the single top genre and send the rest to review?
-- How aggressively should the `ROLLUP` map fold subgenres before
-  scoring vs. after — folding early boosts corroboration but loses
-  specificity.
+- Whether to build a parent/child genre mapping at all (none exists
+  today — the old hard-coded `ROLLUP` map was removed), and if so,
+  how aggressively it should fold subgenres before scoring vs. after
+  — folding early boosts corroboration but loses specificity.

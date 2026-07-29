@@ -1087,25 +1087,28 @@ Requires `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`.
 Promotes rows from `artist_harvested_genres` into the live `genres`
 and `artist_genres` tables. For each unprocessed row:
 
-- Looks up the raw tag in `GENRE_ALIASES` to resolve variant
+- Looks up the raw tag in the `alias` rules to resolve variant
   spellings (e.g. "drum and bass", "d&b", "dnb" → "drum & bass").
-- Checks against `BROAD_TAGS` and marks overly vague tags as skipped
-  (e.g. "electronic", "edm", "seen live") without creating genre entries.
+- Checks against the `discard` rules and marks overly vague tags as
+  skipped (e.g. "electronic", "edm", "seen live") without creating
+  genre entries.
 - Finds or creates the canonical genre in the `genres` table, then
   inserts the `artist_genres` link.
 - Sets `genre_id` on the harvested row to mark it as processed.
 
-Both `GENRE_ALIASES` and `BROAD_TAGS` are constants near the top of
-the script — edit them freely to tune which tags survive and what
-canonical names they map to. Run `--force-skipped` after updating
-`BROAD_TAGS` to re-process rows that were previously discarded.
+The vocabulary lives in the `genre_tag_rules` table (loaded at
+startup via `lib/genre-vocab.mjs`; the script refuses to run if the
+table is missing or empty). Edit rules in the admin panel
+(`/admin/settings`) or with SQL to tune which tags survive and what
+canonical names they map to. Run `--force-skipped` after removing a
+`discard` rule to re-process rows that were previously discarded.
 
 Must run after 7d, 7e, and 7f.
 
 ```bash
 DRY_RUN=1 npm run integrate-harvested-genres -- --debug --limit=50   # verify first
 npm run integrate-harvested-genres
-npm run integrate-harvested-genres -- --force-skipped   # after editing BROAD_TAGS
+npm run integrate-harvested-genres -- --force-skipped   # after removing a discard rule
 ```
 
 Full documentation of the genre lifecycle — the vocabulary/alias
@@ -1154,11 +1157,11 @@ Run `genre-report.mjs` first — it drives the rest. All support
   (artist counts, alias-merge candidates, suspected non-genres) and
   prints the artist-count distribution.
 - **`dedupe-genres-by-alias.mjs`** — merges existing `genres` rows
-  that only collide through the alias map (e.g. "drum & bass" /
-  "drum'n'bass" / "dnb"), not just by normalized name.
-- **`prune-genres.mjs`** — rolls tail subgenres into a parent, then
-  cuts genres below an artist-count threshold (default 3;
-  reversible unless `--hard`).
+  that only collide through the alias rules in `genre_tag_rules`
+  (e.g. "drum & bass" / "drum'n'bass" / "dnb"), not just by
+  normalized name.
+- **`prune-genres.mjs`** — cuts genres below an artist-count
+  threshold (default 3; reversible unless `--hard`).
 - **`apply-genre-status.mjs`** — applies hand-edited `status`
   changes from `genre-report.csv` back to the database.
 

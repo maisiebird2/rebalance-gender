@@ -87,8 +87,9 @@ npm run integrate-harvested-genres  # 7g — promotes to artist_genres
 
 `integrate-harvested-genres.mjs` normalises tag variants (e.g. "drum and bass",
 "d&b" → "drum & bass") and filters broad/useless tags (e.g. "electronic",
-"seen live"). Review the `GENRE_ALIASES` and `BROAD_TAGS` constants in that
-script before running — adjusting them controls what survives into `artist_genres`.
+"seen live"). Review the `alias` and `discard` rules in the `genre_tag_rules`
+table (admin panel → /admin/settings, or SQL) before running — adjusting them
+controls what survives into `artist_genres`.
 
 After running, verify coverage:
 

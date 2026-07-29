@@ -25,6 +25,7 @@
     "harvest-genres-lastfm": "node scripts/harvest-genres-lastfm.mjs",
     "harvest-genres-spotify": "node scripts/harvest-genres-spotify.mjs",
     "integrate-harvested-genres": "node scripts/integrate-harvested-genres.mjs",
+    "seed-genre-tag-rules": "node scripts/seed-genre-tag-rules.mjs",
     "compute-scores": "node scripts/compute-scores.mjs",
     "integrate-harvested-links": "tsx scripts/integrate-harvested-links.mjs",
     "sync-discogs": "tsx scripts/sync-discogs.mjs",

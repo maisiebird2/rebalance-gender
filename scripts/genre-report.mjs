@@ -14,7 +14,7 @@
 //                       to a DIFFERENT canonical, that name (i.e.
 //                       this row is a merge candidate for
 //                       dedupe-genres-by-alias.mjs); blank otherwise
-//   is_broad_tag      – TRUE if the name matches BROAD_TAGS
+//   is_broad_tag      – TRUE if the name matches a 'discard' rule
 //   suspected_non_genre – reason string if the name looks like a
 //                       place / decade / role / library tag (via
 //                       non-genre-hints.mjs) OR exactly matches an
@@ -47,7 +47,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { normaliseTag, normalizeForLookup } from './integrate-harvested-genres.mjs'
+import { loadGenreVocab, normalizeForLookup } from './lib/genre-vocab.mjs'
 import { nonGenreReason } from './lib/non-genre-hints.mjs'
 
 // ── CLI ──────────────────────────────────────────────────
@@ -109,6 +109,9 @@ function normalizeName(s) {
 }
 
 async function main() {
+  // Load the vocabulary first (throws if genre_tag_rules is missing/empty).
+  const vocab = await loadGenreVocab(supabase)
+
   console.log('Loading genres, links and artist names…')
   const genres = await fetchAllPages(() => supabase.from('genres').select('id, name, status'))
   const links  = await fetchAllPages(() => supabase.from('artist_genres').select('genre_id'))
@@ -127,7 +130,7 @@ async function main() {
   for (const a of artists) if (a.name) artistNames.add(normalizeName(a.name))
 
   const rows = genres.map(g => {
-    const { canonical, skip } = normaliseTag(g.name)
+    const { canonical, skip } = vocab.normaliseTag(g.name)
     const isBroad = skip
     // Merge candidate if the alias map resolves this name to a different canonical.
     const aliasCanonical =
@@ -170,7 +173,7 @@ async function main() {
   console.log('Genres with artist_count ≤ N:')
   for (const t of thresholds) console.log(`   ≤ ${String(t).padStart(2)} artists: ${under(t)}`)
   console.log(`Alias merge candidates (fixable via dedupe script): ${mergeCandidates}`)
-  console.log(`Rows matching BROAD_TAGS (probably not real genres): ${broad}`)
+  console.log(`Rows matching a 'discard' rule (probably not real genres): ${broad}`)
   console.log(`Suspected non-genres (places, decades, metadata, roles, junk): ${nonGenre.length}`)
   console.log(`   …of which match an artist name exactly: ${artistNameHits.length}`)
   if (artistNameHits.length) {

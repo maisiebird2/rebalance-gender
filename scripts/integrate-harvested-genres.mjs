@@ -7,19 +7,19 @@
 //
 // For each unprocessed row (genre_id IS NULL AND skipped = FALSE):
 //
-//   1. Normalise the raw_tag:
+//   1. Normalise the raw_tag (genre_tag_rules vocabulary):
 //        a. Lowercase + trim (already done at harvest time, but
 //           harmless to repeat for safety).
-//        b. Look up in GENRE_ALIASES → canonical name. If found,
-//           use the canonical name; if not, use the normalised
-//           raw_tag as-is.
-//        c. Check against BROAD_TAGS → if matched, mark the row
-//           skipped = TRUE and move on. Nothing is written to
+//        b. Check against 'discard' rules → if matched, mark the
+//           row skipped = TRUE and move on. Nothing is written to
 //           genres or artist_genres.
+//        c. Look up 'alias' rules → canonical name. If found, use
+//           the canonical name; if not, use the normalised
+//           raw_tag as-is.
 //
 //   2. Find or create the canonical genre in the genres table.
 //      Genre lookup is case-insensitive; new rows are inserted
-//      with the canonical casing from GENRE_ALIASES (or the
+//      with the canonical casing from the alias rule (or the
 //      normalised raw_tag for unknown tags).
 //
 //   3. Insert into artist_genres (artist_id, genre_id) — ON
@@ -44,7 +44,7 @@
 //   • Accents/diacritics are stripped  ("alté" → "alte")
 //   • Hyphens are treated as spaces for matching purposes
 //     ("alt-pop" and "alt pop" resolve to the same genre)
-//   • Everything is stored lowercase unless GENRE_ALIASES
+//   • Everything is stored lowercase unless an alias rule
 //     specifies a different canonical form (e.g. "EBM", "IDM",
 //     "UK garage").
 //
@@ -53,17 +53,16 @@
 //
 // ── Customising the genre vocabulary ──────────────────────
 //
-// GENRE_ALIASES  — Maps raw/alternate spellings to a canonical
-//   genre name. Edit freely; keys should be lowercase. Values
-//   set the display name that goes into the genres table.
-//   Unknown tags not listed here are stored lowercase with
-//   accents stripped.
+// The vocabulary lives in the genre_tag_rules table (see
+// supabase_migration_genre_tag_rules.sql), loaded at startup via
+// loadGenreVocab() in lib/genre-vocab.mjs. Edit rules in the
+// admin panel (/admin/settings) or with SQL:
 //
-// BROAD_TAGS  — Set of lowercase raw tags to discard entirely.
-//   Add anything that is too vague, a metadata tag (e.g.
-//   "seen live"), or not a real genre.
+//   kind='alias'    — raw spelling → canonical display name
+//   kind='discard'  — drop the tag entirely (too vague / not a genre)
+//   kind='word_fix' — word substitution applied before alias lookup
 //
-// Both constants are near the top of this file for easy editing.
+// The script refuses to run if the table is missing or empty.
 //
 // ── Usage (from rebalance-gender/) ────────────────────────────
 //
@@ -85,394 +84,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { loadGenreVocab, normalizeForLookup } from './lib/genre-vocab.mjs'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-// ------------------------------------------------------------
-// Normalisation helpers
-// ------------------------------------------------------------
-
-// Strip Unicode combining characters (accents, diacritics).
-// "alté" → "alte", "Ü" → "U", etc.
-function removeAccents(str) {
-  return str.normalize('NFD').replace(/[̀-ͯ]/g, '')
-}
-
-// Produce a normalised key for deduplication comparison:
-// strip accents, replace hyphens with spaces, lowercase, trim.
-// Used for BROAD_TAGS/GENRE_ALIASES lookup and genre cache keys —
-// NOT for the stored canonical name, which preserves intentional
-// hyphens (e.g. "2-step garage", "nu-breaks").
-export function normalizeForLookup(str) {
-  return removeAccents(str).replace(/-/g, ' ').toLowerCase().trim()
-}
-
-// Collapse "stylised" spelled-out genre names where every character
-// is separated by spaces or hyphens — e.g. "t e c h n o" → "techno",
-// "e-l-e-c-t-r-o" → "electro". Only fires when the name is 3+ tokens
-// that are ALL single characters, so real multi-word genres
-// ("drum & bass", "2-step garage", "nu-breaks", "a cappella") are
-// never touched. The collapsed form then flows through the normal
-// alias/broad-tag lookup below, so it dedupes against the real genre.
-export function collapseSpacedLetters(str) {
-  const tokens = str.trim().split(/[\s-]+/).filter(Boolean)
-  if (tokens.length >= 3 && tokens.every((t) => t.length === 1)) {
-    return tokens.join('')
-  }
-  return str
-}
-
-// ============================================================
-// GENRE ALIASES
-//
-// Keys: lowercase raw tag strings (as they arrive from Last.fm /
-//   MusicBrainz / Spotify).
-// Values: the canonical display name to use in the genres table.
-//   Casing here is what users see on the site.
-//
-// If a raw tag is not in this map and not in BROAD_TAGS, it is
-// used as-is (title-cased by the normaliseTag() function below).
-// Add aliases here whenever you spot duplicates in the staging table.
-// ============================================================
-export const GENRE_ALIASES = new Map([
-  // Drum & Bass
-  ['drum and bass',               'drum & bass'],
-  ['d&b',                         'drum & bass'],
-  ['dnb',                         'drum & bass'],
-  ['drum n bass',                 'drum & bass'],
-  ["drum 'n' bass",               'drum & bass'],
-  ["drum n' bass",                'drum & bass'],
-  ["drum'n'bass",                 'drum & bass'],
-  ['drumandbass',                 'drum & bass'],
-  ['drum u bass',                 'drum & bass'],
-  ['liquid drum and bass',        'liquid drum & bass'],
-  ['liquid d&b',                  'liquid drum & bass'],
-  ['liquid dnb',                  'liquid drum & bass'],
-  ['liquid drum n bass',          'liquid drum & bass'],
-  ['atmospheric dnb',             'atmospheric d&b'],
-  ['atmospheric drum and bass',   'atmospheric d&b'],
-
-  // Dubstep
-  ['dub step',                    'dubstep'],
-
-  // UK Garage
-  ['uk garage',                   'UK garage'],
-  ['u.k. garage',                 'UK garage'],
-  ['2 step',                      '2-step garage'],
-  ['2-step',                      '2-step garage'],
-  ['2step',                       '2-step garage'],
-  ['two step',                    '2-step garage'],
-  ['two-step',                    '2-step garage'],
-  ['two step garage',             '2-step garage'],
-
-  // EBM / Industrial
-  ['electronic body music',       'EBM'],
-  ['e.b.m.',                      'EBM'],
-  ['ebm',                         'EBM'],
-  ['industrial electronic',       'industrial'],
-  ['industrial music',            'industrial'],
-  ['industrialtechno',            'industrial techno'],
-
-  // Techno variants (keep as distinct genres)
-  ['technoese',                   'techno'], // German
-  ['technöse',                    'techno'], // German
-  ['minimal',                     'minimal techno'],
-  ['micro techno',                'minimal techno'],
-  ['tecno',                       'techno'],
-  ['fast-paced techno',           'fast techno'],
-
-  // Tekno
-  ['freetekno',                   'tekno'],
-  ['hardtek',                     'tekno'],
-  ['hard tekno',                  'tekno'],
-
-  // Trance
-  ['prog trance',                 'progressive trance'],
-
-  // Psychedelic
-  ['psy trance',                  'psytrance'],
-  ['psy-trance',                  'psytrance'],
-  ['psychedelic trance',          'psytrance'],
-  ['psycadelic techno',           'psy techno'],
-
-  // Breakbeat
-  ['breaks',                      'breakbeat'],
-  ['breakbeats',                  'breakbeat'],
-  ['break beat',                  'breakbeat'],
-  ['break-beat',                  'breakbeat'],
-  ['nu breaks',                   'nu-breaks'],
-  ['nu break',                    'nu-breaks'],
-
-  // Jungle
-  ['junglist',                    'jungle'],
-  ['jungle music',                'jungle'],
-
-  // Grime
-  ['uk grime',                    'grime'],
-
-  // Ambient
-  ['ambient music',               'ambient'],
-  ['ambient electronic',          'ambient'],
-  ['ambient techno',              'ambient techno'],
-
-  // Experimental / Noise
-  ['experimental electronic',     'experimental'],
-  ['experimental music',          'experimental'],
-  ['experiemental',               'experimental'],
-  ['noise music',                 'noise'],
-  ['power electronics',           'power electronics'],
-
-  // Electronica
-  ['electronics',                 'electronica'],
-  ['idm/electronica',             'electronica'],
-
-  // IDM
-  ['intelligent dance music',     'IDM'],
-  ['idm',                         'IDM'],
-
-  // Avant-garde
-  ['avant garde',                 'avant-garde'],
-  ['avant-garde music',           'avant-garde'],
-  ['avant-pop',                   'avant-garde pop'],
-
-
-  // Electro
-  ['e-l-e-c-t-r-o',               'electro'],
-  ['eletrohouse',                 'electro house'],
-  ['eletro',                      'electro'],
-
-  // Acid
-  ['acidtechno',                  'acid techno'],
-  ['acid techno',                 'acid techno'],
-  ['acid trance',                 'acid trance'],
-  ['acid house',                  'acid house'],
-
-  // Footwork / Juke
-  ['juke',                        'footwork'],
-  ['juke/footwork',               'footwork'],
-  ['chicago juke',                'footwork'],
-
-  // Club
-  ['club music',                  'club'],
-
-  // Dub
-  ['roots reggae',                'reggae'],
-  ['dub music',                   'dub'],
-  ['digital dub',                 'dub'],
-
-  // House variants
-  ['lo-fi house',                 'lo-fi house'],
-  ['lofi house',                  'lo-fi house'],
-
-  // Berlin-School
-  ['berlin school',               'Berlin-school'],
-  ['berlin-school',               'Berlin-school'],
-
-  // Gabber / Hardcore
-  ['gabba',                       'gabber'],
-  ['hardcore techno',             'hardcore'],
-  ['hard techno',                 'hard techno'],
-  ['hard trance',                 'hard trance'],
-  ['hardstyle music',             'hardstyle'],
-
-  // Noise
-  ['noise-jazz',                  'noise jazz'],
-
-  // Pop
-  ['pop and chart',               'pop'],
-
-  // Bass music
-  ['bass music',                  'bass'],
-  ['uk bass',                     'UK bass'],
-
-  // Drill
-  ['uk drill',                    'UK drill'],
-
-  // R&B
-  ['rnb',                         'R&B'],
-  ['rhythm & blues',              'R&B'],
-  ['rhythm and blues',            'R&B'],
-  ['contemporary r&b',            'R&B'],
-  ['alternative rnb',             'alternative R&B'],
-
-  // Afro
-  ['afrohouse',                   'Afro house'],
-  ['afro tech',                   'afro tech'],
-  ['afrobeats',                   'Afrobeat'],
-  ['afro beats',                  'Afrobeat'],
-
-  // Electronic variants that map to something more specific
-  ['left field electronic',       'leftfield'],
-  ['leftfield electronic',        'leftfield'],
-  ['left-field',                  'leftfield'],
-
-  // Punk
-  ['youth crew',                  'hardcore punk'],
-])
-
-// ============================================================
-// BROAD TAGS
-//
-// Raw tags (lowercase) that are too vague, not a real genre, or
-// are metadata/listener behaviour tags. These are marked
-// skipped = TRUE in artist_harvested_genres and never promoted
-// to the live genres table.
-//
-// Err on the side of inclusion here — it's easy to remove a tag
-// from this list later (then re-run with --force-skipped to
-// re-process those rows). It's harder to clean up genres that
-// slipped through.
-// ============================================================
-const BROAD_TAGS = new Set([
-  // Platform / catalogue noise
-  'electronic',
-  'electronic music',
-  'edm',
-  'dance',
-  'dance music',
-  'music',
-  'club',        // too vague on its own — kept here; use "club music" → "club" alias above if desired
-  'rave',
-  'club music',  // comment out if you want to keep this as a genre
-  // Descriptor tags (not genres)
-  'female vocalists',
-  'female vocalist',
-  'women in music',
-  'women',
-  'lgbtq',
-  'queer',
-  'poc',
-  'black artists',
-  // Last.fm listener-behaviour tags
-  'seen live',
-  'live',
-  'favorites',
-  'favourites',
-  'favorite',
-  'favourite',
-  'love at first listen',
-  'loved',
-  'love',
-  'best',
-  'awesome',
-  'good',
-  'liked',
-  'classic',
-  'all',
-  // Format / release tags
-  'album',
-  'albums',
-  'ep',
-  'single',
-  'mix',
-  'dj mix',
-  'dj set',
-  'dj',
-  'producer',
-  // Era / mood (too vague)
-  'underground',
-  'alternative',
-  'alternative electronic',
-  'indie',
-  'indie electronic',
-  'indie dance',
-  // Nationality meta-tags
-  'german',
-  'germany',
-  'german electronic',
-  'british',
-  'american',
-  'america',
-  'american pianist',
-  'uk',
-  'british electronic',
-  'us',
-  'usa',
-  'united states',
-  'canadian',
-  'french',
-  'france',
-  'italy',
-  'italian',
-  'swedish',
-  'korean',
-  'nigeria',
-  'albania', 'albanian',
-  // Misc noise
-  'spotify',
-  'soundcloud',
-  'bandcamp',
-  'unknown',
-  '???',
-  'various artists',
-  '2020s',
-  'male vocalist',
-  'male vocalists',
-  'actress',
-  'adam j owens',
-  'added for google code-in 2016',
-  'always alive recordings',
-  'amelie lens',
-])
-
-// ============================================================
-// WORD FIXES
-//
-// Simple word-boundary substitutions applied to the raw tag
-// BEFORE alias lookup. Use these to fix common concatenated or
-// unhyphenated forms that can appear as a prefix in compound
-// genre names (e.g. "avantgarde rock" → "avant-garde rock").
-//
-// Each entry is [regex, replacement]. Applied in order.
-// ============================================================
-const WORD_FIXES = [
-  [/\bavantgarde\b/g, 'avant-garde'],
-]
-
-// Pre-computed normalised versions of GENRE_ALIASES keys and BROAD_TAGS
-// for accent/hyphen-insensitive lookup. Built once at startup.
-const GENRE_ALIASES_NORM = new Map(
-  [...GENRE_ALIASES].map(([k, v]) => [normalizeForLookup(k), v])
-)
-const BROAD_TAGS_NORM = new Set([...BROAD_TAGS].map(normalizeForLookup))
-
-// ============================================================
-// Normalise a raw tag to its canonical form.
-// Returns { canonical: string, skip: boolean }.
-//
-// Lookup order:
-//   1. Block list (exact lowercase, then accent/hyphen-normalised)
-//   2. GENRE_ALIASES (exact lowercase, then accent/hyphen-normalised)
-//   3. Unknown — store accent-stripped lowercase as-is
-// ============================================================
-export function normaliseTag(rawTag) {
-  let lower = rawTag.toLowerCase().trim()
-
-  // Apply word-level substitutions before alias lookup, so compound
-  // forms like "avantgarde rock" are fixed to "avant-garde rock" and
-  // then fall through to alias lookup or default storage correctly.
-  for (const [pattern, replacement] of WORD_FIXES) {
-    lower = lower.replace(pattern, replacement)
-  }
-
-  // Collapse spelled-out spacing ("t e c h n o", "e-l-e-c-t-r-o") so it
-  // resolves to the real genre in the alias/lookup steps below.
-  lower = collapseSpacedLetters(lower)
-
-  const norm  = normalizeForLookup(lower)   // accent-stripped, hyphens → spaces
-
-  // Block list check (exact first, then normalised).
-  if (BROAD_TAGS.has(lower) || BROAD_TAGS_NORM.has(norm)) {
-    return { canonical: null, skip: true }
-  }
-
-  // Alias lookup (exact first, then normalised).
-  if (GENRE_ALIASES.has(lower))     return { canonical: GENRE_ALIASES.get(lower),     skip: false }
-  if (GENRE_ALIASES_NORM.has(norm)) return { canonical: GENRE_ALIASES_NORM.get(norm), skip: false }
-
-  // Unknown tag — strip accents and store lowercase.
-  // Special-cased acronyms/capitalisations all come from GENRE_ALIASES above.
-  return { canonical: removeAccents(lower), skip: false }
-}
 
 // ------------------------------------------------------------
 // CLI / env
@@ -482,7 +96,7 @@ const DRY_RUN = process.env.DRY_RUN === '1' || args.includes('--dry-run')
 const DEBUG   = args.includes('--debug')
 
 // --force-skipped: re-process rows that were previously marked skipped
-// (in case BROAD_TAGS was updated to remove something).
+// (in case a 'discard' rule was removed from genre_tag_rules).
 const FORCE_SKIPPED = args.includes('--force-skipped')
 
 const limitArg  = args.find(a => a.startsWith('--limit='))
@@ -702,6 +316,11 @@ async function main() {
   if (OPT_SOURCE) console.log(`  source filter: ${OPT_SOURCE}`)
   console.log()
 
+  // 0. Load the normalisation vocabulary (throws if missing/empty).
+  const vocab = await loadGenreVocab(supabase)
+  console.log(`Vocabulary: ${vocab.counts.alias} alias, ${vocab.counts.discard} discard, ` +
+    `${vocab.counts.word_fix} word-fix rule(s) loaded from genre_tag_rules.`)
+
   // 1. Load unprocessed rows from artist_harvested_genres.
   console.log('Loading unprocessed rows from artist_harvested_genres…')
 
@@ -770,7 +389,7 @@ async function main() {
   for (const row of workList) {
     const artistName = row.artists?.name ?? row.artist_id
 
-    const { canonical, skip } = normaliseTag(row.raw_tag)
+    const { canonical, skip } = vocab.normaliseTag(row.raw_tag)
 
     if (skip) {
       if (DEBUG) console.log(`  ~ [${artistName}] "${row.raw_tag}" → SKIPPED (broad/noise tag)`)
@@ -860,9 +479,9 @@ async function main() {
   console.log('\nDone.')
 }
 
-// Only run the pipeline when this file is executed directly, not when
-// it is imported (e.g. by dedupe-genres-by-alias.mjs to reuse the alias
-// vocabulary via the exported normaliseTag / GENRE_ALIASES).
+// Only run the pipeline when this file is executed directly. (The
+// normalisation vocabulary other scripts used to import from here now
+// lives in lib/genre-vocab.mjs + the genre_tag_rules table.)
 const isMainModule = process.argv[1] &&
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
 if (isMainModule) {
