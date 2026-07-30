@@ -133,8 +133,9 @@ import { isSearchPageUrl } from "@/lib/profile-links";
 // qobuz is excluded too: it is no longer an image source. Its links stay
 // in the directory, but no image is fetched from it — like the platforms
 // above, a qobuz link is never a candidate here, so it's never fetched
-// and never recorded as a failure. (The qobuz-logo placeholder pattern in
-// images/placeholders.ts is kept to guard any already-stored images.)
+// and never recorded as a failure. Stored qobuz images were purged from
+// the DB when it was retired, so no qobuz-specific handling remains
+// anywhere in the image pipeline.
 export const PLATFORM_PRIORITY = [
   "soundcloud",
   "bandcamp",
