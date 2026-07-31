@@ -248,6 +248,33 @@ describe("scrapeArtistImages — URL-change handling", () => {
     }
   );
 
+  // qobuz is retired as an image source: its links stay in the
+  // directory, but it is never a candidate — never fetched, never
+  // recorded as a failure.
+  it("excludes qobuz from PLATFORM_PRIORITY", () => {
+    expect(PLATFORM_PRIORITY).not.toContain("qobuz");
+  });
+
+  it("never tries a qobuz link", async () => {
+    const { client, calls } = makeClient({
+      artist: approvedArtist([
+        { platform: "qobuz", url: "https://www.qobuz.com/us-en/interpreter/some-artist/123" },
+      ]),
+      images: [],
+      failures: [],
+    });
+    const fetchMock = stubFetch({
+      "https://www.qobuz.com/us-en/interpreter/some-artist/123": "image",
+    });
+
+    const result = await scrapeArtistImages("a1", client);
+
+    expect(result.attempted).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calls.upserts).toEqual([]);
+  });
+
   it("never tries a resident_advisor link", async () => {
     const { client, calls } = makeClient({
       artist: approvedArtist([{ platform: "resident_advisor", url: "https://ra.co/dj/x" }]),

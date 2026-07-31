@@ -9,7 +9,6 @@ import {
 import { describePlaceholderImageUrl, isPlaceholderImageUrl } from "./placeholders";
 
 const SC_DEFAULT_AVATAR = "https://i1.sndcdn.com/images/default_avatar_500x500.png";
-const QOBUZ_LOGO = "https://static-www.qobuz.com/img/qobuz_logo_dark.svg";
 
 describe("image failure vocabulary", () => {
   it("builds and parses the service key", () => {
@@ -52,14 +51,6 @@ describe("placeholder registry", () => {
   it("matches the SoundCloud default grey avatar", () => {
     expect(isPlaceholderImageUrl(SC_DEFAULT_AVATAR)).toBe(true);
     expect(isPlaceholderImageUrl("https://i1.sndcdn.com/avatars-abc-t500x500.jpg")).toBe(false);
-  });
-
-  it("matches every variant of the Qobuz logo", () => {
-    expect(isPlaceholderImageUrl(QOBUZ_LOGO)).toBe(true);
-    expect(isPlaceholderImageUrl("https://static-www.qobuz.com/img/qobuz_logo.png")).toBe(true);
-    expect(
-      isPlaceholderImageUrl("https://static.qobuz.com/images/covers/real-artist-photo.jpg")
-    ).toBe(false);
   });
 
   it("scopes a pattern to its platform when one is given", () => {

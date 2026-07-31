@@ -46,7 +46,8 @@ Concretely, today `soundcloud` and `bandcamp` have two writers each:
 | bandcamp | `sync-bandcamp.mjs` — page sidebar | only after a recorded **transient** failure |
 | linktree | `sync-linktree.mjs` | only after a recorded **transient** failure |
 | hoer | `sync-hoer.mjs` | only after a recorded **transient** failure |
-| spotify, apple_music, wikipedia, qobuz, resident_advisor, beatport, youtube | `scrape-images` | **sole owner** — fills any gap |
+| spotify, lastfm, apple_music, wikipedia, resident_advisor, beatport, youtube | `scrape-images` | **sole owner** — fills any gap |
+| qobuz | none | retired as an image source — links stay in the directory, never a scrape candidate |
 | discogs | none | currently yields zero images; decide whether to keep as a candidate |
 
 Note the category is "has a dedicated harvester", not "has an API" — only
@@ -56,10 +57,10 @@ SoundCloud is genuinely API-based. Bandcamp, Linktree and HÖR are dedicated
 ### Assumption that needs confirming
 
 The "only run after a transient failure" rule applies **only to the four
-platforms with a dedicated harvester**. For the eight scrape-only platforms,
+platforms with a dedicated harvester**. For the seven scrape-only platforms,
 `scrape-images` remains the sole path and must run on any gap.
 
-Applied literally to all platforms, the rule would disable those eight and
+Applied literally to all platforms, the rule would disable those seven and
 strand **1,450 images across 919 approved artists** — there is no API path that
 could have failed, so no artist would ever qualify. Flagging explicitly because
 misreading this is the one way this plan causes real damage.

@@ -46,5 +46,15 @@ export async function verifyTurnstileToken(token: string): Promise<boolean> {
   }
 
   const data = (await res.json()) as { success: boolean; "error-codes"?: string[] };
-  return data.success === true;
+  if (data.success !== true) {
+    // Rejections are deliberately invisible to the client (routes answer with
+    // a fake success), so log the reason server-side — it's the only place a
+    // misconfigured secret (e.g. "invalid-input-secret") ever shows up.
+    console.warn(
+      "[turnstile] siteverify rejected token:",
+      data["error-codes"]?.join(", ") ?? "no error codes"
+    );
+    return false;
+  }
+  return true;
 }

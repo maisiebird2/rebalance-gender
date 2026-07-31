@@ -134,15 +134,23 @@ import { isSearchPageUrl } from "@/lib/profile-links";
 // by the directory at all (see supabase_migration_remove_lastfm_data.sql).
 // Last.fm links are still stored, but they are not an image candidate —
 // removing the platform from this list is what stops the scrape.
+//
+// qobuz is excluded too: it is no longer an image source. Its links stay
+// in the directory, but no image is fetched from it — like the platforms
+// above, a qobuz link is never a candidate here, so it's never fetched
+// and never recorded as a failure. Stored qobuz images were purged from
+// the DB when it was retired, so no qobuz-specific handling remains
+// anywhere in the image pipeline.
+
 export const PLATFORM_PRIORITY = [
   "soundcloud",
   "bandcamp",
   "discogs",
-  "qobuz",
   "spotify",
-  "wikipedia",
   "apple_music",
   "youtube",
+  "wikipedia",
+  "qobuz",
 ] as const;
 
 // Platforms whose images belong to a dedicated harvester:

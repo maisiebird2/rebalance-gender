@@ -10,6 +10,7 @@ import {
   findDuplicateArtists,
   createTokenAndSendEmail,
 } from "@/lib/submission-helpers";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { LinkPlatform } from "@/lib/types";
 
 interface LocationInput {
@@ -52,10 +53,19 @@ export async function POST(request: NextRequest) {
   } = await authClient.auth.getUser();
   const isAdmin = isAdminUser(user);
 
-  // ── 2. Bot protection (skipped for admins) ──────────────────────────────────
+  // ── 2. Rate limit + bot protection (both skipped for admins) ────────────────
   // Logged-in admins don't get served a Turnstile challenge, so there's no
-  // token to check; the authenticated admin session is trust enough.
+  // token to check; the authenticated admin session is trust enough. Admins
+  // also skip the rate limit — bulk entry is a legitimate admin workflow.
   if (!isAdmin) {
+    const rate = checkRateLimit(`submit:${getClientIp(request)}`, 5, 10 * 60_000);
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many submissions — please try again shortly." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } }
+      );
+    }
+
     const botError = await checkBotProtection(body.turnstileToken, body.honeypot);
     if (botError) {
       // Return a plausible success-looking response to confuse bots.
