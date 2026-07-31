@@ -1,26 +1,26 @@
 """
 Graph builder.
 
-Orchestrates the three collectors and writes weighted edges to Supabase.
+Orchestrates the collectors and writes weighted edges to Supabase.
 
 Pass 1 — Resolve IDs
-    For each artist in the DB, search Last.fm, MusicBrainz, and Spotify
-    to find their canonical IDs. Stored in artist_links.
+    For each artist in the DB, search MusicBrainz and Spotify to find
+    their canonical IDs. Stored in artist_links.
 
-Pass 2 — Last.fm edges
-    For each artist with a Last.fm name, fetch similar artists.
-    For each similar artist that is also in our DB (matched by name),
-    upsert an edge with the Last.fm similarity as the lastfm_score.
-
-Pass 3 — MusicBrainz edges
+Pass 2 — MusicBrainz edges
     For each artist with an MBID, fetch artist relations.
     For each relation whose target MBID or name matches an artist in our DB,
     upsert an edge with the relation score as the musicbrainz_score.
 
-Pass 4 — Spotify audio similarity
+Pass 3 — Spotify audio similarity
     For each artist with a Spotify ID, fetch + store audio features.
     Then compute pairwise cosine similarity between all artists already
     connected by edges (to keep the matrix sparse), and update spotify_score.
+
+There used to be a Last.fm similar-artist pass between passes 1 and 2,
+and it was the heaviest-weighted signal. It was removed when Last.fm data
+was dropped from the directory — see
+supabase_migration_remove_lastfm_data.sql.
 """
 import logging
 import numpy as np
@@ -28,7 +28,7 @@ from itertools import combinations
 from tqdm import tqdm
 
 from recommender import db, config
-from recommender.collectors import lastfm, musicbrainz, spotify
+from recommender.collectors import musicbrainz, spotify
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _feature_vec(features: dict) -> list[float]:
 
 
 def build(conn) -> None:
-    """Run all four passes and commit to the database."""
+    """Run all three passes and commit to the database."""
 
     artists = db.fetch_all_artists(conn)
     log.info("Found %d artists in DB.", len(artists))
@@ -57,7 +57,7 @@ def build(conn) -> None:
     by_name: dict[str, dict] = {a["name"].lower(): a for a in artists}
 
     # ── Pass 1: Resolve IDs ────────────────────────────────────────────────
-    log.info("Pass 1/4: Resolving API identifiers…")
+    log.info("Pass 1/3: Resolving API identifiers…")
     existing_links = db.fetch_artist_links(conn)
 
     for artist in tqdm(artists, desc="Resolving IDs"):
@@ -65,15 +65,10 @@ def build(conn) -> None:
         name = artist["name"]
 
         link = existing_links.get(aid, {})
-        lfm_name   = link.get("lastfm_name")
         mbid       = link.get("mbid")
         spotify_id = link.get("spotify_id")
 
         changed = False
-
-        if not lfm_name:
-            lfm_name = lastfm.resolve_name(name)
-            changed = True
 
         if not mbid:
             mbid = musicbrainz.resolve_mbid(name)
@@ -84,39 +79,16 @@ def build(conn) -> None:
             changed = True
 
         if changed:
-            db.upsert_artist_link(conn, aid, lfm_name, mbid, spotify_id)
+            db.upsert_artist_link(conn, aid, mbid, spotify_id)
 
     conn.commit()
     links = db.fetch_artist_links(conn)
 
-    # Build reverse-lookup indexes from external IDs → our artist ID
+    # Build reverse-lookup index from external IDs → our artist ID
     mbid_to_id:   dict[str, str] = {v["mbid"]:       k for k, v in links.items() if v.get("mbid")}
-    lfmname_to_id: dict[str, str] = {v["lastfm_name"].lower(): k
-                                     for k, v in links.items() if v.get("lastfm_name")}
 
-    # ── Pass 2: Last.fm edges ──────────────────────────────────────────────
-    log.info("Pass 2/4: Fetching Last.fm similar-artist edges…")
-    edge_count = 0
-
-    for artist_id, link in tqdm(links.items(), desc="Last.fm"):
-        lfm_name = link.get("lastfm_name")
-        if not lfm_name:
-            continue
-
-        similar = lastfm.get_similar(lfm_name)
-        for s in similar:
-            # Match the similar artist back to one in our DB
-            target_id = lfmname_to_id.get(s["name"].lower())
-            if not target_id or target_id == artist_id:
-                continue
-            db.upsert_edge(conn, artist_id, target_id, lastfm_score=s["similarity"])
-            edge_count += 1
-
-    conn.commit()
-    log.info("Last.fm: wrote %d edges.", edge_count)
-
-    # ── Pass 3: MusicBrainz edges ──────────────────────────────────────────
-    log.info("Pass 3/4: Fetching MusicBrainz relation edges…")
+    # ── Pass 2: MusicBrainz edges ──────────────────────────────────────────
+    log.info("Pass 2/3: Fetching MusicBrainz relation edges…")
     mb_count = 0
 
     for artist_id, link in tqdm(links.items(), desc="MusicBrainz"):
@@ -142,8 +114,8 @@ def build(conn) -> None:
     conn.commit()
     log.info("MusicBrainz: wrote %d edges.", mb_count)
 
-    # ── Pass 4: Spotify audio similarity ──────────────────────────────────
-    log.info("Pass 4/4: Computing Spotify audio similarity…")
+    # ── Pass 3: Spotify audio similarity ──────────────────────────────────
+    log.info("Pass 3/3: Computing Spotify audio similarity…")
 
     for artist_id, link in tqdm(links.items(), desc="Spotify features"):
         spotify_id = link.get("spotify_id")

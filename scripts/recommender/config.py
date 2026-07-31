@@ -33,17 +33,18 @@ def _require(key: str) -> str:
 SUPABASE_DB_URL: str = _require("SUPABASE_DB_URL")
 
 # APIs
-LASTFM_API_KEY: str  = _require("LASTFM_API_KEY")
 SPOTIFY_CLIENT_ID: str     = _require("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET: str = _require("SPOTIFY_CLIENT_SECRET")
 
-# Collector settings
-LASTFM_SIMILAR_LIMIT: int = int(os.getenv("LASTFM_SIMILAR_LIMIT", "50"))
-
 # Edge weights (must sum to 1.0)
-WEIGHT_LASTFM:        float = float(os.getenv("WEIGHT_LASTFM", "0.50"))
-WEIGHT_MUSICBRAINZ:   float = float(os.getenv("WEIGHT_MUSICBRAINZ", "0.30"))
-WEIGHT_SPOTIFY:       float = float(os.getenv("WEIGHT_SPOTIFY", "0.20"))
+#
+# Last.fm was the third signal here, weighted 0.50 against MusicBrainz
+# 0.30 and Spotify 0.20. It was removed when Last.fm data was dropped
+# from the directory (see supabase_migration_remove_lastfm_data.sql);
+# the remaining two were renormalised to keep the sum at 1.0, preserving
+# their 3:2 ratio.
+WEIGHT_MUSICBRAINZ:   float = float(os.getenv("WEIGHT_MUSICBRAINZ", "0.60"))
+WEIGHT_SPOTIFY:       float = float(os.getenv("WEIGHT_SPOTIFY", "0.40"))
 
 # Artists table — core columns
 ARTISTS_TABLE:    str = os.getenv("ARTISTS_TABLE", "artists")

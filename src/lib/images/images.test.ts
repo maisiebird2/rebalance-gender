@@ -8,8 +8,6 @@ import {
 } from "./failures";
 import { describePlaceholderImageUrl, isPlaceholderImageUrl } from "./placeholders";
 
-const LASTFM_PLACEHOLDER =
-  "https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg";
 const SC_DEFAULT_AVATAR = "https://i1.sndcdn.com/images/default_avatar_500x500.png";
 
 describe("image failure vocabulary", () => {
@@ -50,15 +48,6 @@ describe("image failure vocabulary", () => {
 });
 
 describe("placeholder registry", () => {
-  it("matches every size variant of the Last.fm default avatar", () => {
-    expect(isPlaceholderImageUrl(LASTFM_PLACEHOLDER)).toBe(true);
-    expect(
-      isPlaceholderImageUrl(
-        "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png"
-      )
-    ).toBe(true);
-  });
-
   it("matches the SoundCloud default grey avatar", () => {
     expect(isPlaceholderImageUrl(SC_DEFAULT_AVATAR)).toBe(true);
     expect(isPlaceholderImageUrl("https://i1.sndcdn.com/avatars-abc-t500x500.jpg")).toBe(false);
@@ -70,7 +59,7 @@ describe("placeholder registry", () => {
   });
 
   it("names the placeholder it matched", () => {
-    expect(describePlaceholderImageUrl(LASTFM_PLACEHOLDER)).toBe("Last.fm default star avatar");
+    expect(describePlaceholderImageUrl(QOBUZ_LOGO)).toBe("Qobuz logo");
     expect(describePlaceholderImageUrl(SC_DEFAULT_AVATAR)).toBe("SoundCloud default grey avatar");
     expect(describePlaceholderImageUrl("https://cdn.example/real.jpg")).toBeNull();
   });

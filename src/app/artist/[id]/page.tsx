@@ -58,8 +58,8 @@ export default async function ArtistPage({ params }: PageProps) {
 
   // Profile links shown to visitors: drop not-found/empty links, and hide the
   // platforms that are directory data sources rather than clickable profiles
-  // (Last.fm, MusicBrainz). Those links are still stored and used elsewhere;
-  // see PLATFORMS_HIDDEN_ON_ARTIST_PAGE.
+  // (MusicBrainz, Last.fm). Those links are still stored; see
+  // PLATFORMS_HIDDEN_ON_ARTIST_PAGE.
   const visibleLinks = artist.links?.filter(
     (l) => !l.not_found && l.url && !PLATFORMS_HIDDEN_ON_ARTIST_PAGE.has(l.platform)
   );

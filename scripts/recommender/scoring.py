@@ -159,18 +159,23 @@ def score_bio(our_bio: str | None, candidate_bio: str | None) -> float | None:
 def score_popularity(
     our_bio: str | None,
     candidate_popularity: int | None,   # Spotify: 0–100
-    candidate_listeners: int | None,    # Last.fm: integer listener count
+    candidate_listeners: int | None,    # integer listener count, if any
 ) -> float | None:
     """
     Plausibility check: does the candidate's popularity level match what we'd
     expect for an artist on this site?
 
-    If the candidate has extremely high popularity (Spotify > 80, or Last.fm
-    > 5M listeners) they're almost certainly a mainstream act. If our artist
-    bio is short / sparse, that's a weak signal they might be less mainstream.
+    If the candidate has extremely high popularity (Spotify > 80, or > 5M
+    listeners) they're almost certainly a mainstream act. If our artist bio
+    is short / sparse, that's a weak signal they might be less mainstream.
     This score is low-weight (0.04) and mainly here to break ties.
 
     Returns None if no popularity data is available.
+
+    Last.fm was the only collector that supplied `candidate_listeners`, and
+    it was removed with the rest of the Last.fm data (see
+    supabase_migration_remove_lastfm_data.sql). The branch stays because the
+    signal is platform-agnostic, but no collector populates it today.
     """
     score = None
 
@@ -182,13 +187,13 @@ def score_popularity(
             score = 1.0 - max(0.0, (candidate_popularity - 70) / 100)
             score = max(score, 0.3)
 
-    if candidate_listeners is not None:           # Last.fm integer
-        lfm_score = 1.0
+    if candidate_listeners is not None:
+        listener_score = 1.0
         if candidate_listeners > 5_000_000:
-            lfm_score = 0.5
+            listener_score = 0.5
         elif candidate_listeners > 1_000_000:
-            lfm_score = 0.75
-        score = min(score or 1.0, lfm_score)
+            listener_score = 0.75
+        score = min(score or 1.0, listener_score)
 
     return score
 

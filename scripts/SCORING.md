@@ -1,14 +1,24 @@
 # Similarity Scoring
 
 This document covers the process of computing artist similarity scores and
-tuning the weights used to combine signals. This is separate from the
+combining signals into them. This is separate from the
 enrichment pipeline (see `PIPELINE.md`) — the pipeline populates the signal
 tables, and the scoring process reads from them.
 
 The two processes run on different cadences:
 - **Enrichment pipeline** — run when you want to refresh profile data
 - **Scoring** — run whenever you want to update recommendations, or after
-  re-tuning the weights
+  changing the weights
+
+> **No automated weight tuning.** There used to be a step 2,
+> `tune-weights.py`, which grid-searched weight combinations against a
+> Last.fm similar-artist validation set. That validation set
+> (`lastfm_similar_artists`) and the script were both removed when Last.fm
+> data was dropped from the directory — see
+> `supabase_migration_remove_lastfm_data.sql`. Weights are now chosen by
+> hand and passed to `push-scores.py`. Reinstating automated tuning needs a
+> new source of labelled similar-artist pairs (hand-labelled, or derived
+> from SoundCloud follow overlap).
 
 ---
 
@@ -22,8 +32,8 @@ conda install numpy pandas requests charset-normalizer
 
 | Package | Used by |
 |---|---|
-| `numpy` | `tune-weights.py` — vectorised score computation |
-| `pandas` | `tune-weights.py`, `push-scores.py` — data manipulation |
+| `numpy` | `push-scores.py` — vectorised score computation |
+| `pandas` | `push-scores.py` — data manipulation |
 | `requests` | all scripts — Supabase REST API calls |
 | `charset-normalizer` | `requests` dependency; suppresses a warning if missing |
 
@@ -33,18 +43,17 @@ If you hit a `ModuleNotFoundError` for any of these, install the missing package
 
 ## Overview
 
-The scoring pipeline has three steps, each a separate Python script:
+The scoring pipeline has two steps, each a separate Python script:
 
 ```
 Step 1 │ compute-scores.py  →  .cache/pair-scores.csv
-Step 2 │ tune-weights.py    →  best weights (printed to terminal)
-Step 3 │ push-scores.py     →  artist_similarity_scores table in DB
+Step 2 │ push-scores.py     →  artist_similarity_scores table in DB
 ```
 
-Steps 1 and 2 run locally with no DB writes. The CSV file is the shared
-state between them — you can re-run step 2 with different parameters
-without re-fetching from the database. Step 3 is the only step that
-writes to the database.
+Step 1 runs locally with no DB writes. The CSV file is the shared state
+between them — you can re-run step 2 with different weights without
+re-fetching from the database. Step 2 is the only step that writes to
+the database.
 
 ---
 
@@ -69,8 +78,9 @@ total_score = w1·genre + w2·mb_tag + w3·mb_collab + w4·direct_follow + w5·c
 ```
 
 Weights are passed as flags to `push-scores.py` and must sum to 1.0.
-Before tuning, use equal weights (0.20 each). After tuning, use the
-values reported by `tune-weights.py`.
+Equal weights (0.20 each) are the default and the current baseline; with
+no validation set there is nothing to tune them against, so any change
+should come from a deliberate judgement about which signals you trust.
 
 ---
 
@@ -112,38 +122,7 @@ enough for reliable weight tuning.
 
 ---
 
-## Step 2 — `tune-weights.py`
-
-Reads pair scores from the local CSV and the Last.fm similar artists
-validation set from the database. Grid-searches over weight combinations
-to find the weights that best predict which artists Last.fm considers
-similar. Reports Precision@K and NDCG@K, and prints a ready-to-use
-`push-scores.py` command with the best weights.
-
-No DB writes.
-
-```bash
-python scripts/tune-weights.py
-python scripts/tune-weights.py --step=0.1       # coarser grid, faster
-python scripts/tune-weights.py --step=0.05      # default (~10,600 combos)
-python scripts/tune-weights.py --top-k=10       # default
-python scripts/tune-weights.py --lfm-top=50     # use top-50 LFM similar as positives (default)
-python scripts/tune-weights.py --debug          # show progress during grid search
-```
-
-**`--step`** controls grid granularity. Start coarse (`0.1`) to sanity-check,
-then refine (`0.05` or smaller).
-
-**`--lfm-top`** controls how many of Last.fm's similar artists count as
-positives per source artist. Lower values use only the most confident
-LFM matches.
-
-**`--min-validation`** skips source artists with fewer than N LFM positives
-in our directory (default 3). Too few positives makes Precision@K noisy.
-
----
-
-## Step 3 — `push-scores.py`
+## Step 2 — `push-scores.py`
 
 Reads the local CSV, applies weights, extracts the top-10 recommendations
 per artist, and writes them to `artist_similarity_scores` in the database.
@@ -152,7 +131,7 @@ per artist, and writes them to `artist_similarity_scores` in the database.
 # Equal weights (default):
 python scripts/push-scores.py
 
-# With weights from tune-weights.py:
+# With hand-chosen weights:
 python scripts/push-scores.py \
   --genre=0.30 --mb-tag=0.25 --mb-collab=0.15 \
   --direct-follow=0.10 --co-follow=0.20
@@ -160,9 +139,6 @@ python scripts/push-scores.py \
 # Dry run (compute but don't write):
 DRY_RUN=1 python scripts/push-scores.py
 ```
-
-`tune-weights.py` prints the exact `push-scores.py` command to run at the
-end of its output — copy-paste it directly.
 
 ---
 
@@ -193,14 +169,11 @@ are in `scripts/lib/scoring.py`. All three scripts import from it.
 - If you re-run the enrichment pipeline (adding new MB tags, follow edges,
   etc.), re-run `compute-scores.py` to regenerate the local CSV, then
   push the updated scores.
-- The `lastfm_similar_artists` validation set is deliberately kept separate
-  from the scoring signals — it is used only for tuning.
 - `compute-scores.mjs` (Node.js) is superseded by the Python pipeline
   and no longer maintained.
 - An even earlier recommendation engine (`recommender/graph.py`,
   `recommend.py`, writing to an `artist_recommendations` table that no
   longer exists) is documented in `MATCHING.md` under "legacy".
-- Scores pushed by `push-scores.py` are served by
-  `src/app/api/discover/route.ts`, which reads
-  `artist_similarity_scores` first and falls back to live Last.fm
-  lookups for artists not in the directory.
+- Scores pushed by `push-scores.py` are read from
+  `artist_similarity_scores` and surfaced as the "similar artists"
+  section of each artist page.

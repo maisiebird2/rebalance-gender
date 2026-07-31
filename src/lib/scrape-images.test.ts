@@ -12,8 +12,7 @@ import {
   SCRAPE_ONLY_PLATFORMS,
 } from "./scrape-images";
 
-const LASTFM_PLACEHOLDER =
-  "https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg";
+const QOBUZ_PLACEHOLDER = "https://static-www.qobuz.com/img/qobuz_logo_dark.svg";
 
 // ── Fake Supabase admin client ───────────────────────────────────────
 // scrapeArtistImages() makes these calls:
@@ -97,7 +96,7 @@ function stubFetch(map: Record<string, FetchKind>) {
       kind === "image"
         ? ogHtml("https://cdn.example/pic.jpg")
         : kind === "placeholder"
-          ? ogHtml(LASTFM_PLACEHOLDER)
+          ? ogHtml(QOBUZ_PLACEHOLDER)
           : `<html><head><title>no image here</title></head></html>`;
     return { ok: true, status: 200, body: null, text: async () => html };
   });
@@ -500,18 +499,18 @@ describe("scrapeArtistImages — URL-change handling", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("rejects a Last.fm default placeholder as a no-image result rather than storing it", async () => {
+  it("rejects a known platform placeholder as a no-image result rather than storing it", async () => {
     const { client, calls } = makeClient({
-      artist: approvedArtist([{ platform: "lastfm", url: "https://lastfm/artist" }]),
+      artist: approvedArtist([{ platform: "qobuz", url: "https://qobuz/artist" }]),
       images: [],
       failures: [],
     });
-    stubFetch({ "https://lastfm/artist": "placeholder" });
+    stubFetch({ "https://qobuz/artist": "placeholder" });
 
     const result = await scrapeArtistImages("a1", client);
 
     expect(result.stored).toEqual([]);
-    expect(result.failed).toEqual(["lastfm"]);
+    expect(result.failed).toEqual(["qobuz"]);
     // No image stored; the no-image result is recorded in harvest_failures.
     expect(calls.upserts.some((u) => u.table === "artist_images")).toBe(false);
     const failUpsert = calls.upserts.find((u) => u.table === "harvest_failures");
@@ -535,19 +534,15 @@ describe("scrapeArtistImages — URL-change handling", () => {
 });
 
 describe("isPlaceholderImageUrl", () => {
-  it("matches the Last.fm default star avatar at any size variant", () => {
-    expect(isPlaceholderImageUrl(LASTFM_PLACEHOLDER)).toBe(true);
-    expect(
-      isPlaceholderImageUrl(
-        "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png"
-      )
-    ).toBe(true);
+  it("matches a known placeholder at any variant", () => {
+    expect(isPlaceholderImageUrl(QOBUZ_PLACEHOLDER)).toBe(true);
+    expect(isPlaceholderImageUrl("https://static-www.qobuz.com/img/qobuz_logo.png")).toBe(true);
   });
 
   it("does not match a real image URL", () => {
     expect(isPlaceholderImageUrl("https://cdn.example/real-photo.jpg")).toBe(false);
     expect(
-      isPlaceholderImageUrl("https://lastfm.freetls.fastly.net/i/u/ar0/abc123realhash.jpg")
+      isPlaceholderImageUrl("https://static.qobuz.com/images/covers/real-artist-photo.jpg")
     ).toBe(false);
   });
 });

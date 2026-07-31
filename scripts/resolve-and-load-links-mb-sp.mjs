@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 /**
- * resolve-and-load-links-lf-mb-sp.mjs
+ * resolve-and-load-links-mb-sp.mjs
  *
  * Automated pipeline:
- *   1. Search Last.fm, MusicBrainz, and Spotify for each artist by name
+ *   1. Search MusicBrainz and Spotify for each artist by name
  *   2. Score and classify candidates (best match / close match / tie / pending)
  *   3. Upsert results to the pending_artist_links staging table
  *   4. Export a full CSV record of all staged candidates
  *   5. Load every 'best match' row into artist_links and mark it 'loaded'
  *
+ * Last.fm was the third service here (hence the old -lf- in the filename).
+ * It was dropped when Last.fm data was removed from the directory — see
+ * supabase_migration_remove_lastfm_data.sql. Existing Last.fm links are
+ * retained, but nothing consumes them, so there is no reason to resolve
+ * new ones.
+ *
  * Requires in .env.local:
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
- *   LASTFM_API_KEY
  *   SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
  *
  * Requires the api_response_cache table (external API responses are memoized
@@ -19,13 +24,13 @@
  * before first use.
  *
  * Usage:
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --artist "Bicep"   # one artist
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --limit 10         # first N artists only
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --service lastfm   # one service only
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --force            # re-process already-resolved pairs
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --dry-run          # score only, no DB writes or CSV
- *   node scripts/resolve-and-load-links-lf-mb-sp.mjs --no-load          # stage candidates but skip loading into artist_links
+ *   node scripts/resolve-and-load-links-mb-sp.mjs
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --artist "Bicep"       # one artist
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --limit 10             # first N artists only
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --service musicbrainz  # one service only
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --force                # re-process already-resolved pairs
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --dry-run              # score only, no DB writes or CSV
+ *   node scripts/resolve-and-load-links-mb-sp.mjs --no-load              # stage candidates but skip loading into artist_links
  */
 // FIRST import: registers the HTTP/1.1-only dispatcher process-wide
 // before anything else can fetch — see that module for why.
@@ -53,7 +58,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 })()
 const REQUIRED_VARS = [
   'NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SECRET_KEY',
-  'LASTFM_API_KEY', 'SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET',
+  'SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET',
 ]
 const missing = REQUIRED_VARS.filter(k => !process.env[k])
 if (missing.length) {
@@ -74,7 +79,7 @@ const OPT_SERVICE = getArg('--service')
 const OPT_FORCE   = hasFlag('--force')
 const OPT_DRY_RUN = hasFlag('--dry-run')
 const OPT_NO_LOAD = hasFlag('--no-load')
-const ALL_SERVICES = ['lastfm', 'musicbrainz', 'spotify']
+const ALL_SERVICES = ['musicbrainz', 'spotify']
 if (OPT_SERVICE && !ALL_SERVICES.includes(OPT_SERVICE)) {
   console.error(`Unknown service "${OPT_SERVICE}". Choose from: ${ALL_SERVICES.join(', ')}`)
   process.exit(1)
@@ -127,7 +132,6 @@ function makeThrottle(ms) {
     return new Promise(r => setTimeout(() => { last = Date.now(); r() }, wait))
   }
 }
-const throttleLfm     = makeThrottle(260)   // Last.fm: ~4 req/s
 const throttleMb      = makeThrottle(1100)  // MusicBrainz: 1 req/s (strict)
 const throttleSpotify = makeThrottle(100)   // Spotify: generous
 // ── Scoring ───────────────────────────────────────────────────────────────────
@@ -204,6 +208,10 @@ function scoreBio(ours, theirs) {
   if (!kO.size || !kT.size) return null
   return Math.min([...kO].filter(w => kT.has(w)).length / kO.size, 1.0)
 }
+// `listeners` was Last.fm's monthly-listener count, the only source that
+// ever supplied it; MusicBrainz and Spotify both pass null. The branch is
+// kept because the signal is platform-agnostic — any future collector with
+// a listener count can feed it — but nothing populates it today.
 function scorePopularity(ourBio, popularity, listeners) {
   let score = null
   if (popularity != null) {
@@ -272,55 +280,10 @@ function assignStatuses(ourName, candidates) {
           : 'pending',
   }))
 }
-function buildUrl(service, externalId, externalName) {
-  if (service === 'lastfm')      return `https://www.last.fm/music/${encodeURIComponent(externalName)}`
+function buildUrl(service, externalId) {
   if (service === 'musicbrainz') return `https://musicbrainz.org/artist/${externalId}`
   if (service === 'spotify')     return `https://open.spotify.com/artist/${externalId}`
   throw new Error(`Unknown service: ${service}`)
-}
-// ── API: Last.fm ──────────────────────────────────────────────────────────────
-async function lfmRequest(params) {
-  await throttleLfm()
-  const qs = new URLSearchParams({ ...params, api_key: process.env.LASTFM_API_KEY, format: 'json' })
-  const res = await fetch(`https://ws.audioscrobbler.com/2.0/?${qs}`)
-  if (!res.ok) throw new Error(`Last.fm HTTP ${res.status}`)
-  return res.json()
-}
-async function lfmTopTags(artistName) {
-  const ck = `tags:${artistName}`
-  const hit = await cacheGet('lastfm_tags', ck)
-  if (hit !== null) return hit
-  try {
-    const data = await lfmRequest({ method: 'artist.getTopTags', artist: artistName, autocorrect: '1' })
-    if (data.error) { await cacheSet('lastfm_tags', ck, []); return [] }
-    const tags = (data?.toptags?.tag ?? []).slice(0, 10).map(t => t.name.toLowerCase())
-    await cacheSet('lastfm_tags', ck, tags)
-    return tags
-  } catch { return [] }
-}
-async function searchLastfm(artistName, limit) {
-  const ck = `search:${artistName}:${limit}`
-  const hit = await cacheGet('lastfm_search', ck)
-  if (hit !== null) return hit
-  const data = await lfmRequest({ method: 'artist.search', artist: artistName, limit: String(limit) })
-  let raw = data?.results?.artistmatches?.artist ?? []
-  if (!Array.isArray(raw)) raw = [raw]
-  const candidates = []
-  for (const a of raw) {
-    const name      = a.name ?? ''
-    const listeners = parseInt(a.listeners ?? '0', 10) || null
-    const tags      = await lfmTopTags(name)
-    candidates.push({
-      external_id:   name,   // Last.fm uses the canonical name as its identifier
-      external_name: name,
-      location:      null,
-      bio:           null,
-      listeners:     listeners && listeners > 0 ? listeners : null,
-      api_data:      { name, listeners, mbid: a.mbid ?? null, url: a.url ?? null, tags },
-    })
-  }
-  await cacheSet('lastfm_search', ck, candidates)
-  return candidates
 }
 // ── API: MusicBrainz ──────────────────────────────────────────────────────────
 async function searchMusicBrainz(artistName, limit) {
@@ -414,8 +377,7 @@ async function searchSpotify(artistName, limit) {
 // ── Per-service resolution ─────────────────────────────────────────────────────
 async function resolveService(artist, service) {
   let raw
-  if (service === 'lastfm')           raw = await searchLastfm(artist.name, CANDIDATES_PER_SERVICE)
-  else if (service === 'musicbrainz') raw = await searchMusicBrainz(artist.name, CANDIDATES_PER_SERVICE)
+  if (service === 'musicbrainz')      raw = await searchMusicBrainz(artist.name, CANDIDATES_PER_SERVICE)
   else if (service === 'spotify')     raw = await searchSpotify(artist.name, CANDIDATES_PER_SERVICE)
   const scored = raw.map(c => ({
     ...c,
@@ -514,7 +476,7 @@ async function upsertCandidates(artistId, service, candidates) {
       candidate_rank:   i + 1,
       external_id:      c.external_id,
       external_name:    c.external_name,
-      url:              buildUrl(service, c.external_id, c.external_name),
+      url:              buildUrl(service, c.external_id),
       confidence:       c.scores.confidence,
       score_name:       c.scores.score_name,
       score_genre:      null,
@@ -633,7 +595,7 @@ async function exportCsv() {
 }
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
-  log('Starting resolve-and-load-links-lf-mb-sp' + (OPT_DRY_RUN ? ' (DRY RUN)' : '') + '…')
+  log('Starting resolve-and-load-links-mb-sp' + (OPT_DRY_RUN ? ' (DRY RUN)' : '') + '…')
   log('Fetching artists from database…')
   let artists = await fetchArtists()
   if (OPT_ARTIST) {

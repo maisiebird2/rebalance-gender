@@ -33,8 +33,12 @@ export function platformLabel(platforms: Platform[], key: string): string {
  * (src/app/artist/[id]/page.tsx). The underlying links are still stored and
  * used everywhere else — enrichment, genre harvesting, admin QC —
  * and remain editable in the submit/edit/revise forms; they are simply not
- * surfaced as profile links to visitors. Last.fm and MusicBrainz are directory
- * data sources rather than links a visitor would want to click through to.
+ * surfaced as profile links to visitors. MusicBrainz is a directory data
+ * source rather than a link a visitor would want to click through to.
+ *
+ * Last.fm is a leftover: its data was dropped from the directory (see
+ * supabase_migration_remove_lastfm_data.sql) and nothing consumes a Last.fm
+ * link any more, but existing links are retained, so they still need hiding.
  */
 export const PLATFORMS_HIDDEN_ON_ARTIST_PAGE: ReadonlySet<string> = new Set([
   "lastfm",

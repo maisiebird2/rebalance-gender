@@ -2,8 +2,8 @@
 """
 Find, score, and auto-classify API candidates for each artist.
 
-For each artist, searches Last.fm, MusicBrainz, and Spotify, scores
-candidates, then automatically assigns a status to each:
+For each artist, searches MusicBrainz and Spotify, scores candidates,
+then automatically assigns a status to each:
 
     'best match'  — single winner selected by tie-breaking (load_links.py
                     will load these automatically)
@@ -20,14 +20,13 @@ Usage:
     python resolve_candidates.py                   # all artists
     python resolve_candidates.py --artist "Bicep"  # single artist (for testing)
     python resolve_candidates.py --limit 10        # first N artists
-    python resolve_candidates.py --service lastfm  # one service only
+    python resolve_candidates.py --service musicbrainz  # one service only
     python resolve_candidates.py --force           # re-process already-resolved artists
 """
 import argparse
 import json
 import logging
 import sys
-import urllib.parse
 import psycopg2
 import psycopg2.extras
 
@@ -36,7 +35,7 @@ from recommender import config, db
 # Suppress noisy "uncaught attribute type-id" messages from the MusicBrainz parser
 logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
 from recommender import scoring
-from recommender.collectors import lastfm, musicbrainz, spotify
+from recommender.collectors import musicbrainz, spotify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +44,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-ALL_SERVICES = ["lastfm", "musicbrainz", "spotify"]
+ALL_SERVICES = ["musicbrainz", "spotify"]
 
 # Candidates at or above this threshold that aren't the auto-selected winner
 # are marked 'close match' for optional manual review.
@@ -55,9 +54,7 @@ CLOSE_MATCH_THRESHOLD = 0.95
 # ── URL construction ──────────────────────────────────────────────────────────
 
 def build_url(service: str, external_id: str, external_name: str) -> str:
-    if service == "lastfm":
-        return f"https://www.last.fm/music/{urllib.parse.quote(external_name, safe='')}"
-    elif service == "musicbrainz":
+    if service == "musicbrainz":
         return f"https://musicbrainz.org/artist/{external_id}"
     elif service == "spotify":
         return f"https://open.spotify.com/artist/{external_id}"
@@ -265,23 +262,6 @@ def upsert_candidates(conn, artist_id: str, service: str, scored_candidates: lis
 
 # ── Per-service resolution ─────────────────────────────────────────────────────
 
-def resolve_lastfm(artist: dict, limit: int) -> list[dict]:
-    candidates = lastfm.search_candidates(artist["name"], limit=limit)
-    scored = []
-    for c in candidates:
-        s = scoring.score_candidate(
-            our_name=artist["name"],
-            our_location=artist.get("location"),
-            our_bio=artist.get("bio"),
-            candidate_name=c["external_name"],
-            candidate_location=c.get("location"),
-            candidate_bio=c.get("bio"),
-            candidate_listeners=c.get("listeners"),
-        )
-        scored.append({**c, "scores": s})
-    return sorted(scored, key=lambda x: x["scores"]["confidence"], reverse=True)
-
-
 def resolve_musicbrainz(artist: dict, limit: int) -> list[dict]:
     candidates = musicbrainz.search_candidates(artist["name"], limit=limit)
     scored = []
@@ -316,7 +296,6 @@ def resolve_spotify(artist: dict, limit: int) -> list[dict]:
 
 
 RESOLVERS = {
-    "lastfm":       resolve_lastfm,
     "musicbrainz":  resolve_musicbrainz,
     "spotify":      resolve_spotify,
 }

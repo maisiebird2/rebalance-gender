@@ -7,9 +7,16 @@ current state of the database (June 2026, 1,478 approved artists).
 
 ## Diagnosis
 
-The validation set is solid: 382 artists with an average of 23 resolved
-Last.fm similar artists each. That's enough to produce meaningful tuning
-results. The problem is the signals, not the evaluation.
+> **Superseded in part (2026-07-30).** The diagnosis below was written when
+> a Last.fm similar-artist validation set existed (382 artists, ~23 resolved
+> similar artists each) and weights could be tuned against it. That set and
+> `tune-weights.py` were removed with the rest of the Last.fm data — see
+> `supabase_migration_remove_lastfm_data.sql`. The Precision@K figures quoted
+> here are no longer reproducible, and there is currently no way to evaluate
+> weight choices. The signal-coverage priorities below still stand on their
+> own merits.
+
+The problem was the signals, not the evaluation.
 
 | Signal | Coverage | Root cause |
 |---|---|---|
@@ -47,7 +54,7 @@ artist with a SC link and writes directed edges to `sc_follow_edges`.
 
 **Impact: high. Effort: run one script.**
 
-433 artists have MusicBrainz links (added by `resolve-and-load-links-lf-mb-sp.mjs`
+433 artists have MusicBrainz links (added by `resolve-and-load-links-mb-sp.mjs`
 — external platform matching, now Phase 3 in PIPELINE.md). None have been enriched yet. Running Phase 7b populates both
 `mb_tags` (folksonomy tags from the MusicBrainz community, e.g. "minimal techno",
 "Berlin school", "electroacoustic") and `mb_collaborations` (artist relationships
@@ -69,18 +76,22 @@ node scripts/harvest-genres-mb.mjs
 
 ---
 
-## Priority 3 — Harvest genres from Last.fm and Spotify
+## Priority 3 — Harvest genres from Spotify
 
-**Impact: high for genre coverage. Effort: run three scripts.**
+**Impact: high for genre coverage. Effort: run two scripts.**
 
 The current genre signal covers only 312 artists, almost entirely from the
-initial CSV import. The pipeline already has scripts to harvest genres from
-Last.fm and Spotify, which between them cover 489 and 597 artists respectively.
-Running Phases 7e–7g will dramatically expand coverage and improve the quality
-of the genre signal.
+initial CSV import. The pipeline has scripts to harvest genres from Spotify,
+covering 597 artists. Running Phases 7f–7g will expand coverage and improve
+the quality of the genre signal.
+
+(Last.fm was the other harvester here, covering 489 artists. It and every
+genre it contributed were removed — see
+`supabase_migration_remove_lastfm_data.sql` — so genre coverage is now
+*lower* than the 312 quoted above, and Spotify plus the HÖR and Bandcamp
+sources are what remain to close the gap.)
 
 ```bash
-npm run harvest-genres-lastfm    # 7e — requires LASTFM_API_KEY
 npm run harvest-genres-spotify   # 7f — requires SPOTIFY_CLIENT_ID/SECRET
 npm run integrate-harvested-genres  # 7g — promotes to artist_genres
 ```
@@ -100,40 +111,18 @@ where artist_id in (select id from artists where directory_status = 'approved');
 
 ---
 
-## Priority 4 — Complete the Last.fm similar artists fetch
-
-**Impact: small (expands validation set slightly). Effort: run one script.**
-
-489 artists have Last.fm links; 419 have been fetched. Running the script again
-closes the 70-artist gap.
-
-```bash
-npm run fetch-lastfm-similar
-```
-
-After running MusicBrainz enrichment (Priority 2), also run with `--resolve-only`
-to backfill `similar_artist_id` for any similar artists that can now be matched
-via a newly added MBID:
-
-```bash
-npm run fetch-lastfm-similar -- --resolve-only
-```
-
----
-
 ## After all priorities are complete
 
 Re-run the full scoring pipeline from scratch:
 
 ```bash
 python scripts/compute-scores.py --refresh   # re-fetch all signals, update cache
-python scripts/tune-weights.py               # re-tune with real data
 ```
 
-Then push the new scores:
+Then push the new scores with hand-chosen weights (there is no tuning step
+any more — see the Diagnosis note):
 
 ```bash
-# Use the weights printed by tune-weights.py:
 python scripts/push-scores.py --genre=X --mb-tag=X --mb-collab=X --direct-follow=X --co-follow=X
 ```
 
@@ -147,15 +136,17 @@ truncate table artist_similarity_scores;
 
 ## What to expect
 
-With all signals populated, a reasonable target is Precision@10 in the
-10–25% range. The current 4.5% is almost entirely explained by empty signal
-tables, not a fundamental problem with the approach.
+With all signals populated, a reasonable target was Precision@10 in the
+10–25% range, against a then-current 4.5% that was almost entirely explained
+by empty signal tables rather than a fundamental problem with the approach.
+These numbers are historical: measuring Precision@K needs a validation set,
+and there isn't one any more.
 
 If scores remain low after full enrichment, the most likely explanation is
-that the MB and LFM tag vocabularies don't overlap well enough for Jaccard
-to work (e.g. one artist is tagged "techno" on MB and another is tagged
-"electronic" on LFM — both mean roughly the same thing but score zero
-similarity). In that case, the next step would be to canonicalise the MB
+that the MB and Spotify tag vocabularies don't overlap well enough for
+Jaccard to work (e.g. one artist is tagged "techno" on MB and another is
+tagged "electronic" on Spotify — both mean roughly the same thing but score
+zero similarity). In that case, the next step would be to canonicalise the MB
 tag vocabulary through `integrate-harvested-genres.mjs` and use the
 `artist_genres` table for both the genre signal and the tag signal, rather
 than raw `mb_tags`.
@@ -164,11 +155,9 @@ than raw `mb_tags`.
 
 ## Potential future signal
 
-Once the existing signals are populated and tuned, consider adding raw
-Last.fm tags as a sixth signal directly in `scoring.py`, separate from
-the canonical genre pipeline. Last.fm tags are user-generated and more
-granular than the normalised genre list — useful for capturing subgenre
-nuance that `integrate-harvested-genres.mjs` currently filters out. This
-would require a new `lastfm_tags` table (similar to `mb_tags`) populated
-by a variant of `harvest-genres-lastfm.mjs` that skips the normalisation
-step.
+This section previously proposed raw Last.fm tags as a sixth signal, kept
+outside the canonical genre pipeline to preserve subgenre nuance. That is
+no longer on the table — Last.fm data was dropped from the directory
+entirely (see `supabase_migration_remove_lastfm_data.sql`). The equivalent
+idea using a source we still trust would be raw SoundCloud `tag_list`
+values, which `integrate-harvested-genres.mjs` currently normalises away.

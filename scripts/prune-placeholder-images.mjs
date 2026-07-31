@@ -6,10 +6,10 @@
 // platform default placeholders, some got scraped and stored (and
 // re-hosted) as if they were real profile photos:
 //
-//   - Last.fm's default "star" avatar (og:image scrape) — any
-//     artist_images.source_url containing the well-known placeholder
-//     hash. Rejected going forward by isPlaceholderImageUrl in
-//     src/lib/scrape-images.ts.
+//   - Qobuz's logo, served as og:image for artists with no photo —
+//     any artist_images.source_url matching the logo filename stem.
+//     Rejected going forward by isPlaceholderImageUrl in
+//     src/lib/images/placeholders.ts.
 //   - SoundCloud's generic grey default_avatar (returned as avatar_url
 //     for accounts with no photo). Rejected going forward by
 //     isDefaultAvatarUrl in scripts/lib/soundcloud.mjs.

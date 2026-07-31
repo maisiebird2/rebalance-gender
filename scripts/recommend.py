@@ -29,7 +29,6 @@ def get_recommendations(conn, *, artist_id: str | None = None,
             "id":               str,
             "name":             str,
             "weight":           float,   # combined score 0–1
-            "lastfm_score":     float,
             "musicbrainz_score": float,
             "spotify_score":    float,
         }
@@ -55,7 +54,6 @@ def get_recommendations(conn, *, artist_id: str | None = None,
                 a.id::text        AS id,
                 a.name            AS name,
                 r.weight,
-                r.lastfm_score,
                 r.musicbrainz_score,
                 r.spotify_score
             FROM artist_recommendations r
@@ -93,8 +91,7 @@ def main():
         line = f"{i:>2}. {r['name']:<35} score={r['weight']:.3f}"
         if args.explain:
             line += (
-                f"  [lfm={r['lastfm_score']:.2f}"
-                f" mb={r['musicbrainz_score']:.2f}"
+                f"  [mb={r['musicbrainz_score']:.2f}"
                 f" sp={r['spotify_score']:.2f}]"
             )
         print(line)

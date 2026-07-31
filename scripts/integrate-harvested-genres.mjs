@@ -30,7 +30,7 @@
 //      resolved genre. This marks the row as "processed" so
 //      re-runs skip it.
 //
-// Multiple sources (MusicBrainz, Last.fm, Spotify) may produce
+// Multiple sources (MusicBrainz, Spotify, Bandcamp, HÖR) may produce
 // the same (artist_id, canonical_genre) pair. The first source
 // to be integrated inserts the artist_genres row; subsequent
 // sources just get their genre_id set and are otherwise a no-op.
@@ -69,7 +69,7 @@
 //   node scripts/integrate-harvested-genres.mjs
 //   node scripts/integrate-harvested-genres.mjs --limit=50
 //   node scripts/integrate-harvested-genres.mjs --name="nina kraviz"
-//   node scripts/integrate-harvested-genres.mjs --source=lastfm
+//   node scripts/integrate-harvested-genres.mjs --source=musicbrainz
 //   node scripts/integrate-harvested-genres.mjs --debug
 //   DRY_RUN=1 node scripts/integrate-harvested-genres.mjs
 //
@@ -105,7 +105,7 @@ const sourceArg = args.find(a => a.startsWith('--source='))
 
 const OPT_LIMIT  = limitArg  ? parseInt(limitArg.split('=')[1], 10) : null
 const OPT_NAME   = nameArg   ? nameArg.split('=').slice(1).join('=').toLowerCase() : null
-const OPT_SOURCE = sourceArg ? sourceArg.split('=')[1].toLowerCase() : null   // 'lastfm' | 'musicbrainz' | 'spotify'
+const OPT_SOURCE = sourceArg ? sourceArg.split('=')[1].toLowerCase() : null   // 'musicbrainz' | 'spotify' | 'bandcamp' | 'hoer'
 
 // ------------------------------------------------------------
 // Load .env.local

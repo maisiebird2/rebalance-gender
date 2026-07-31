@@ -1,12 +1,17 @@
 # External Platform Matching — Two Pipelines
 
 The repo contains **two implementations** of the same task: finding each
-directory artist's profile on Last.fm, MusicBrainz, and Spotify, scoring
-candidate matches, and writing the winners to `artist_links`.
+directory artist's profile on MusicBrainz and Spotify, scoring candidate
+matches, and writing the winners to `artist_links`.
+
+Both pipelines searched Last.fm as a third service until 2026-07-30, when
+Last.fm data was removed from the directory (see
+`supabase_migration_remove_lastfm_data.sql`). Existing Last.fm links are
+retained; no new ones are resolved.
 
 | | Pipeline | Status |
 |---|---|---|
-| **A** | `resolve-and-load-links-lf-mb-sp.mjs` (Node) | **Current** — documented as Phase 3 in `PIPELINE.md` (formerly Phase 6; moved up 2026-07-03) |
+| **A** | `resolve-and-load-links-mb-sp.mjs` (Node) | **Current** — documented as Phase 3 in `PIPELINE.md` (formerly Phase 6; moved up 2026-07-03) |
 | **B** | `resolve_candidates.py` → `review_candidates.py` / `load_links.py` + `recommender/` package (Python) | **Legacy** — imported 2026-06-22 (commit `19c8a7e`) from an earlier standalone project and not modified since |
 
 How we know A is current: both landed in the same commit on 2026-06-22
@@ -57,20 +62,19 @@ signal is unavailable:
 | name | 0.67 | token_set_ratio × F1 token-coverage (coverage penalises substring matches like "1111" vs "Quarteto 1111") |
 | location | 0.20 | token overlap coefficient on city/region/country tokens |
 | bio | 0.09 | asymmetric keyword overlap (our bio keywords found in candidate description) |
-| popularity | 0.04 | plausibility check — very famous candidates (Spotify popularity > 80, Last.fm > 5M listeners) are penalised as likely mainstream mismatches |
+| popularity | 0.04 | plausibility check — very famous candidates (Spotify popularity > 80, or > 5M listeners) are penalised as likely mainstream mismatches. The listener half of this is now inert: Last.fm was the only source that supplied a listener count |
 
 **Tie-breaking** (when multiple candidates share top confidence):
 exact case-insensitive name match → shortest candidate name → give up
 (status `tie` for manual resolution).
 
-**Candidate sources** — Last.fm `artist.search` (+ top tags), MusicBrainz
-`/ws/2/artist` search (area/begin-area and disambiguation feed the
-location/bio signals), Spotify `/v1/search` (genres, popularity,
-followers). 5 candidates per service.
+**Candidate sources** — MusicBrainz `/ws/2/artist` search (area/begin-area
+and disambiguation feed the location/bio signals), Spotify `/v1/search`
+(genres, popularity, followers). 5 candidates per service.
 
 ---
 
-## Pipeline A (current) — `resolve-and-load-links-lf-mb-sp.mjs`
+## Pipeline A (current) — `resolve-and-load-links-mb-sp.mjs`
 
 One script does the whole flow end to end:
 
@@ -87,16 +91,16 @@ One script does the whole flow end to end:
 
 ```bash
 npm run resolve-and-load-links                       # full run
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --artist "Bicep"   # one artist
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --limit 10         # random sample of N
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --service lastfm   # one service
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --force            # re-process resolved pairs
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --dry-run          # score + print, no writes
-node scripts/resolve-and-load-links-lf-mb-sp.mjs --no-load          # stage only, skip step 5
+node scripts/resolve-and-load-links-mb-sp.mjs --artist "Bicep"   # one artist
+node scripts/resolve-and-load-links-mb-sp.mjs --limit 10         # random sample of N
+node scripts/resolve-and-load-links-mb-sp.mjs --service musicbrainz # one service
+node scripts/resolve-and-load-links-mb-sp.mjs --force            # re-process resolved pairs
+node scripts/resolve-and-load-links-mb-sp.mjs --dry-run          # score + print, no writes
+node scripts/resolve-and-load-links-mb-sp.mjs --no-load          # stage only, skip step 5
 ```
 
 Requires in `.env.local`: `NEXT_PUBLIC_SUPABASE_URL`,
-`SUPABASE_SECRET_KEY`, `LASTFM_API_KEY`, `SPOTIFY_CLIENT_ID`,
+`SUPABASE_SECRET_KEY`, `SPOTIFY_CLIENT_ID`,
 `SPOTIFY_CLIENT_SECRET`. Talks to the DB via the Supabase JS client
 (REST), not a direct Postgres connection.
 
@@ -116,8 +120,8 @@ Behaviour worth knowing:
   the fresh auto-classification. In practice this only bites with
   `--force`, since already-resolved pairs are otherwise skipped, but it
   differs from the Python version, which also preserves `approved`.
-- **Response cache (DB-backed)**: External API responses (Last.fm
-  search/tags, MusicBrainz search, Spotify search) are memoized in the
+- **Response cache (DB-backed)**: External API responses (MusicBrainz
+  search, Spotify search) are memoized in the
   `api_response_cache` table — namespaced rows keyed `(namespace,
   cache_key)` with a `payload jsonb` and `fetched_at`. This replaced the
   old `.cache/` disk-JSON cache (2026-07-05) to satisfy the project rule
@@ -138,11 +142,11 @@ Behaviour worth knowing:
   `build-soundcloud-follow-graph.mjs` (see PIPELINE.md → "Move
   `artist_enrichment.raw_data`…"; `find-sc-followee-duplicates.sql` reads
   the SoundCloud permalink back from `soundcloud_user`). Any manual
-  cleanup of the ephemeral search namespaces (lastfm/mb/spotify) must be
-  scoped by `namespace` so these durable archival rows survive.
-- **Rate limits**: Last.fm ~4 req/s, MusicBrainz 1 req/s (strict),
-  Spotify 10 req/s. A full run over ~1,450 artists is dominated by the
-  MusicBrainz throttle.
+  cleanup of the ephemeral search namespaces (mb/spotify) must be
+  scoped by `namespace` so these durable archival rows survive. The
+  `lastfm_tags` / `lastfm_search` namespaces were deleted outright.
+- **Rate limits**: MusicBrainz 1 req/s (strict), Spotify 10 req/s. A full
+  run over ~1,450 artists is dominated by the MusicBrainz throttle.
 
 ### The review gap
 
@@ -171,8 +175,8 @@ recommender/
   db.py                    psycopg2 helpers; upserts for links, edges, audio features
   scoring.py               the original candidate scoring (rapidfuzz)
   cache.py                 disk JSON cache (.cache/)
-  graph.py                 4-pass graph builder → artist_recommendations
-  collectors/              lastfm.py, musicbrainz.py, spotify.py
+  graph.py                 3-pass graph builder → artist_recommendations
+  collectors/              musicbrainz.py, spotify.py
 ```
 
 Environment: direct Postgres via `SUPABASE_DB_URL` (psycopg2), loaded
@@ -197,7 +201,7 @@ Schema compatibility with today's database:
 |---|---|---|
 | `resolve_candidates.py` | Yes | Same `pending_artist_links` writes as the Node script; also preserves `approved` on re-runs |
 | `review_candidates.py export/import/stats` | Yes | Review loop over `pending_artist_links` |
-| `review_candidates.py promote` | **No** | Writes `artist_links(lastfm_name, mbid, spotify_id)` with `ON CONFLICT (artist_id)` — an older schema. Would fail against the current `(artist_id, platform, url)` table. Use `load_links.py` instead. |
+| `review_candidates.py promote` | **No** | Writes `artist_links(mbid, spotify_id)` with `ON CONFLICT (artist_id)` — an older schema. Would fail against the current `(artist_id, platform, url)` table. Use `load_links.py` instead. |
 | `load_links.py` | Yes | Uses current `(artist_id, platform, url)` schema; marks rows `loaded`. Only loads `best match` — to load `approved` rows it would need a one-word change to its WHERE clause. |
 | `recommend.py`, `recommender/graph.py` | **No** | Read/write `artist_recommendations` and `artist_audio_features`, which don't exist in the current schema |
 
@@ -211,11 +215,12 @@ for `recommender/graph.py`).
 replaced by the current scoring pipeline (`SCORING.md`) and
 `/api/discover`:
 
-- Pass 1: resolve Last.fm/MB/Spotify IDs per artist
-- Pass 2: Last.fm `artist.getSimilar` → weighted edges
-- Pass 3: MusicBrainz artist relations → weighted edges
-- Pass 4: Spotify audio features (danceability, energy, valence, …) →
+- Pass 1: resolve MB/Spotify IDs per artist
+- Pass 2: MusicBrainz artist relations → weighted edges
+- Pass 3: Spotify audio features (danceability, energy, valence, …) →
   cosine similarity on already-connected pairs
+- (There was a Last.fm `artist.getSimilar` pass, the heaviest-weighted
+  signal, before the MusicBrainz one. Removed 2026-07-30.)
 - Fixed weights from `config.py`; edges written bidirectionally to
   `artist_recommendations`; `recommend.py` queried them
   (`--explain` showed the per-source breakdown)

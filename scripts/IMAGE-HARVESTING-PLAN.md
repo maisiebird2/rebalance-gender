@@ -108,7 +108,8 @@ code — that part is genuinely platform-specific — and delegates the decision
 
 Fold the two placeholder rules into one registry keyed by platform:
 `isDefaultAvatarUrl` (SoundCloud's grey default, currently in `sync-soundcloud`)
-and `isPlaceholderImageUrl` (the Last.fm hash, currently in the lib). Today the
+and `isPlaceholderImageUrl` (the platform placeholder patterns, currently in
+the lib). Today the
 API path treats SoundCloud's grey placeholder as a failure while a scrape would
 store it as a real photo; one registry closes that gap.
 

@@ -13,7 +13,7 @@
 //
 // Auth: OAuth 2 Client Credentials (no per-user login required,
 // all data is public). Mirrors the pattern in
-// resolve-and-load-links-lf-mb-sp.mjs.
+// resolve-and-load-links-mb-sp.mjs.
 //
 // Rate limit: Spotify's public API allows ~30 req/s for client
 // credentials flows, so a 50 ms delay is used. A full run over
