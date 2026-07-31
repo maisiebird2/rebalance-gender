@@ -1157,7 +1157,8 @@ Run `genre-report.mjs` first — it drives the rest. All support
   (e.g. "drum & bass" / "drum'n'bass" / "dnb"), not just by
   normalized name.
 - **`prune-genres.mjs`** — cuts genres below an artist-count
-  threshold (default 3; reversible unless `--hard`).
+  threshold (`--threshold=N`, whole number ≥ 1, default 3;
+  reversible unless `--hard`).
 - **`apply-genre-status.mjs`** — applies hand-edited `status`
   changes from `genre-report.csv` back to the database.
 

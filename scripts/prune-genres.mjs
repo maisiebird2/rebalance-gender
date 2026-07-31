@@ -25,7 +25,9 @@
 //        Show the full cut plan, change nothing.
 //
 //   node scripts/prune-genres.mjs --dry-run --threshold=2
-//        Preview with a different cut threshold.
+//        Preview with a different cut threshold. --threshold takes a
+//        whole number of 1 or greater (--threshold=1 cuts only genres
+//        with no artists); anything else, including 0, is an error.
 //
 //   node scripts/prune-genres.mjs --threshold=3
 //   node scripts/prune-genres.mjs --threshold=3 --hard   # cut = hard delete
@@ -49,8 +51,28 @@ import { fileURLToPath } from 'node:url'
 const args        = process.argv.slice(2)
 const DRY_RUN     = process.env.DRY_RUN === '1' || args.includes('--dry-run')
 const HARD        = args.includes('--hard')
-const thrArg      = args.find(a => a.startsWith('--threshold='))
-const THRESHOLD   = thrArg ? parseInt(thrArg.split('=')[1], 10) : 3
+
+// --threshold=N: whole number, 1 or greater. A threshold of 0 would cut
+// nothing (no genre has fewer than 0 artists), so it's rejected rather
+// than silently doing nothing.
+const THRESHOLD_DEFAULT = 3
+function badThreshold(given) {
+  console.error(
+    `Invalid --threshold=${given} — must be a whole number of 1 or greater.\n` +
+    `  --threshold=1 cuts genres with no artists.\n` +
+    `  --threshold=3 (the default) cuts genres with fewer than 3 artists.`)
+  process.exit(1)
+}
+
+const thrArg = args.find(a => a === '--threshold' || a.startsWith('--threshold='))
+let THRESHOLD = THRESHOLD_DEFAULT
+if (thrArg) {
+  const raw = thrArg === '--threshold' ? '' : thrArg.slice('--threshold='.length).trim()
+  // parseInt would accept "3abc" and "3.9"; require digits only.
+  if (!/^\d+$/.test(raw)) badThreshold(raw === '' ? '(missing)' : raw)
+  THRESHOLD = parseInt(raw, 10)
+  if (THRESHOLD < 1) badThreshold(raw)
+}
 
 // ── Env ──────────────────────────────────────────────────
 function loadEnvLocal() {
