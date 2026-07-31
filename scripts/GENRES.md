@@ -143,6 +143,10 @@ Cuts the long tail: genres under `--threshold` (default 3) get
 `status='deleted'` (reversible) or, with `--hard`, are deleted
 outright.
 
+`--threshold` takes a whole number of 1 or greater — `--threshold=1`
+cuts only genres with no artists at all. `--threshold=0` (which would
+cut nothing) and any non-integer value are rejected with an error.
+
 (The old hard-coded `ROLLUP` map — subgenre → parent merges before the
 cut — was removed; see `GENRE_CONFIDENCE.md` for where a parent/child
 system would live if one is built.)
