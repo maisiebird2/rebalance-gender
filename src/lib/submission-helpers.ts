@@ -41,7 +41,11 @@ export async function checkBotProtection(
   try {
     const passed = await verifyTurnstileToken(turnstileToken);
     if (!passed) return "Bot check failed — please try again";
-  } catch {
+  } catch (err) {
+    // Same reasoning as the siteverify warn in turnstile.ts: the client gets
+    // a fake success, so a config/network problem here is only visible in
+    // server logs.
+    console.warn("[turnstile] verification threw:", err);
     return "Bot check failed — please try again";
   }
 

@@ -5,6 +5,7 @@ import {
   getEmailStatus,
   createTokenAndSendEmail,
 } from "@/lib/submission-helpers";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { RevisionData } from "@/lib/types";
 
 interface ReviseBody {
@@ -18,6 +19,14 @@ interface ReviseBody {
 }
 
 export async function POST(request: NextRequest) {
+  const rate = checkRateLimit(`revise:${getClientIp(request)}`, 5, 10 * 60_000);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "Too many submissions — please try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } }
+    );
+  }
+
   let body: ReviseBody;
   try {
     body = await request.json();

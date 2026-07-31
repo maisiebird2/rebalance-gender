@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, FormEvent } from "react";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
 interface Props {
   searchTerm: string;
@@ -11,6 +12,10 @@ type SubmitState = "idle" | "submitting" | "submitted" | "exists" | "error";
 export default function SearchMissResults({ searchTerm }: Props) {
   const [trackedTerm, setTrackedTerm] = useState(searchTerm);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
+
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   // Reset as soon as the search term changes, during render rather than in
   // an effect — avoids an extra render pass.
@@ -21,13 +26,17 @@ export default function SearchMissResults({ searchTerm }: Props) {
 
   // Saving the searched name to the review queue only happens if the visitor
   // clicks the submit button below.
-  async function handleSubmit() {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
     setSubmitState("submitting");
+
+    const honeypot = new FormData(e.currentTarget).get("_hp");
+
     try {
       const res = await fetch("/api/search-miss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchTerm }),
+        body: JSON.stringify({ query: searchTerm, turnstileToken, honeypot }),
       });
 
       if (!res.ok) {
@@ -39,6 +48,12 @@ export default function SearchMissResults({ searchTerm }: Props) {
       setSubmitState(data.alreadyExists ? "exists" : "submitted");
     } catch {
       setSubmitState("error");
+    } finally {
+      // Tokens are single-use: fetch a fresh one so a follow-up submission
+      // (new search term, or retry after an error) isn't sent with a token
+      // the server has already consumed.
+      setTurnstileToken(null);
+      turnstileRef.current?.reset();
     }
   }
 
@@ -52,25 +67,41 @@ export default function SearchMissResults({ searchTerm }: Props) {
         are in the directory yet.
       </p>
 
+      <form onSubmit={handleSubmit} className="mt-3">
+        {/* ── Honeypot (hidden from humans, filled by bots) ───────── */}
+        <div style={{ position: "absolute", opacity: 0, height: 0, overflow: "hidden", pointerEvents: "none" }} aria-hidden="true">
+          <label htmlFor="search-miss-hp">Website</label>
+          <input id="search-miss-hp" name="_hp" type="text" tabIndex={-1} autoComplete="off" />
+        </div>
+
+        {(submitState === "idle" || submitState === "submitting") && (
+          <button
+            type="submit"
+            disabled={submitState === "submitting" || (!!siteKey && !turnstileToken)}
+            className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+          >
+            {submitState === "submitting"
+              ? "Submitting…"
+              : `Submit “${searchTerm}” for review`}
+          </button>
+        )}
+
+        {/* Turnstile stays mounted across submissions so reset() can fetch a
+            fresh token; it renders invisibly for most visitors. */}
+        {siteKey && (
+          <Turnstile
+            ref={turnstileRef}
+            siteKey={siteKey}
+            onSuccess={(token) => setTurnstileToken(token)}
+            onError={() => setTurnstileToken(null)}
+            onExpire={() => setTurnstileToken(null)}
+            options={{ theme: "auto" }}
+            className="mt-3"
+          />
+        )}
+      </form>
+
       <div className="mt-3">
-        {submitState === "idle" && (
-          <button
-            onClick={handleSubmit}
-            className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
-          >
-            Submit &ldquo;{searchTerm}&rdquo; for review
-          </button>
-        )}
-
-        {submitState === "submitting" && (
-          <button
-            disabled
-            className="rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white opacity-50"
-          >
-            Submitting…
-          </button>
-        )}
-
         {submitState === "submitted" && (
           <p className="text-sm text-green-600 dark:text-green-400">
             Thanks — we&apos;ve added &ldquo;{searchTerm}&rdquo; to our review queue.
