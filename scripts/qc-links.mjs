@@ -26,7 +26,7 @@
 // Usage (from rebalance-gender/):
 //
 //   node scripts/qc-links.mjs                        # check all rows
-//   node scripts/qc-links.mjs --platform=lastfm      # one platform only
+//   node scripts/qc-links.mjs --platform=discogs     # one platform only
 //   node scripts/qc-links.mjs --name="Danz"          # artists matching name
 //   node scripts/qc-links.mjs --limit=100            # first N artists
 //   node scripts/qc-links.mjs --debug                # show only failing rows
@@ -117,6 +117,9 @@ const PLATFORM_DOMAINS = {
   apple_music:      ["music.apple.com"],
   spotify:          ["open.spotify.com", "spotify.com"],
   musicbrainz:      ["musicbrainz.org", "www.musicbrainz.org"],
+  // Retained deliberately: Last.fm data was dropped from the directory
+  // (supabase_migration_remove_lastfm_data.sql) but the existing links
+  // were kept, so they still need to be checked for a wrong domain.
   lastfm:           ["last.fm", "www.last.fm"],
   wikipedia:        ["en.wikipedia.org", "wikipedia.org", "www.wikipedia.org"],
 };

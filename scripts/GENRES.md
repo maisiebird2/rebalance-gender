@@ -75,7 +75,7 @@ vocabulary would silently re-create every duplicate genre).
 
 ## Ingestion
 
-1. **Harvest** — `harvest-genres-lastfm.mjs`, `harvest-genres-mb.mjs`,
+1. **Harvest** — `harvest-genres-mb.mjs`,
    `harvest-genres-spotify.mjs` scrape raw tags per artist into
    `artist_harvested_genres` (each row a `raw_tag` + `source_platform`).
 2. **Integrate** — `integrate-harvested-genres.mjs` promotes unprocessed

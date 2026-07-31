@@ -406,7 +406,7 @@ async function main() {
   // count toward the bail. A completed non-OK response (stale-URL
   // 404, hotlink 403) proves the connection works and is a per-image
   // outcome, same category as too_large, so it RESETS the counter;
-  // stale URLs cluster by platform (dead HÖR/Last.fm images sit on
+  // stale URLs cluster by platform (dead HÖR images sit on
   // adjacent rows), and counting them once misreported a stretch of
   // 404s as "check your connection" (2026-07-24).
   const MAX_CONSECUTIVE_FAILURES = 8;

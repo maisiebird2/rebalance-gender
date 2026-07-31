@@ -46,7 +46,7 @@ Concretely, today `soundcloud` and `bandcamp` have two writers each:
 | bandcamp | `sync-bandcamp.mjs` — page sidebar | only after a recorded **transient** failure |
 | linktree | `sync-linktree.mjs` | only after a recorded **transient** failure |
 | hoer | `sync-hoer.mjs` | only after a recorded **transient** failure |
-| spotify, lastfm, apple_music, wikipedia, qobuz, resident_advisor, beatport, youtube | `scrape-images` | **sole owner** — fills any gap |
+| spotify, apple_music, wikipedia, qobuz, resident_advisor, beatport, youtube | `scrape-images` | **sole owner** — fills any gap |
 | discogs | none | currently yields zero images; decide whether to keep as a candidate |
 
 Note the category is "has a dedicated harvester", not "has an API" — only
@@ -107,7 +107,8 @@ code — that part is genuinely platform-specific — and delegates the decision
 
 Fold the two placeholder rules into one registry keyed by platform:
 `isDefaultAvatarUrl` (SoundCloud's grey default, currently in `sync-soundcloud`)
-and `isPlaceholderImageUrl` (the Last.fm hash, currently in the lib). Today the
+and `isPlaceholderImageUrl` (the platform placeholder patterns, currently in
+the lib). Today the
 API path treats SoundCloud's grey placeholder as a failure while a scrape would
 store it as a real photo; one registry closes that gap.
 

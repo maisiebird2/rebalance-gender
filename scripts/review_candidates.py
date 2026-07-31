@@ -207,17 +207,8 @@ def cmd_promote(conn, args):
             aid     = row["artist_id"]
             service = row["service"]
             ext_id  = row["external_id"]
-            ext_name = row["external_name"]
 
-            if service == "lastfm":
-                cur.execute("""
-                    INSERT INTO artist_links (artist_id, lastfm_name)
-                    VALUES (%s, %s)
-                    ON CONFLICT (artist_id) DO UPDATE SET
-                        lastfm_name = EXCLUDED.lastfm_name, updated_at = now()
-                """, (str(aid), ext_name))
-
-            elif service == "musicbrainz":
+            if service == "musicbrainz":
                 cur.execute("""
                     INSERT INTO artist_links (artist_id, mbid)
                     VALUES (%s, %s)
@@ -291,7 +282,7 @@ def main():
 
     p_export = sub.add_parser("export", help="Export pending candidates to CSV")
     p_export.add_argument("--out", help="Output CSV path (default: candidates.csv)")
-    p_export.add_argument("--service", choices=["lastfm", "musicbrainz", "spotify"])
+    p_export.add_argument("--service", choices=["musicbrainz", "spotify"])
     p_export.add_argument("--status",
                           choices=["best match", "close match", "tie", "pending",
                                    "approved", "rejected", "skipped", "loaded"],

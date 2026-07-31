@@ -9,7 +9,7 @@ winner and setting that status; this script just promotes those decisions.
 Usage:
     python load_links.py              # load all best matches
     python load_links.py --dry-run    # preview without writing
-    python load_links.py --service lastfm  # one service only
+    python load_links.py --service musicbrainz  # one service only
 """
 import argparse
 import logging
@@ -26,11 +26,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-ALL_SERVICES = ["lastfm", "musicbrainz", "spotify"]
+ALL_SERVICES = ["musicbrainz", "spotify"]
 
 # Maps our internal service names to the link_platform enum values in artist_links
 PLATFORM_MAP = {
-    "lastfm":       "lastfm",
     "musicbrainz":  "musicbrainz",
     "spotify":      "spotify",
 }

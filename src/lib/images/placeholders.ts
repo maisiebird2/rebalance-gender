@@ -27,14 +27,12 @@ interface PlaceholderPattern {
   label: string;
 }
 
+// Last.fm's default star avatar used to head this list. It was removed
+// along with the rest of the Last.fm data (see
+// supabase_migration_remove_lastfm_data.sql): Last.fm is no longer an
+// image candidate in PLATFORM_PRIORITY, so no code path can reach a
+// Last.fm URL to check, and every stored Last.fm image has been deleted.
 const PLACEHOLDER_PATTERNS: readonly PlaceholderPattern[] = [
-  {
-    // https://lastfm.freetls.fastly.net/i/u/ar0/2a96cbd8b46e442fc41c2b86b821562f.jpg
-    // — the same hash is served at every size variant (ar0/174s/300x300/…).
-    platform: "lastfm",
-    pattern: /2a96cbd8b46e442fc41c2b86b821562f/i,
-    label: "Last.fm default star avatar",
-  },
   {
     // The SoundCloud API still returns an avatar_url for accounts with no
     // photo: a grey placeholder at .../images/default_avatar_<size>.png.

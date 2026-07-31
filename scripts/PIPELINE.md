@@ -13,7 +13,7 @@ stage in order.
 Phase 0 │ Initial load (run once)
 Phase 1 │ Data quality
 Phase 2 │ Platform link & profile harvesting (SoundCloud, Bandcamp + direct links)
-Phase 3 │ External matching fallback (Last.fm, MusicBrainz, Spotify)
+Phase 3 │ External matching fallback (MusicBrainz, Spotify)
 Phase 4 │ Bio processing
 Phase 5 │ Profile images
 Phase 6 │ (merged into Phase 2b — Bandcamp discography & profile)
@@ -46,7 +46,7 @@ flowchart TD
     P2D --> P3
     P2A -. "raw bio feeds 4" .-> P4
     P2B -. "bandcamp images feed 5b" .-> P5
-    P3["Phase 3 · External matching (fallback)<br/>Last.fm / MusicBrainz / Spotify<br/>resolve-and-load-links-lf-mb-sp.mjs"] --> P4
+    P3["Phase 3 · External matching (fallback)<br/>MusicBrainz / Spotify<br/>resolve-and-load-links-mb-sp.mjs"] --> P4
     P3 --> P5
     P3 --> P7
     P4["Phase 4 · Bio processing<br/>sanitize-bios.mjs → linkify-bios.ts"]
@@ -193,8 +193,8 @@ directly, before relying on inferred matches.** Direct links found
 on an artist's own profiles (SoundCloud web-profiles, Discogs,
 Bandcamp, Linktree) are ground truth; the best-match resolution in
 Phase 3 is the fallback for whatever this phase doesn't find.
-Since platforms link to yet other platforms — including Last.fm,
-Spotify, and MusicBrainz — a thorough pass here fills out the
+Since platforms link to yet other platforms — including Spotify
+and MusicBrainz — a thorough pass here fills out the
 artist's platform picture for everything downstream (images, bios,
 matching, genres) and shrinks the set of artists that need
 best-match guessing at all.
@@ -440,7 +440,7 @@ discography —
   scrape — see "Runs inside the 2d convergence loop" below.
 - **Genre tags** (release pages only) → staged into
   `artist_harvested_genres` (`source_platform = 'bandcamp'`), same
-  shape as the Last.fm/MusicBrainz/Spotify genre harvesters.
+  shape as the MusicBrainz/Spotify genre harvesters.
 
 Handles three page shapes beyond the "full page with releases" case,
 since Bandcamp reuses the same bio-container sidebar partial across
@@ -702,7 +702,7 @@ and `clean-bandcamp-urls.mjs` — have been retired from the pipeline; see
 
 ## Phase 3 — External matching (fallback)
 
-The **fallback** for Last.fm, MusicBrainz, and Spotify links that
+The **fallback** for MusicBrainz and Spotify links that
 Phase 2's direct harvesting didn't find on artists' own pages: a
 direct link is ground truth, a best match is an inference with a
 confidence score. Runs directly after Phase 2 so all the
@@ -714,11 +714,16 @@ images; moved up and reframed as fallback 2026-07-03.)
 
 Note: today the resolver only skips searching a service when the
 artist already has a *Spotify* link; extending that skip to
-Last.fm and MusicBrainz (so direct links found in Phase 2 suppress
-the search entirely) is in "Planned changes".
+MusicBrainz (so direct links found in Phase 2 suppress the search
+entirely) is in "Planned changes".
 
-### `resolve-and-load-links-lf-mb-sp.mjs`
-Searches Last.fm, MusicBrainz, and Spotify for each directory
+Last.fm was the third service here until 2026-07-30, when Last.fm data
+was removed from the directory (see
+`supabase_migration_remove_lastfm_data.sql`). Existing Last.fm links are
+retained but no new ones are resolved.
+
+### `resolve-and-load-links-mb-sp.mjs`
+Searches MusicBrainz and Spotify for each directory
 artist by name, scores and ranks candidates by name similarity,
 location, and bio overlap, and upserts the best matches into
 `artist_links`. Candidates below the confidence threshold
@@ -783,8 +788,8 @@ npm run linkify-bios
 ## Phase 5 — Profile images
 
 Runs after Phase 3 so image enrichment can draw on the full link
-set, including the Last.fm, Spotify, and Wikipedia links Phase 3
-resolves (all of which are in the platform priority list below).
+set, including the Spotify and Wikipedia links Phase 3 resolves
+(both of which are in the platform priority list below).
 
 ### 5a. `scrape-images.ts` — multi-platform + `artist_images` 2026-07-09
 For each artist with `directory_status = 'approved'` (checked inside
@@ -1029,23 +1034,16 @@ table with `source_platform = 'discogs'`).
 npm run enrich-musicbrainz
 ```
 
-### 7c. `fetch-lastfm-similar.mjs`
-For each directory artist with a Last.fm link (written by Phase 3),
-calls `artist.getSimilar` and stores the results in
-`lastfm_similar_artists`. Where a similar artist can be matched to
-an existing row in the `artists` table (via Last.fm URL, MusicBrainz
-ID, or name), `similar_artist_id` is populated — this is what makes
-the data useful for weight tuning. Used as the validation / ground
-truth dataset for the scoring step; not a live production signal.
+### 7c. (removed) `fetch-lastfm-similar.mjs`
+Fetched Last.fm's `artist.getSimilar` into `lastfm_similar_artists` and
+resolved each similar artist back to our `artists` table, producing the
+validation / ground-truth dataset the scoring weights were tuned against.
+It was never a live production signal.
 
-After adding new Last.fm links (e.g. manually resolving ties in
-`pending_artist_links`), run with `--resolve-only` to backfill
-`similar_artist_id` for existing rows without making any API calls.
-
-```bash
-npm run fetch-lastfm-similar
-npm run fetch-lastfm-similar -- --resolve-only
-```
+Removed 2026-07-30 along with the rest of the Last.fm data, and the table
+was dropped — see `supabase_migration_remove_lastfm_data.sql`. The
+knock-on effect is that `tune-weights.py` is gone too and the five signal
+weights are now chosen by hand; see `SCORING.md`.
 
 ### 7d. `harvest-genres-mb.mjs`
 Copies rows from `mb_tags` (populated by `enrich-musicbrainz.mjs` in
@@ -1057,18 +1055,16 @@ database-to-database copy. Must run after 7b.
 npm run harvest-genres-mb
 ```
 
-### 7e. `harvest-genres-lastfm.mjs`
-For each artist with a Last.fm link, calls `artist.getTopTags` and
-writes the results into `artist_harvested_genres` with
-`source_platform = 'lastfm'`. Stores the Last.fm weighting (0–100)
-as `tag_count`. Results are cached to `.cache/lastfm_genres/`.
-Must run after Phase 3 so Last.fm links are in `artist_links`.
+### 7e. (removed) `harvest-genres-lastfm.mjs`
+Called `artist.getTopTags` for each artist with a Last.fm link and staged
+the tags into `artist_harvested_genres` with `source_platform = 'lastfm'`.
 
-```bash
-npm run harvest-genres-lastfm
-```
-
-Requires `LASTFM_API_KEY` in `.env.local`.
+Removed 2026-07-30. Every row it wrote was deleted, along with the
+`artist_genres` entries those rows had promoted where no other source
+vouched for the same genre — see
+`supabase_migration_remove_lastfm_data.sql`. It was the largest genre
+source after HÖR, so directory genre coverage dropped materially; Spotify
+(7f), Bandcamp (2b) and HÖR are what remain.
 
 ### 7f. `harvest-genres-spotify.mjs`
 For each artist with a Spotify link, calls `GET /artists/{id}` and
@@ -1142,7 +1138,7 @@ after any link-writing phase (2, 3).
 
 ```bash
 node scripts/qc-links.mjs                     # check all rows
-node scripts/qc-links.mjs --platform=lastfm   # one platform
+node scripts/qc-links.mjs --platform=discogs  # one platform
 node scripts/qc-links.mjs --name="Danz"       # artists matching name
 node scripts/qc-links.mjs --limit=100         # first N artists
 node scripts/qc-links.mjs --csv               # output issues as CSV
@@ -1484,9 +1480,7 @@ npm run scrape-images
 node scripts/store-images.mjs
 npm run build-soundcloud-follow-graph
 npm run enrich-musicbrainz
-npm run fetch-lastfm-similar
 npm run harvest-genres-mb
-npm run harvest-genres-lastfm
 npm run harvest-genres-spotify
 npm run integrate-harvested-genres
 ```
@@ -1763,13 +1757,13 @@ get added to the `HARVESTERS` array in the loop script.
 
 ### Skip best-match search when a direct link exists
 
-`resolve-and-load-links-lf-mb-sp.mjs` currently skips searching
-only Spotify when the artist already has a Spotify link; Last.fm
-and MusicBrainz are searched regardless (the load step won't
+`resolve-and-load-links-mb-sp.mjs` currently skips searching
+only Spotify when the artist already has a Spotify link;
+MusicBrainz is searched regardless (the load step won't
 overwrite, but the API calls and staged candidates are wasted, and
 a wrong best-match candidate can sit in `pending_artist_links`
 next to a correct direct link). Extend the existing Spotify-style
-skip to all three services, so Phase 2's direct links suppress
+skip to both services, so Phase 2's direct links suppress
 Phase 3 work entirely for those (artist, service) pairs.
 
 ### Persist harvest failures as queryable data — ✅ DONE for SoundCloud + Bandcamp (2026-07-09)
@@ -1814,8 +1808,7 @@ exactly what `qc-links.mjs` (Phase 8) detects after the fact; this
 catches them at point of use too.
 
 Considered and set aside: Spotify (API exposes no external links),
-Last.fm (none structured; page links mostly mirror MB's), Resident
-Advisor (see below), Beatport / Qobuz / Tidal / Apple Music pages (no
+Resident Advisor (see below), Beatport / Qobuz / Tidal / Apple Music pages (no
 meaningful outbound links). A future Linktree harvester should adopt
 the same guard when it's built.
 
@@ -2045,7 +2038,7 @@ later, should we want them.
   matching every other service_role-only table (e.g.
   `artist_enrichment`).
 
-  **The Phase 3 resolver (`resolve-and-load-links-lf-mb-sp.mjs`) is now
+  **The Phase 3 resolver (`resolve-and-load-links-mb-sp.mjs`) is now
   done (2026-07-05)** — its processed state was already derived from
   `pending_artist_links` (via `alreadyResolved()`), and its `.cache/`
   disk-JSON response cache was moved into the `api_response_cache` table

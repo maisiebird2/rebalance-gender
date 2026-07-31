@@ -11,8 +11,7 @@ A Next.js + Supabase directory of women, femmes, and non-binary
 producers/DJs in electronic music, live at rebalance-gender.com. Visitors
 can browse by genre and country, view individual artist pages, and submit
 new artists via a moderation queue. An AI-powered recommendation engine
-surfaces similar artists on each artist page and on a `/discover` page
-where visitors can search by any artist name or URL.
+surfaces similar artists on each artist page.
 
 ---
 
@@ -38,7 +37,6 @@ where visitors can search by any artist name or URL.
 | `SOUNDCLOUD_CLIENT_SECRET` | scripts only | SC API credential |
 | `SPOTIFY_CLIENT_ID` | server + scripts | Spotify API credential (also missing-links suggestions) |
 | `SPOTIFY_CLIENT_SECRET` | server + scripts | Spotify API credential (also missing-links suggestions) |
-| `LASTFM_API_KEY` | server + scripts | Last.fm API key; no `NEXT_PUBLIC_` prefix |
 | `DISCOGS_TOKEN` | server only | Discogs personal access token, for missing-links suggestions. Alternative: the two below. |
 | `DISCOGS_CONSUMER_KEY` / `DISCOGS_CONSUMER_SECRET` | server only | Discogs app credentials — either these or `DISCOGS_TOKEN` (token wins if both set) |
 
@@ -53,7 +51,7 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | Table | Purpose |
 |---|---|
 | `artists` | One row per artist. `directory_status` controls visibility (see below). |
-| `artist_links` | Platform URLs (soundcloud, lastfm, spotify, etc.) |
+| `artist_links` | Platform URLs (soundcloud, spotify, bandcamp, etc.) |
 | `artist_enrichment` | Per-platform enriched data (bio, follower count, image URL, recent tracks) |
 | `artist_genres` | Artist ↔ genre join. `genre_id` is a FK to `genres` — not a text column. |
 | `genres` | Canonical genre list with `status` (pending/approved/deleted) |
@@ -61,7 +59,6 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `sc_follow_edges` | Directed SoundCloud follow graph (source_artist_id → followed_artist_id) |
 | `mb_tags` | MusicBrainz folksonomy tags per artist |
 | `mb_collaborations` | Artist pairs with MusicBrainz relationship edges |
-| `lastfm_similar_artists` | Raw LFM similar-artist data; `similar_artist_id` is resolved to our DB where possible |
 | `artist_similarity_scores` | Computed pairwise recommendation scores (source → recommended) |
 | `artist_harvested_links` | Staging table for links harvested from SC bios etc., before integration |
 
@@ -73,7 +70,7 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `pending` | Submitted, awaiting moderation |
 | `rejected` | Moderated out |
 | `sc_followee` | Discovered via SoundCloud follow graph; not yet in directory |
-| `lfm_search` | Discovered via `/discover` search; not yet in directory |
+| `search_input` | Name entered in a search that had no directory match; not yet in directory |
 
 ---
 
@@ -83,12 +80,10 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 src/
   app/
     page.tsx                    # Homepage: directory listing with filters
-    discover/page.tsx           # /discover — search for similar artists (client component)
     artist/[id]/page.tsx        # Artist detail page
     artist/[id]/edit/           # Artist edit form (auth-gated)
     api/
       submit/route.ts           # POST — public artist submission
-      discover/route.ts         # POST — discover similar artists via LFM + genre matching
     admin/page.tsx              # Moderation queue (auth-gated)
     admin/missing-links/        # Find + fill artists' missing platform links (auth-gated)
     api/admin/platform-search/  # GET — top-3 profile candidates on an external platform
@@ -122,8 +117,8 @@ Each card offers, in order of convenience:
 
 1. **Inline suggestions** — top 3 profile candidates fetched from the
    platform's API via `src/lib/search-providers.ts` (providers: discogs,
-   musicbrainz, lastfm, spotify, bandcamp; each degrades to nothing if
-   its env keys are missing). Served by `/api/admin/platform-search`;
+   musicbrainz, spotify, bandcamp; each degrades to nothing if its env
+   keys are missing). Served by `/api/admin/platform-search`;
    card fetches are staggered client-side for rate limits (MusicBrainz
    1 req/s). Ticking a candidate saves it.
 2. **Manual paste field** — for URLs found by hand.
@@ -148,7 +143,7 @@ generated column (normalized: unaccented, lowercased, spaces stripped —
 `normalizeSearch()` in `src/lib/queries.ts` must stay in sync with the
 Postgres expression). Two design decisions keep it fast even though the
 `artists` table is dominated by non-directory graph nodes
-(`sc_followee` / `lfm_search` rows):
+(`sc_followee` / `search_input` rows):
 
 - **Partial trigram index** — a `pg_trgm` GIN index on `name_search`,
   restricted to `directory_status = 'approved' AND deleted = false`
@@ -218,7 +213,7 @@ Scripts live in `scripts/` and run from the repo root with `npm run <name>`
 | 3 | Bio processing — sanitize HTML, linkify |
 | 4 | Profile images |
 | 5 | Additional platforms (Bandcamp, Beatport) |
-| 6 | External matching — Last.fm similar artists, MusicBrainz IDs, Spotify |
+| 6 | External matching — MusicBrainz IDs, Spotify |
 | 7 | Recommendation signals — SC follow graph, MB tags, genre harvesting |
 | 8 | Review and data quality passes |
 
@@ -240,8 +235,11 @@ Three-step pipeline, all run from the repo root:
 # 1. Compute raw signal scores for all artist pairs → CSV cache
 python scripts/compute-scores.py --refresh
 
-# 2. Grid-search weight combinations against Last.fm validation set
-python scripts/tune-weights.py
+# 2. (No weight-tuning step. tune-weights.py grid-searched these weights
+#     against a Last.fm similar-artist validation set; both were removed
+#     with the rest of the Last.fm data. The weights below are the
+#     hard-coded ones in compute-scores.mjs until a new validation set
+#     exists.)
 
 # 3. Apply best weights and push scores to DB
 python scripts/push-scores.py --genre=X --mb-tag=X --mb-collab=X --direct-follow=X --co-follow=X
@@ -255,16 +253,6 @@ Cache files (gitignored): `.cache/signals.json`, `.cache/pair-scores.csv`.
 Current coverage gaps (as of June 2026): SC follow graph ~11% complete,
 MB tags 0% (enrichment not run), genres 21%. See `scripts/IMPROVEMENT_PLAN.md`
 for the remediation plan.
-
----
-
-## `/discover` page
-
-Accepts an artist name, Last.fm URL, or SoundCloud URL. Calls Last.fm
-`artist.getSimilar` + `artist.getTopTags`, matches against directory
-artists via their LFM links and genre overlap, returns top 10. Artists
-not in the directory that are searched for are saved as stubs with
-`directory_status = 'lfm_search'` (demand signal for future outreach).
 
 ---
 

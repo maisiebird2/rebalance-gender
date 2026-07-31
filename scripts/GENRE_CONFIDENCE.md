@@ -24,8 +24,8 @@ via `scripts/lib/genre-vocab.mjs`) before it is scored, so `dnb` and
 
 ## The problem this solves
 
-The last.fm / MusicBrainz / Spotify harvests start from an artist
-*name* and guess which entity it refers to. When the guess is wrong,
+The MusicBrainz / Spotify harvests start from an artist *name* and guess
+which entity it refers to. When the guess is wrong,
 every genre from that match is wrong too — a whole error class baked in
 before any tag is read.
 
@@ -48,7 +48,7 @@ multiplied.
 |---|---|---|---|
 | Direct, self-owned | SoundCloud own uploads, Bandcamp own releases | **1.0** | Link resolves to the artist; content is theirs |
 | Direct, third-party | Discogs styles, Beatport, Resident Advisor (on a confirmed link) | **0.8** | Right artist, but tags set by an editor/label, not them |
-| Name-matched | last.fm, MusicBrainz, Spotify | **0.4** | Genre may be right, but the *artist match itself* is uncertain |
+| Name-matched | MusicBrainz, Spotify | **0.4** | Genre may be right, but the *artist match itself* is uncertain |
 | Bio text | any harvested bio | **0.3** | Same artist, but mentions are often influences, not their genre |
 
 ### 2. Signal type — how genre-like is the datum itself?
@@ -57,13 +57,13 @@ multiplied.
 |---|---|---|
 | Structured genre field | **1.0** | SoundCloud `track.genre`, Bandcamp primary tag, Beatport genre |
 | Self-applied free tag | **0.7** | SoundCloud `tag_list` — filter through the `discard` rules + `non-genre-hints` first |
-| Editorial / community tag | **0.6** | last.fm community tags, Discogs styles |
+| Editorial / community tag | **0.6** | Discogs styles, MusicBrainz folksonomy tags |
 | Bio mention | **0.5** | genre name found in bio via vocabulary match or LLM extraction |
 
 A signal's base weight = `source_trust × signal_type`. So a genre on an
 artist's own SoundCloud uploads scores `1.0 × 1.0 = 1.0`; the same word
-appearing in a last.fm community tag scores `0.4 × 0.6 = 0.24`; a bio
-mention scores `0.3 × 0.5 = 0.15`.
+appearing in a MusicBrainz folksonomy tag scores `0.4 × 0.6 = 0.24`; a
+bio mention scores `0.3 × 0.5 = 0.15`.
 
 ---
 
@@ -104,7 +104,7 @@ Two derived quantities drive the decision:
 
 - **S** — the total weighted evidence.
 - **corroboration** — the number of *distinct sources* supporting the
-  genre (SoundCloud, Bandcamp, Discogs, last.fm, bio … each counts
+  genre (SoundCloud, Bandcamp, Discogs, MusicBrainz, bio … each counts
   once). Ideally, parent/child genres would count as agreeing, not
   competing (techno + melodic techno → same vote) — but there is
   currently **no parent/child mapping in the system**. The old
@@ -132,10 +132,10 @@ Two hard floors that override the above:
 
 - **Bio-only never auto-accepts.** A genre supported *only* by bio
   mentions goes to review at best, never straight to live.
-- **Name-matched-only never auto-accepts.** last.fm / MB / Spotify
+- **Name-matched-only never auto-accepts.** MusicBrainz / Spotify
   signals can *boost* a genre toward a threshold or *corroborate* a
   direct signal, but on their own they can only reach the review queue —
-  this is the rule that stops a bad last.fm match writing genres.
+  this is the rule that stops a bad name match writing genres.
 
 Per-artist guard: after ranking an artist's genres by S, only
 auto-accept those within a ratio of the top score (e.g. `S ≥ 0.4 × S_top`)
@@ -146,9 +146,8 @@ with it.
 
 `T_high = 1.0`, `T_low = 0.3`. These are guesses — calibrate them
 against a hand-labelled sample (see Validation) rather than trusting the
-defaults. All weights and thresholds should live in one config object,
-mirroring `tune-weights.py`, so calibration is a data exercise, not a
-code edit.
+defaults. All weights and thresholds should live in one config object, so
+calibration is a data exercise, not a code edit.
 
 ---
 
@@ -160,7 +159,7 @@ code edit.
 - **SoundCloud own tracks say "techno" (S≈0.9) and Bandcamp release
   tagged "techno" (S≈0.8).** Two distinct direct sources agree →
   **auto-accept** by the corroboration rule; combined S≈1.7.
-- **Only a last.fm match says "deep house" (S≈0.24).** Name-matched
+- **Only a MusicBrainz match says "deep house" (S≈0.24).** Name-matched
   only → **review queue**, never auto, even though the tag looks fine.
 - **Bio says "influenced by jazz and dub" (S≈0.15 each).** Bio-only →
   **review** at most; likely **discard** under T_low.

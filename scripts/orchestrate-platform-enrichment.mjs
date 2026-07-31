@@ -65,7 +65,7 @@
 //   4. scrape-images.ts                  — image acquisition for every
 //                                           platform that has no
 //                                           harvester of its own
-//                                           (spotify, lastfm, wikipedia,
+//                                           (spotify, wikipedia,
 //                                           youtube, …), plus a fallback
 //                                           scrape for soundcloud/
 //                                           bandcamp where their owner

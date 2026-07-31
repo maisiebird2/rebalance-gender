@@ -15,7 +15,7 @@
 // separate stored images from several platforms at once; see
 // supabase_migration_artist_images.sql for why.
 //
-// Known "no real photo" placeholders (e.g. Last.fm's default star
+// Known "no real photo" placeholders (e.g. SoundCloud's default grey
 // avatar) are rejected as if the page had no og:image at all — see
 // isPlaceholderImageUrl — so a generic silhouette is never stored and
 // the artist is recorded as a stable no-image result instead.
@@ -129,12 +129,16 @@ import { isSearchPageUrl } from "@/lib/profile-links";
 // the bottom of scrapeArtistImages delete a good stored image). If
 // either ever exposes an API, add a dedicated harvester the way discogs
 // has one (sync-discogs.mjs) rather than putting them back here.
+//
+// lastfm was dropped for a third reason: Last.fm data is no longer used
+// by the directory at all (see supabase_migration_remove_lastfm_data.sql).
+// Last.fm links are still stored, but they are not an image candidate —
+// removing the platform from this list is what stops the scrape.
 export const PLATFORM_PRIORITY = [
   "soundcloud",
   "bandcamp",
   "discogs",
   "qobuz",
-  "lastfm",
   "spotify",
   "wikipedia",
   "apple_music",

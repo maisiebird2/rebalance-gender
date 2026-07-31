@@ -123,37 +123,6 @@ const searchMusicBrainz: Provider = async (name) => {
   }));
 };
 
-// ── Last.fm ───────────────────────────────────────────────────────
-
-interface LastfmSearchResponse {
-  results?: {
-    artistmatches?: {
-      artist?: Array<{ name: string; url: string; listeners?: string }>;
-    };
-  };
-}
-
-const searchLastfm: Provider = async (name) => {
-  const params = new URLSearchParams({
-    method: "artist.search",
-    artist: name,
-    api_key: process.env.LASTFM_API_KEY!,
-    format: "json",
-    limit: String(MAX_CANDIDATES),
-  });
-  const data = await fetchJson<LastfmSearchResponse>(
-    `https://ws.audioscrobbler.com/2.0/?${params}`
-  );
-  const artists = data.results?.artistmatches?.artist ?? [];
-  return artists.slice(0, MAX_CANDIDATES).map((a) => ({
-    name: a.name,
-    url: a.url,
-    detail: a.listeners
-      ? `${Number(a.listeners).toLocaleString()} listeners`
-      : null,
-  }));
-};
-
 // ── Spotify ───────────────────────────────────────────────────────
 // Client-credentials flow; token cached module-level until expiry.
 
@@ -272,10 +241,18 @@ const searchBandcamp: Provider = async (name) => {
 
 // ── Registry ──────────────────────────────────────────────────────
 
+// Last.fm had a provider here until Last.fm data was dropped from the
+// directory (see supabase_migration_remove_lastfm_data.sql). Nothing
+// consumes a Last.fm link any more — no genres, no images, no
+// similar-artist graph, and the link is hidden on the public artist page
+// — so there is nothing for finding a new one to serve. Existing links
+// are still stored and editable. Removing the provider alone would have
+// left Last.fm in /admin/missing-links with a plain "search on Last.fm"
+// fallback link, so the same migration also nulls its
+// platforms.search_url_template, which is what that page lists from.
 const PROVIDERS: Record<string, Provider> = {
   discogs: searchDiscogs,
   musicbrainz: searchMusicBrainz,
-  lastfm: searchLastfm,
   spotify: searchSpotify,
   bandcamp: searchBandcamp,
 };
@@ -285,8 +262,6 @@ function providerConfigured(platform: string): boolean {
   switch (platform) {
     case "discogs":
       return discogsAuthHeader() !== null;
-    case "lastfm":
-      return Boolean(process.env.LASTFM_API_KEY);
     case "spotify":
       return Boolean(
         process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET

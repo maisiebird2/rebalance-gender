@@ -1,10 +1,10 @@
 -- Migration: api_response_cache table
 -- Run this once in the Supabase SQL editor before running the updated
--- scripts/resolve-and-load-links-lf-mb-sp.mjs.
+-- scripts/resolve-and-load-links-mb-sp.mjs.
 --
 -- Why:
 --
---   resolve-and-load-links-lf-mb-sp.mjs previously memoized external API
+--   resolve-and-load-links-mb-sp.mjs previously memoized external API
 --   responses (Last.fm search/tags, MusicBrainz search, Spotify search) in
 --   a local .cache/ directory of JSON files. Per the project rule "write to
 --   the database, not cache files", that memoization now lives here instead.
