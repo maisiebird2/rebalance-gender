@@ -47,6 +47,7 @@
     "report-hoer-internal-dupes": "node scripts/report-hoer-internal-dupes.mjs",
     "resolve-hoer-status": "node scripts/resolve-hoer-status.mjs",
     "apply-hoer-dupe-review": "node scripts/apply-hoer-dupe-review.mjs",
+    "apply-sc-followee-decisions": "node scripts/apply-sc-followee-decisions.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
