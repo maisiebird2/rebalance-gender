@@ -48,6 +48,9 @@
     "resolve-hoer-status": "node scripts/resolve-hoer-status.mjs",
     "apply-hoer-dupe-review": "node scripts/apply-hoer-dupe-review.mjs",
     "apply-sc-followee-decisions": "node scripts/apply-sc-followee-decisions.mjs",
+    "export-pending-hoer-artists": "tsx scripts/export-pending-hoer-artists.mjs",
+    "export-hoer-sc-followees": "tsx scripts/export-hoer-sc-followees.mjs",
+    "export-lastfm-links": "tsx scripts/export-lastfm-links.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
