@@ -29,10 +29,10 @@
 
 import "./lib/http-dispatcher.mjs";
 import { createClient } from "@supabase/supabase-js";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readOdsRows } from "./lib/ods-read.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");
@@ -58,58 +58,9 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
-// --- minimal ODS reader: unzip content.xml, walk rows/cells of sheet 1 ---
-function unescapeXml(s) {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&amp;/g, "&");
-}
-
 const SHEET_NAME = "Pending HÖR artists";
 
-function readOdsRows(odsPath) {
-  const xml = execFileSync("unzip", ["-p", odsPath, "content.xml"], {
-    encoding: "utf-8",
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  const sheets = new Map(); // name -> inner xml
-  for (const m of xml.matchAll(/<table:table ([^>]*)>([\s\S]*?)<\/table:table>/g)) {
-    const name = m[1].match(/table:name="([^"]*)"/)?.[1];
-    if (name != null) sheets.set(unescapeXml(name), m[2]);
-  }
-  const sheetXml = sheets.get(SHEET_NAME);
-  if (sheetXml == null)
-    throw new Error(
-      `Sheet "${SHEET_NAME}" not found in ${path.basename(odsPath)} — ` +
-        `sheets present: ${[...sheets.keys()].map((n) => `"${n}"`).join(", ") || "(none)"}`
-    );
-  const rows = [];
-  for (const rowXml of sheetXml.matchAll(/<table:table-row[^>]*>([\s\S]*?)<\/table:table-row>/g)) {
-    const cells = [];
-    for (const cellXml of rowXml[1].matchAll(
-      /<table:table-cell([^>]*)\/>|<table:table-cell([^>]*)>([\s\S]*?)<\/table:table-cell>/g
-    )) {
-      const attrs = cellXml[1] ?? cellXml[2] ?? "";
-      const body = cellXml[3] ?? "";
-      const rep = Number(attrs.match(/table:number-columns-repeated="(\d+)"/)?.[1] ?? "1");
-      const paras = [...body.matchAll(/<text:p[^>]*>([\s\S]*?)<\/text:p>/g)].map((p) =>
-        unescapeXml(p[1].replace(/<[^>]+>/g, ""))
-      );
-      const value = paras.join("\n").trim();
-      for (let i = 0; i < Math.min(rep, 200); i++) cells.push(value);
-    }
-    while (cells.length && cells[cells.length - 1] === "") cells.pop();
-    if (cells.length) rows.push(cells);
-  }
-  const [header, ...rest] = rows;
-  return rest.map((r) => Object.fromEntries(header.map((h, i) => [h.trim(), r[i] ?? ""])));
-}
-
-const rows = readOdsRows(ODS);
+const rows = readOdsRows(ODS, { sheet: SHEET_NAME });
 console.log(`Read ${rows.length} data rows from ${path.basename(ODS)}.`);
 
 // --- classify decisions ---
