@@ -328,8 +328,8 @@ async function main() {
     let q = supabase
       .from('artist_harvested_genres')
       .select(OPT_NAME
-        ? 'id, artist_id, source_platform, raw_tag, tag_count, artists!inner(name)'
-        : 'id, artist_id, source_platform, raw_tag, tag_count')
+        ? 'id, artist_id, source_platform, raw_tag, artists!inner(name)'
+        : 'id, artist_id, source_platform, raw_tag')
       .is('genre_id', null)
       .order('artist_id')
       .range(from, to)

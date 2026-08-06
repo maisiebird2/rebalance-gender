@@ -155,7 +155,6 @@ async function main() {
       artist_id:       r.artist_id,
       source_platform: 'musicbrainz',
       raw_tag:         r.tag,
-      tag_count:       null,  // mb_tags doesn't store the vote count
     }))
 
   if (OPT_LIMIT && toInsert.length > OPT_LIMIT) {

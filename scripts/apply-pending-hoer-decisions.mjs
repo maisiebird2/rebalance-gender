@@ -5,13 +5,13 @@
 // Reads the sheet named "Pending HÖR artists" (errors if it is missing).
 // Sheet columns: Artist | HÖR link | decision | duplicate of | notes
 //
-//   empty page        -> soft delete (deleted = true)
+//   empty page        -> hard-delete artist row
+//   dead link         -> hard-delete artist row
+//   hard delete       -> hard-delete artist row
 //   not eligible      -> directory_status = 'not_eligible'
 //   duplicate         -> directory_status = 'duplicate',
 //                        duplicate_of = "duplicate of" column (an artist UUID)
 //   yes               -> directory_status = 'approved'
-//   dead link         -> hard-delete artist row
-//   hard delete       -> hard-delete artist row
 //   special case      -> no action
 //   manually handled  -> no action
 //   (empty)           -> no action
@@ -24,21 +24,52 @@
 // "dead link" rows carry the bare https://hoer.live/artist/ URL (no slug) and
 // are matched by exact artist name instead.
 //
+// ── Automatic duplicate binding ─────────────────────────────
+//
+// Before the sheet's decisions are applied, every pending artist whose ONLY
+// link is a HÖR link is checked against the other artists holding that same
+// HÖR URL. Such a row is what an import from the HÖR library looks like
+// before anyone matches it to a real profile, so when the URL also sits on
+// exactly one other approved / pending / sc_followee artist, the pending row
+// is that artist under a second id: it is marked directory_status='duplicate'
+// with duplicate_of pointing at the other. More than one candidate and
+// nothing is marked — the case goes to outputs/hoer-dupe-ambiguous-<stamp>.csv
+// for a human.
+//
+// Two pending rows sharing a URL each see exactly one other, so they would
+// point at each other and neither would survive; the survivor is chosen by
+// status (approved > sc_followee > pending, then oldest id) and only the rest
+// are marked. A decision written in the sheet always wins over an automatic
+// bind, and a row being deleted is never bound (nor bound to). Pass
+// --no-bind-duplicates to skip the pass entirely.
+//
+// Rows handled here drop out of export-pending-hoer-artists on the next run
+// on their own: that export selects directory_status='pending', which a
+// duplicate or a deleted row no longer is.
+//
 // Usage: node scripts/apply-pending-hoer-decisions.mjs [--apply] [path/to.ods]
 //        (default is dry-run/verify; default sheet is the file named above)
 
 import "./lib/http-dispatcher.mjs";
 import { createClient } from "@supabase/supabase-js";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readOdsRows } from "./lib/ods-read.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");
+const BIND_DUPES = !process.argv.includes("--no-bind-duplicates");
+const FLAGS = new Set(["--apply", "--no-bind-duplicates"]);
 const ODS =
-  process.argv.slice(2).find((a) => a !== "--apply") ??
+  process.argv.slice(2).find((a) => !FLAGS.has(a)) ??
   path.join(REPO, "..", "pending-hoer-artists-20260726_MOD.ods");
+
+if (!fs.existsSync(ODS)) {
+  console.error(`ODS not found: ${path.resolve(ODS)}`);
+  console.error("Pass a path, or omit it to use the default one level above the repo.");
+  process.exit(1);
+}
 
 for (const line of fs.readFileSync(path.join(REPO, ".env.local"), "utf-8").split("\n")) {
   const t = line.trim();
@@ -58,58 +89,9 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
-// --- minimal ODS reader: unzip content.xml, walk rows/cells of sheet 1 ---
-function unescapeXml(s) {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&amp;/g, "&");
-}
-
 const SHEET_NAME = "Pending HÖR artists";
 
-function readOdsRows(odsPath) {
-  const xml = execFileSync("unzip", ["-p", odsPath, "content.xml"], {
-    encoding: "utf-8",
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  const sheets = new Map(); // name -> inner xml
-  for (const m of xml.matchAll(/<table:table ([^>]*)>([\s\S]*?)<\/table:table>/g)) {
-    const name = m[1].match(/table:name="([^"]*)"/)?.[1];
-    if (name != null) sheets.set(unescapeXml(name), m[2]);
-  }
-  const sheetXml = sheets.get(SHEET_NAME);
-  if (sheetXml == null)
-    throw new Error(
-      `Sheet "${SHEET_NAME}" not found in ${path.basename(odsPath)} — ` +
-        `sheets present: ${[...sheets.keys()].map((n) => `"${n}"`).join(", ") || "(none)"}`
-    );
-  const rows = [];
-  for (const rowXml of sheetXml.matchAll(/<table:table-row[^>]*>([\s\S]*?)<\/table:table-row>/g)) {
-    const cells = [];
-    for (const cellXml of rowXml[1].matchAll(
-      /<table:table-cell([^>]*)\/>|<table:table-cell([^>]*)>([\s\S]*?)<\/table:table-cell>/g
-    )) {
-      const attrs = cellXml[1] ?? cellXml[2] ?? "";
-      const body = cellXml[3] ?? "";
-      const rep = Number(attrs.match(/table:number-columns-repeated="(\d+)"/)?.[1] ?? "1");
-      const paras = [...body.matchAll(/<text:p[^>]*>([\s\S]*?)<\/text:p>/g)].map((p) =>
-        unescapeXml(p[1].replace(/<[^>]+>/g, ""))
-      );
-      const value = paras.join("\n").trim();
-      for (let i = 0; i < Math.min(rep, 200); i++) cells.push(value);
-    }
-    while (cells.length && cells[cells.length - 1] === "") cells.pop();
-    if (cells.length) rows.push(cells);
-  }
-  const [header, ...rest] = rows;
-  return rest.map((r) => Object.fromEntries(header.map((h, i) => [h.trim(), r[i] ?? ""])));
-}
-
-const rows = readOdsRows(ODS);
+const rows = readOdsRows(ODS, { sheet: SHEET_NAME });
 console.log(`Read ${rows.length} data rows from ${path.basename(ODS)}.`);
 
 // --- classify decisions ---
@@ -128,7 +110,7 @@ function parseDupOf(raw) {
 
 const normalizeUrl = (u) => u.trim().replace(/\/+$/, "");
 
-// action: soft_delete | not_eligible | duplicate | approve | hard_delete
+// action: not_eligible | duplicate | approve | hard_delete
 const actionRows = [];
 const unknownDecisions = new Map(); // decision -> [artist names]
 let noopCount = 0;
@@ -140,11 +122,15 @@ for (const r of rows) {
   const dupOf = parseDupOf(r["duplicate of"] ?? "");
   if (NOOP_DECISIONS.has(decision)) { noopCount++; continue; }
   let action;
-  if (decision === "empty page") action = "soft_delete";
+  // "empty page" hard-deletes alongside the two dead-link wordings: a HÖR
+  // page carrying only a name is no more use to the directory than a page
+  // that has gone, and leaving these soft-deleted kept them coming back in
+  // every later review pass.
+  if (decision === "empty page" || decision === "dead link" || decision === "hard delete")
+    action = "hard_delete";
   else if (decision === "not eligible") action = "not_eligible";
   else if (decision === "duplicate") action = "duplicate";
   else if (decision === "yes") action = "approve";
-  else if (decision === "dead link" || decision === "hard delete") action = "hard_delete";
   else {
     if (!unknownDecisions.has(decision)) unknownDecisions.set(decision, []);
     unknownDecisions.get(decision).push(name);
@@ -171,7 +157,7 @@ async function fetchAllHoerLinks() {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("artist_links")
-      .select("artist_id, url, artists(id, name, directory_status, duplicate_of, deleted)")
+      .select("artist_id, url, not_found, artists(id, name, directory_status, duplicate_of, deleted)")
       .eq("platform", "hoer")
       .range(from, from + 999);
     if (error) throw new Error(`fetch hoer links: ${error.message}`);
@@ -218,7 +204,6 @@ for (const r of actionRows) {
 // be in place on one of the matched artists (e.g. a dup already marked, an
 // approval already granted). Such rows are counted and skipped.
 function satisfies(a, action, dupOf) {
-  if (action === "soft_delete") return a.deleted;
   if (action === "not_eligible") return a.directory_status === "not_eligible";
   if (action === "approve") return a.directory_status === "approved" && !a.deleted;
   if (action === "duplicate") return a.directory_status === "duplicate" && a.duplicate_of === dupOf;
@@ -239,7 +224,7 @@ for (const r of actionRows) {
       ? byUrl.get(r.url) ?? []
       : byName.get(r.name.toLowerCase()) ?? bareLookup.get(r.name.toLowerCase()) ?? [];
   if (candidates.length === 0) {
-    if (r.action === "hard_delete" || r.action === "soft_delete") { alreadyGone++; continue; }
+    if (r.action === "hard_delete") { alreadyGone++; continue; }
     problems.push(`NO MATCH for "${r.name}" (${r.url || "no url"}) — ${r.action}`);
     continue;
   }
@@ -284,6 +269,138 @@ if (problems.length) {
   throw new Error(`${problems.length} unresolved rows — fix the sheet or the matcher, then re-run.`);
 }
 
+const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+
+// --- automatic duplicate binding ---
+// A pending artist whose only link is a HÖR link, on a URL that exactly one
+// other approved / pending / sc_followee artist also holds, is that artist
+// under a second id. Anything the sheet already decides is left alone.
+const STATUS_RANK = { approved: 0, sc_followee: 1, pending: 2 };
+const ELIGIBLE = new Set(Object.keys(STATUS_RANK));
+const rankBetter = (x, y) =>
+  (STATUS_RANK[x.directory_status] ?? 9) - (STATUS_RANK[y.directory_status] ?? 9) || x.id.localeCompare(y.id);
+
+if (BIND_DUPES) {
+  const eligibleByUrl = new Map(); // url -> [artist]
+  const urlOf = new Map(); // artist_id -> url
+  for (const l of hoerLinks) {
+    const a = l.artists;
+    if (!a || a.deleted || l.not_found) continue;
+    const u = normalizeUrl(l.url ?? "");
+    if (!u || u === BARE_URL) continue;
+    urlOf.set(a.id, u);
+    if (!ELIGIBLE.has(a.directory_status)) continue;
+    if (!eligibleByUrl.has(u)) eligibleByUrl.set(u, []);
+    if (!eligibleByUrl.get(u).some((x) => x.id === a.id)) eligibleByUrl.get(u).push(a);
+  }
+
+  // Candidates are the pending rows; "only a HÖR link" needs their other
+  // links, which the hoer-only query above cannot show.
+  const pendingIds = [...new Set(
+    hoerLinks.filter((l) => l.artists && !l.artists.deleted && l.artists.directory_status === "pending")
+      .map((l) => l.artists.id)
+  )];
+  const hasOtherLink = new Set();
+  for (let i = 0; i < pendingIds.length; i += 200) {
+    const { data, error } = await supabase
+      .from("artist_links")
+      .select("artist_id, platform, not_found")
+      .in("artist_id", pendingIds.slice(i, i + 200));
+    if (error) throw new Error(`fetch candidate links: ${error.message}`);
+    for (const l of data) if (l.platform !== "hoer" && !l.not_found) hasOtherLink.add(l.artist_id);
+  }
+  const candidates = pendingIds.filter((id) => !hasOtherLink.has(id));
+  console.log(
+    `\nAutomatic duplicate binding: ${candidates.length} of ${pendingIds.length} pending artists hold only a HÖR link.`
+  );
+
+  const proposals = new Map(); // artist_id -> target artist
+  const ambiguous = [];
+  const byIdIndex = new Map();
+  for (const l of hoerLinks) if (l.artists) byIdIndex.set(l.artists.id, l.artists);
+
+  for (const id of candidates) {
+    if (resolved.has(id)) continue; // a hand-written decision outranks the bind
+    const u = urlOf.get(id);
+    if (!u) continue;
+    const others = (eligibleByUrl.get(u) ?? []).filter((o) => o.id !== id);
+    if (others.length === 0) continue;
+    if (others.length === 1) proposals.set(id, others[0]);
+    else ambiguous.push({ artist: byIdIndex.get(id), url: u, others });
+  }
+
+  // Two pending rows on one URL each nominate the other; keep the better-
+  // ranked one so the pair does not annihilate itself.
+  let cyclesBroken = 0;
+  for (const group of eligibleByUrl.values()) {
+    const proposers = group.filter((g) => proposals.has(g.id));
+    if (proposers.length < 2) continue;
+    const survivor = [...group].sort(rankBetter)[0];
+    for (const p of proposers) {
+      if (p.id === survivor.id) proposals.delete(p.id);
+      else proposals.set(p.id, survivor);
+    }
+    cyclesBroken++;
+  }
+  if (cyclesBroken) console.log(`  mutual proposals resolved by survivor rank: ${cyclesBroken}`);
+
+  // Never bind to a row this run deletes, and never bind a row it deletes.
+  let droppedForDelete = 0;
+  for (const [id, target] of [...proposals]) {
+    const targetAction = resolved.get(target.id)?.action;
+    if (resolved.has(id) || targetAction === "hard_delete") {
+      proposals.delete(id);
+      droppedForDelete++;
+    }
+  }
+  if (droppedForDelete) console.log(`  dropped because the row or its target is being deleted: ${droppedForDelete}`);
+
+  const targetStatus = {};
+  for (const t of proposals.values())
+    targetStatus[t.directory_status] = (targetStatus[t.directory_status] ?? 0) + 1;
+  console.log(`  to bind as duplicates: ${proposals.size}${proposals.size ? `  target status: ${JSON.stringify(targetStatus)}` : ""}`);
+  console.log(`  ambiguous (more than one candidate): ${ambiguous.length}`);
+
+  if (ambiguous.length) {
+    const ambPath = path.join(REPO, "outputs", `hoer-dupe-ambiguous-${stamp}.csv`);
+    fs.mkdirSync(path.dirname(ambPath), { recursive: true });
+    const q = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    fs.writeFileSync(
+      ambPath,
+      ["artist_id,name,hoer_url,candidate_count,candidates"]
+        .concat(
+          ambiguous.map((r) =>
+            [
+              r.artist?.id ?? "",
+              r.artist?.name ?? "",
+              r.url,
+              r.others.length,
+              r.others.map((o) => `${o.id} "${o.name}" [${o.directory_status}]`).join(" | "),
+            ]
+              .map(q)
+              .join(",")
+          )
+        )
+        .join("\n") + "\n"
+    );
+    console.log(`  ambiguous cases written to ${path.relative(REPO, ambPath)}`);
+  }
+
+  // Fold the binds into `resolved` so the summary, audit trail and apply
+  // step below treat them exactly like a "duplicate" row from the sheet.
+  for (const [id, target] of proposals) {
+    const artist = byIdIndex.get(id);
+    resolved.set(id, {
+      artist,
+      action: "duplicate",
+      dupOf: target.id,
+      name: artist?.name ?? "",
+      url: urlOf.get(id) ?? "",
+      auto: true,
+    });
+  }
+}
+
 // --- verify duplicate targets ---
 const dupTargets = new Set([...resolved.values()].filter((r) => r.action === "duplicate").map((r) => r.dupOf));
 const targetInfo = new Map();
@@ -300,7 +417,7 @@ for (const t of dupTargets) {
   if (!info) throw new Error(`Duplicate target ${t} not found in DB.`);
   if (info.deleted) throw new Error(`Duplicate target ${t} ("${info.name}") is soft-deleted.`);
   const r = resolved.get(t);
-  if (r && (r.action === "hard_delete" || r.action === "soft_delete"))
+  if (r && r.action === "hard_delete")
     throw new Error(`Duplicate target ${t} ("${info.name}") is itself scheduled for ${r.action}.`);
 }
 
@@ -319,8 +436,12 @@ const statusCount = (rs) => {
   return JSON.stringify(c);
 };
 console.log(`\nResolved ${resolved.size} artists:`);
-for (const [action, rs] of byAction)
-  console.log(`  ${action.padEnd(12)} ${String(rs.length).padStart(4)}   current: ${statusCount(rs)}`);
+for (const [action, rs] of byAction) {
+  const auto = rs.filter((r) => r.auto).length;
+  console.log(
+    `  ${action.padEnd(12)} ${String(rs.length).padStart(4)}${auto ? ` (${auto} auto-bound)` : ""}   current: ${statusCount(rs)}`
+  );
+}
 
 const nonPending = [...resolved.values()].filter(
   (r) => r.artist.directory_status !== "pending" || r.artist.deleted
@@ -339,16 +460,24 @@ if (!APPLY) {
 }
 
 // --- audit trail ---
-const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
 const auditPath = path.join(REPO, "outputs", `apply-pending-hoer-decisions-${stamp}.csv`);
 fs.mkdirSync(path.dirname(auditPath), { recursive: true });
 const esc = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 fs.writeFileSync(
   auditPath,
-  ["artist_id,name,url,action,duplicate_of,prior_status,prior_deleted"]
+  ["artist_id,name,url,action,duplicate_of,prior_status,prior_deleted,source"]
     .concat(
       [...resolved.values()].map((r) =>
-        [r.artist.id, r.name, r.url, r.action, r.dupOf, r.artist.directory_status, String(r.artist.deleted)]
+        [
+          r.artist.id,
+          r.name,
+          r.url,
+          r.action,
+          r.dupOf,
+          r.artist.directory_status,
+          String(r.artist.deleted),
+          r.auto ? "auto" : "sheet",
+        ]
           .map(esc)
           .join(",")
       )
@@ -371,7 +500,6 @@ async function updateIn(list, patch, label) {
 
 await updateIn(ids("not_eligible"), { directory_status: "not_eligible" }, "not_eligible");
 await updateIn(ids("approve"), { directory_status: "approved" }, "approve");
-await updateIn(ids("soft_delete"), { deleted: true }, "soft delete");
 
 let dupDone = 0;
 for (const r of byAction.get("duplicate") ?? []) {
