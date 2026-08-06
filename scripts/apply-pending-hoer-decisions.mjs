@@ -206,6 +206,7 @@ const resolved = new Map(); // artist_id -> { artist, action, dupOf, name, url }
 const problems = [];
 let alreadyGone = 0;
 let alreadyApplied = 0;
+let resolvedAsDuplicate = 0;
 
 const describe = (as) =>
   as.map((a) => `${a.id} [${a.directory_status}${a.deleted ? ", deleted" : ""}]`).join(", ");
@@ -230,13 +231,26 @@ for (const r of actionRows) {
   //   - 'yes' must resolve to exactly one artist — approving several
   //     look-alikes at once needs a human.
   const remaining = candidates.filter((a) => !satisfies(a, r.action, r.dupOf));
+  // An artist already marked 'duplicate' has been resolved — by
+  // bind-hoer-duplicates or an earlier pass — and whatever the sheet says
+  // about it now belongs to the artist its duplicate_of points at, which
+  // is one of the other candidates on this URL. Acting on the duplicate
+  // itself would write a decision onto a row nothing reads. The exception
+  // is a sheet row whose own decision is 'duplicate': that is an explicit
+  // instruction to (re-)point one, so it still applies.
+  const actionable =
+    r.action === "duplicate" ? remaining : remaining.filter((a) => a.directory_status !== "duplicate");
+  // Falling back to the pending-only rule uses `actionable`, not
+  // `candidates`: a URL held by one live artist plus one resolved duplicate
+  // is a single-candidate case, not an ambiguous one.
   let targets =
-    candidates.length === 1
-      ? remaining
-      : remaining.filter((a) => a.directory_status === "pending" && !a.deleted);
+    actionable.length === 1
+      ? actionable
+      : actionable.filter((a) => a.directory_status === "pending" && !a.deleted);
   if (r.action === "duplicate") targets = targets.filter((a) => a.id !== r.dupOf);
   if (targets.length === 0) {
     if (remaining.length < candidates.length) { alreadyApplied++; continue; }
+    if (actionable.length === 0) { resolvedAsDuplicate++; continue; }
     problems.push(`NO ELIGIBLE match for "${r.name}" (${r.url || "by name"}): ${describe(candidates)}`);
     continue;
   }
@@ -255,6 +269,8 @@ for (const r of actionRows) {
 }
 
 if (alreadyGone) console.log(`  delete rows with no DB match (already gone, skipping): ${alreadyGone}`);
+if (resolvedAsDuplicate)
+  console.log(`  rows whose only match is already bound as a duplicate (skipping): ${resolvedAsDuplicate}`);
 if (alreadyApplied) console.log(`  rows whose end-state is already in place (skipping): ${alreadyApplied}`);
 if (problems.length) {
   for (const p of problems) console.log(`  ${p}`);
