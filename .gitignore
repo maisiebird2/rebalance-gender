@@ -39,6 +39,10 @@ hoer-exact-ambiguous-*.csv
 hoer-internal-dupes-*.csv
 hoer-dupe-review-applied-*.csv
 hoer-link-migration-*.csv
+hoer-bind-ambiguous-*.csv
+hoer-dupe-artist-delete-*.csv
+# generated review sheets, audit trails and ambiguity reports
+/outputs/
 __pycache__/
 *.pyc
 
