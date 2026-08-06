@@ -13,22 +13,24 @@
 //   artist_id    — the UUID (what apply-pending-hoer-decisions matches on
 //                  when the HÖR link is ambiguous)
 //   HÖR link     — the stored URL, hyperlinked to itself
-//   decision     — pre-filled "hard delete" for a dead HÖR page, else blank
+//   decision     — blank, unless --check-links pre-fills "hard delete"
 //   duplicate of — always blank; filled in by the reviewer
 //   notes        — always blank; filled in by the reviewer
 //
 // The artist hyperlinks only resolve for a signed-in admin: /artist/<id>
 // 404s for non-approved artists, and pending is by definition not approved.
 //
-// Dead-page detection (verified 2026-07-26, re-verified 2026-08-04):
+// Dead-page detection is OPT-IN, via --check-links. It is by far the slow
+// part: hoer-http throttles every caller to 300ms, so a full pass costs
+// roughly (rows x 0.3s) — minutes, where the rest of the export takes
+// seconds. Most runs only want the current queue as a sheet, so the
+// default skips it and leaves the decision column blank.
+//
+// How it detects one (verified 2026-07-26, re-verified 2026-08-04):
 // hoer.live answers a dead artist page with a 302 whose *relative*
 // Location is /404/, which lands on /contest_entry/404-lxpanda/. A couple
 // of pages answer a plain 404 instead, so both are treated as dead. HEAD
 // requests lie — they return 200 for dead pages — so this must be a GET.
-//
-// Probing runs by default and is the slow part: hoer-http throttles every
-// caller to 300ms, so expect roughly (rows x 0.3s). Pass --no-check-links
-// to skip it and emit a blank decision column instead.
 //
 // not_found hoer rows are excluded by default — those record "we looked
 // and there is no HÖR page", not a link. Pass --include-not-found to keep
@@ -39,7 +41,7 @@
 // Usage (from rebalance-gender/):
 //
 //   npm run export-pending-hoer-artists
-//   npm run export-pending-hoer-artists -- --no-check-links
+//   npm run export-pending-hoer-artists -- --check-links
 //   npm run export-pending-hoer-artists -- --sort=name
 //   npm run export-pending-hoer-artists -- --out=outputs/my-sheet.ods
 //
@@ -64,7 +66,7 @@ function argValue(name, fallback) {
 }
 const SORT = argValue("sort", "name");
 const INCLUDE_NOT_FOUND = args.includes("--include-not-found");
-const CHECK_LINKS = !args.includes("--no-check-links");
+const CHECK_LINKS = args.includes("--check-links");
 
 if (!["name", "status"].includes(SORT)) {
   console.error(`--sort must be "name" or "status" (got "${SORT}").`);
@@ -144,7 +146,7 @@ async function main() {
     }
     console.log(`  probe complete: ${dead.size} dead, ${withUrl.length - dead.size} live`);
   } else {
-    console.log("\nSkipping the dead-link probe (--no-check-links); decision column left blank.");
+    console.log("\nNo dead-link probe (pass --check-links to run one); decision column left blank.");
   }
 
   const ods = buildOds({
