@@ -344,7 +344,6 @@ async function main() {
         artist_id:       artistId,
         source_platform: 'spotify',
         raw_tag:         tag,
-        tag_count:       null,   // Spotify doesn't provide a weight per genre
       })
     }
     totalTags += tags.length

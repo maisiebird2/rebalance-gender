@@ -1069,8 +1069,7 @@ source after HÖR, so directory genre coverage dropped materially; Spotify
 ### 7f. `harvest-genres-spotify.mjs`
 For each artist with a Spotify link, calls `GET /artists/{id}` and
 writes the returned genre array into `artist_harvested_genres` with
-`source_platform = 'spotify'`. Spotify does not provide a per-genre
-weight, so `tag_count` is null for these rows. Results are cached to
+`source_platform = 'spotify'`. Results are cached to
 `.cache/spotify_genres/`. Must run after Phase 3.
 
 ```bash
