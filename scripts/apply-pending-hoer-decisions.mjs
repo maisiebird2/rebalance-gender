@@ -33,7 +33,8 @@
 // on their own: that export selects directory_status='pending', which a
 // duplicate or a deleted row no longer is.
 //
-// Usage: node scripts/apply-pending-hoer-decisions.mjs [--apply] [path/to.ods]
+// Usage: npm run apply-pending-hoer-decisions [-- --apply] [-- path/to.ods]
+//        npx tsx scripts/apply-pending-hoer-decisions.mjs --apply
 //        (default is dry-run/verify; default sheet is the file named above)
 
 import "./lib/http-dispatcher.mjs";

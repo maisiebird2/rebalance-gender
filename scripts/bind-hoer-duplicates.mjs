@@ -42,6 +42,7 @@
 //
 //   npm run bind-hoer-duplicates
 //   npm run bind-hoer-duplicates -- --apply
+//   npx tsx scripts/bind-hoer-duplicates.mjs --apply
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY).
 // ============================================================

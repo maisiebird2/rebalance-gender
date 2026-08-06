@@ -1143,6 +1143,147 @@ node scripts/qc-links.mjs --limit=100         # first N artists
 node scripts/qc-links.mjs --csv               # output issues as CSV
 ```
 
+### HÖR pending-artist review cycle
+
+The HÖR library sync (`harvest-hoer-library` → `seed-hoer-terms` →
+`enrich-hoer-terms` → `integrate-hoer-artists`) seeds every artist it
+finds as `directory_status='pending'` carrying a single
+`platform='hoer'` link and nothing else. Deciding what those rows
+actually are — a real artist to approve, a second copy of one already
+in the directory, a dead HÖR page — is manual work, and these three
+scripts are the loop around it.
+
+Run them in this order. It matters:
+
+```bash
+npm run export-pending-hoer-artists          # 1. queue → .ods
+#    …review the sheet by hand in LibreOffice…
+npm run apply-pending-hoer-decisions -- --apply   # 2. apply what you wrote
+npm run bind-hoer-duplicates -- --apply           # 3. auto-bind the rest
+```
+
+Steps 2 and 3 are **dry-run without `--apply`**, and each writes an
+audit CSV of every row it is about to change into `outputs/` before it
+touches anything. Run them bare first and read the summary.
+
+Nothing removes rows from the queue explicitly: the export selects
+`directory_status='pending'`, so anything marked `duplicate`,
+`not_eligible`, `approved` or deleted simply stops appearing on the
+next export.
+
+#### 1. `export-pending-hoer-artists.mjs` — read-only
+
+Writes `outputs/pending-hoer-artists-<stamp>.ods`, one sheet named
+`Pending HÖR artists`, one row per non-deleted `pending` artist holding
+a `platform='hoer'` link. Columns: `Artist` (hyperlinked to the site
+profile), `artist_id`, `HÖR link` (hyperlinked to itself), then the
+three you fill in — `decision`, `duplicate of`, `notes`.
+
+The artist hyperlinks only resolve for a signed-in admin: `/artist/<id>`
+404s for anything not approved, and `pending` is by definition not
+approved.
+
+`not_found` hoer rows are excluded — those record "we looked and there
+is no HÖR page", not a link. `--include-not-found` keeps them.
+
+`--check-links` (opt-in) probes every HÖR page and pre-fills `decision`
+with `hard delete` for dead ones. It is the slow part — `hoer-http`
+throttles every caller to 300ms, so budget roughly `rows × 0.3s`, versus
+seconds for the rest of the export. Dead-page detection is not obvious
+and is easy to get wrong: hoer.live answers a dead artist page with a
+302 whose *relative* `Location` is `/404/`, landing on
+`/contest_entry/404-lxpanda/`; a few answer a plain 404. **HEAD requests
+lie** — they return 200 for dead pages — so it must be a GET. The rule
+is "404, or redirected off `/artist/`", which survives HÖR changing that
+landing page; a redirect that stays under `/artist/` is a slug change,
+not a dead page. Network faults count as live, so a flaky probe never
+proposes a delete.
+
+```bash
+npm run export-pending-hoer-artists
+npm run export-pending-hoer-artists -- --check-links
+npm run export-pending-hoer-artists -- --out=outputs/my-sheet.ods
+```
+
+#### 2. `apply-pending-hoer-decisions.mjs` — applies the sheet
+
+Reads the `decision` column back and applies it. Sheet-driven only; it
+infers nothing.
+
+| decision | effect |
+| --- | --- |
+| `empty page`, `dead link`, `hard delete` | hard-delete the artist row |
+| `not eligible` | `directory_status='not_eligible'` |
+| `duplicate` | `directory_status='duplicate'`, `duplicate_of` = the `duplicate of` column (artist UUID, or a profile URL ending in one) |
+| `yes` | `directory_status='approved'` |
+| `special case`, `manually handled`, blank | no action |
+
+Any other value is skipped and listed for review rather than guessed at.
+`empty page` hard-deletes rather than soft-deleting: a HÖR page carrying
+only a name is no more use than one that has gone, and soft-deleting
+them kept the rows coming back every review pass.
+
+Rows are matched to artists by their HÖR URL. One URL can sit on several
+artists (duplicate-resolution copies the link onto survivors), in which
+case only `pending` ones are acted on; `yes` must resolve to exactly one
+artist, since approving several look-alikes at once needs a human. A few
+sheet rows carry the bare `https://hoer.live/artist` URL with no slug
+and are matched by exact name instead. Anything unresolved aborts the
+whole run — fix the sheet, then re-run.
+
+Before deleting, `hoer_terms` rows are fully unbound (`artist_id`,
+`bind_method`, `bound_at` to null together): the FK is `ON DELETE SET
+NULL`, but `hoer_terms_bound_consistency` requires those three to be
+null as a set, so the delete fails otherwise.
+
+#### 3. `bind-hoer-duplicates.mjs` — auto-binds the obvious duplicates
+
+Handles what the sheet shouldn't have to: a pending row that is plainly
+another artist under a second id. **Run it after step 2**, so a
+hand-written decision always wins — once the sheet is applied, a deleted
+row is gone and a decided row is no longer `pending`, so neither is a
+candidate here.
+
+- **candidate** — `pending`, not deleted, and *every* link row it has is
+  the `hoer` one. A row with other links has been matched to something
+  by a harvester and is no longer a bare import.
+- **target** — any non-deleted artist on the same URL whose status is
+  `approved`, `pending`, `sc_followee`, `obscure` or `rejected`.
+- **exactly one target** → mark the candidate `duplicate`,
+  `duplicate_of` = that artist. **More than one** → mark nothing, write
+  the case to `outputs/hoer-dupe-ambiguous-<stamp>.csv`. **None** →
+  nothing.
+
+`obscure` and `rejected` count as targets even though neither appears in
+the public directory: a second pending row for an artist somebody has
+already looked at and set aside is still a duplicate, and leaving it
+unbound only puts it back in front of the next reviewer.
+
+Two pending rows sharing a URL each see exactly one other, so applying
+the rule literally makes them duplicates *of each other* and neither
+survives. The survivor is picked by status — `approved` > `sc_followee`
+> `pending` > `obscure` > `rejected`, then oldest id — and only the rest
+are marked.
+
+Snapshot, 2026-08-06: 735 pending artists with a HÖR link, all 735
+holding only that link; 110 bindable (32 `approved`, 54 `sc_followee`,
+17 `obscure`, 7 `pending` targets), 7 mutual pairs resolved by rank, 2
+ambiguous. Expect these to move fast while a review pass is underway —
+the queue read 1,226 pending / 174 bindable a few hours earlier the same
+day. The ambiguous count is the stable one; those need a human and stay
+put until they get one.
+
+> **Pagination gotcha, fixed 2026-08-06 — worth knowing before you write
+> the next script that reads this table.** `fetchAllHoerLinks` paginated
+> with `.range()` over a select carrying no `ORDER BY`. Postgres
+> guarantees no row order without one, so consecutive pages repeated some
+> rows and skipped others: three runs in one afternoon reported 9,678 /
+> 9,677 / 9,642 hoer links against an authoritative `count(*)` of 7,290.
+> The index used to match sheet rows was silently dropping links, in a
+> script that hard-deletes artists. Any `.range()` loop needs a unique
+> `ORDER BY` — which is why `makeFetchAll` in `scripts/lib/hoer-db.mjs`
+> takes an `orderCol` and defaults it to `id`.
+
 ### Genre cleanup toolkit *(as-needed; see `GENRES.md`)*
 
 Run `genre-report.mjs` first — it drives the rest. All support
