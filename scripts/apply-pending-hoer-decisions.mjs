@@ -9,6 +9,7 @@
 //   dead link         -> hard-delete artist row
 //   hard delete       -> hard-delete artist row
 //   not eligible      -> directory_status = 'not_eligible'
+//   video doesn't load -> directory_status = 'rejected'
 //   duplicate         -> directory_status = 'duplicate',
 //                        duplicate_of = "duplicate of" column (an artist UUID)
 //   yes               -> directory_status = 'approved'
@@ -96,7 +97,7 @@ function parseDupOf(raw) {
 
 const normalizeUrl = (u) => u.trim().replace(/\/+$/, "");
 
-// action: not_eligible | duplicate | approve | hard_delete
+// action: not_eligible | rejected | duplicate | approve | hard_delete
 const actionRows = [];
 const unknownDecisions = new Map(); // decision -> [artist names]
 let noopCount = 0;
@@ -107,6 +108,11 @@ for (const r of rows) {
   const url = normalizeUrl(r["HÖR link"] ?? "");
   const dupOf = parseDupOf(r["duplicate of"] ?? "");
   if (NOOP_DECISIONS.has(decision)) { noopCount++; continue; }
+  // LibreOffice autocorrects a typed apostrophe into U+2019, so the sheet
+  // holds "video doesn’t load", not "video doesn't load". Compare against a
+  // form with both apostrophes folded together; `decision` itself stays as
+  // typed so the unrecognized-value report shows what is really in the cell.
+  const canon = decision.toLowerCase().replace(/[‘’]/g, "'");
   let action;
   // "empty page" hard-deletes alongside the two dead-link wordings: a HÖR
   // page carrying only a name is no more use to the directory than a page
@@ -117,6 +123,7 @@ for (const r of rows) {
   else if (decision === "not eligible") action = "not_eligible";
   else if (decision === "duplicate") action = "duplicate";
   else if (decision === "yes") action = "approve";
+  else if (canon === "video doesn't load") action = "rejected";
   else {
     if (!unknownDecisions.has(decision)) unknownDecisions.set(decision, []);
     unknownDecisions.get(decision).push(name);
@@ -197,6 +204,7 @@ for (const r of actionRows) {
 // approval already granted). Such rows are counted and skipped.
 function satisfies(a, action, dupOf) {
   if (action === "not_eligible") return a.directory_status === "not_eligible";
+  if (action === "rejected") return a.directory_status === "rejected";
   if (action === "approve") return a.directory_status === "approved" && !a.deleted;
   if (action === "duplicate") return a.directory_status === "duplicate" && a.duplicate_of === dupOf;
   return false; // hard_delete: a surviving row never satisfies it
@@ -372,6 +380,7 @@ async function updateIn(list, patch, label) {
 }
 
 await updateIn(ids("not_eligible"), { directory_status: "not_eligible" }, "not_eligible");
+await updateIn(ids("rejected"), { directory_status: "rejected" }, "rejected");
 await updateIn(ids("approve"), { directory_status: "approved" }, "approve");
 
 let dupDone = 0;
