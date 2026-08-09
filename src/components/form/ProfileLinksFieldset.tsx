@@ -1,7 +1,7 @@
 "use client";
 
 import type { LinkPlatform, Platform } from "@/lib/types";
-import { platformPlaceholder } from "@/lib/platforms";
+import { platformDisplayLabel, platformPlaceholder } from "@/lib/platforms";
 import ProfileLinkField from "@/components/ProfileLinkField";
 
 /**
@@ -36,13 +36,14 @@ export default function ProfileLinksFieldset({
       {platforms.map((p) => {
         const platform = p.key as LinkPlatform;
         const isNotFound = notFound?.[platform] ?? false;
+        const label = platformDisplayLabel(p);
         return (
           <div key={platform} className="flex flex-col gap-1">
             <ProfileLinkField
               platform={platform}
-              label={p.label}
+              label={label}
               name={`link_${platform}`}
-              placeholder={platformPlaceholder(p.label)}
+              placeholder={platformPlaceholder(label)}
               value={values[platform] ?? ""}
               onChange={(v) => onChange(platform, v)}
               disabled={isNotFound}
