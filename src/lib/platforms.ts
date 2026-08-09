@@ -23,9 +23,25 @@ export async function getPlatforms(client: SupabaseClient): Promise<Platform[]> 
   return data ?? [];
 }
 
+/**
+ * Front-end overrides for the labels stored in the `platforms` table. The table
+ * keeps the full name (still used in admin screens, e.g. missing-links), while
+ * visitors see the shorter form on artist pages and in the submit/edit/revise
+ * link fields — Resident Advisor is universally known as RA.
+ */
+const DISPLAY_LABEL_OVERRIDES: Record<string, string> = {
+  resident_advisor: "RA",
+};
+
+/** The label a visitor sees for a platform (see DISPLAY_LABEL_OVERRIDES). */
+export function platformDisplayLabel(platform: Platform): string {
+  return DISPLAY_LABEL_OVERRIDES[platform.key] ?? platform.label;
+}
+
 /** Resolves a platform key (e.g. "soundcloud") to its display label. */
 export function platformLabel(platforms: Platform[], key: string): string {
-  return platforms.find((p) => p.key === key)?.label ?? key;
+  const platform = platforms.find((p) => p.key === key);
+  return platform ? platformDisplayLabel(platform) : key;
 }
 
 /**
