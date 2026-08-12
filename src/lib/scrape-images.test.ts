@@ -12,7 +12,9 @@ import {
   SCRAPE_ONLY_PLATFORMS,
 } from "./scrape-images";
 
-const QOBUZ_PLACEHOLDER = "https://static-www.qobuz.com/img/qobuz_logo_dark.svg";
+// The SoundCloud default grey avatar — the placeholder registry's one
+// remaining pattern (see src/lib/images/placeholders.ts).
+const SC_DEFAULT_AVATAR = "https://i1.sndcdn.com/images/default_avatar_500x500.png";
 
 // ── Fake Supabase admin client ───────────────────────────────────────
 // scrapeArtistImages() makes these calls:
@@ -96,7 +98,7 @@ function stubFetch(map: Record<string, FetchKind>) {
       kind === "image"
         ? ogHtml("https://cdn.example/pic.jpg")
         : kind === "placeholder"
-          ? ogHtml(QOBUZ_PLACEHOLDER)
+          ? ogHtml(SC_DEFAULT_AVATAR)
           : `<html><head><title>no image here</title></head></html>`;
     return { ok: true, status: 200, body: null, text: async () => html };
   });
@@ -500,17 +502,20 @@ describe("scrapeArtistImages — URL-change handling", () => {
   });
 
   it("rejects a known platform placeholder as a no-image result rather than storing it", async () => {
+    // A SoundCloud page for an account with no photo sets og:image to the
+    // default grey avatar. The scrape only reaches such a page as the
+    // transient-failure fallback above, which is why the failure row is here.
     const { client, calls } = makeClient({
-      artist: approvedArtist([{ platform: "qobuz", url: "https://qobuz/artist" }]),
+      artist: approvedArtist([{ platform: "soundcloud", url: "https://soundcloud/a" }]),
       images: [],
-      failures: [],
+      failures: [{ service: "image:soundcloud", status: "fetch_failed", url: "https://soundcloud/a" }],
     });
-    stubFetch({ "https://qobuz/artist": "placeholder" });
+    stubFetch({ "https://soundcloud/a": "placeholder" });
 
     const result = await scrapeArtistImages("a1", client);
 
     expect(result.stored).toEqual([]);
-    expect(result.failed).toEqual(["qobuz"]);
+    expect(result.failed).toEqual(["soundcloud"]);
     // No image stored; the no-image result is recorded in harvest_failures.
     expect(calls.upserts.some((u) => u.table === "artist_images")).toBe(false);
     const failUpsert = calls.upserts.find((u) => u.table === "harvest_failures");
@@ -535,15 +540,15 @@ describe("scrapeArtistImages — URL-change handling", () => {
 
 describe("isPlaceholderImageUrl", () => {
   it("matches a known placeholder at any variant", () => {
-    expect(isPlaceholderImageUrl(QOBUZ_PLACEHOLDER)).toBe(true);
-    expect(isPlaceholderImageUrl("https://static-www.qobuz.com/img/qobuz_logo.png")).toBe(true);
+    expect(isPlaceholderImageUrl(SC_DEFAULT_AVATAR)).toBe(true);
+    expect(isPlaceholderImageUrl("https://i1.sndcdn.com/images/default_avatar.png")).toBe(true);
   });
 
   it("does not match a real image URL", () => {
     expect(isPlaceholderImageUrl("https://cdn.example/real-photo.jpg")).toBe(false);
-    expect(
-      isPlaceholderImageUrl("https://static.qobuz.com/images/covers/real-artist-photo.jpg")
-    ).toBe(false);
+    // A real SoundCloud avatar from the same CDN — the near-miss the
+    // pattern has to stay narrow enough to let through.
+    expect(isPlaceholderImageUrl("https://i1.sndcdn.com/avatars-abc-t500x500.jpg")).toBe(false);
   });
 });
 
