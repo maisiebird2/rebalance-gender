@@ -59,7 +59,6 @@ describe("placeholder registry", () => {
   });
 
   it("names the placeholder it matched", () => {
-    expect(describePlaceholderImageUrl(QOBUZ_LOGO)).toBe("Qobuz logo");
     expect(describePlaceholderImageUrl(SC_DEFAULT_AVATAR)).toBe("SoundCloud default grey avatar");
     expect(describePlaceholderImageUrl("https://cdn.example/real.jpg")).toBeNull();
   });

@@ -6,13 +6,18 @@
 // platform default placeholders, some got scraped and stored (and
 // re-hosted) as if they were real profile photos:
 //
-//   - Qobuz's logo, served as og:image for artists with no photo —
-//     any artist_images.source_url matching the logo filename stem.
-//     Rejected going forward by isPlaceholderImageUrl in
-//     src/lib/images/placeholders.ts.
 //   - SoundCloud's generic grey default_avatar (returned as avatar_url
 //     for accounts with no photo). Rejected going forward by
-//     isDefaultAvatarUrl in scripts/lib/soundcloud.mjs.
+//     isDefaultAvatarUrl in scripts/lib/soundcloud.mjs, and by
+//     isPlaceholderImageUrl in src/lib/images/placeholders.ts for
+//     anything that reaches it as an og:image instead.
+//   - Qobuz's logo, served as og:image for artists with no photo. This
+//     is history rather than a live case: the stored qobuz rows were
+//     purged when qobuz was retired as an image source, and the
+//     qobuz-logo pattern was then dropped from the registry, so this
+//     script can no longer match one. Nothing can create one either —
+//     qobuz is not in PLATFORM_PRIORITY, so it is never fetched (see
+//     src/lib/scrape-images.ts).
 //
 // The forward-going code only stops *new* placeholders; existing rows
 // are never re-checked (they already have an artist_images row, so
@@ -22,13 +27,14 @@
 // For each matched row it does the same three things as
 // prune-artist-images.mjs — remove the re-hosted Storage object, delete
 // the artist_images row — then, instead of *clearing* harvest_failures,
-// it *records* one (image-enrich:<platform> / no_og_image for og
-// placeholders, image-sync:soundcloud / default_avatar for SoundCloud),
-// with the artist's current link URL. That way the next run treats the
-// platform as a known no-image result (skipped until the link changes),
-// exactly as if the now-rejecting forward code had produced it — rather
-// than immediately re-fetching the same placeholder (an og:image
-// re-fetch, or a wasted SoundCloud /resolve API call, per artist).
+// it *records* one (image:<platform> / placeholder — the same service
+// key and status the live rejection paths use, via imageFailureService
+// and IMAGE_FAILURE_STATUS), with the artist's current link URL. That
+// way the next run treats the platform as a known no-image result
+// (skipped until the link changes), exactly as if the now-rejecting
+// forward code had produced it — rather than immediately re-fetching
+// the same placeholder (an og:image re-fetch, or a wasted SoundCloud
+// /resolve API call, per artist).
 //
 // Idempotent and re-runnable: matched rows are gone after the first
 // pass, and the failure upsert is keyed on (artist_id, service).

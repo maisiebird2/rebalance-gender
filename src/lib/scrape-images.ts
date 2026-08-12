@@ -150,7 +150,6 @@ export const PLATFORM_PRIORITY = [
   "apple_music",
   "youtube",
   "wikipedia",
-  "qobuz",
 ] as const;
 
 // Platforms whose images belong to a dedicated harvester:
