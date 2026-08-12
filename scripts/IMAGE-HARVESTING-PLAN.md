@@ -188,7 +188,16 @@ Operator-facing:
   owned elsewhere"
 - `--approved` is forwarded to every stage by the orchestrator but is a no-op
   here (`scrape-images` is unconditionally approved-only); the help text should
-  say so rather than imply it does something
+  say so rather than imply it does something — **done 2026-08-12**: the flag is
+  recognised and the run header reports it as a no-op, so passing it alongside
+  the real flags neither errors nor implies a choice the stage doesn't have.
+  The orchestrator still doesn't forward it.
+- `--missing-only` (**added 2026-08-12**, not in the original plan) restricts a
+  run to approved artists with no *displayable* image — the gap set that is
+  visible to a visitor. Cheap to add because coverage state already lives in
+  `artist_images`: one paged read of that table, no per-artist probe. Kept as a
+  scoping flag on this script rather than a separate script, since it changes
+  which artists are walked and nothing about the per-artist logic.
 
 ---
 
