@@ -22,6 +22,9 @@
 // Usage (from the rebalance-gender/ folder):
 //
 //   npx tsx scripts/scrape-images.ts                    # all approved artists, every uncovered platform
+//   npx tsx scripts/scrape-images.ts --missing-only     # only artists showing no picture at all (see below)
+//   npx tsx scripts/scrape-images.ts --missing-only --approved
+//                                                        # the same run; --approved is a no-op here (see below)
 //   npx tsx scripts/scrape-images.ts --limit=20         # only the first 20 (for testing)
 //   npx tsx scripts/scrape-images.ts --list             # print who owns each platform, then exit
 //   npx tsx scripts/scrape-images.ts --force            # re-check platforms that already have a stored image
@@ -29,6 +32,27 @@
 //   npx tsx scripts/scrape-images.ts --platforms=resident_advisor,discogs
 //                                                        # only try these platforms
 //   DRY_RUN=1 npx tsx scripts/scrape-images.ts          # fetch + log, don't write to the DB
+//
+// --missing-only narrows the run to artists with no displayable image
+// stored, i.e. the ones whose cards and profile pages currently show
+// nothing. It's the "fill the visible gaps first" mode: a full run walks
+// every approved artist and spends two DB round-trips each just to
+// rediscover that most are already covered, whereas this loads
+// artist_images once up front and skips those artists outright. Coverage
+// is judged by the same rule the front end renders by (isDisplayablePlatform
+// in src/lib/artist-images.ts), so an artist whose only stored image is a
+// held-back one — linktree today — still counts as missing, because the
+// site shows them nothing.
+//
+// It is not a substitute for a full run: an artist who already has, say,
+// a spotify image but has since gained a youtube link is invisible to
+// this mode. Use it to get pictures onto the site quickly, and a plain
+// run to complete everyone's coverage.
+//
+// --approved is accepted so the orchestrator's directory-only flag can be
+// passed through (and so it can be combined with --missing-only), but it
+// changes nothing: this script is unconditionally approved-only — the
+// guard lives inside scrapeArtistImages() itself.
 //
 // No cache file — state lives in the DB. A platform is skipped once
 // artist_images has a row for it, or once harvest_failures has a
@@ -54,6 +78,7 @@ import {
   OWNED_BY_DEDICATED_HARVESTER,
   PLATFORM_PRIORITY,
 } from "../src/lib/scrape-images.js";
+import { isDisplayablePlatform } from "../src/lib/artist-images.js";
 import { createStageLogger } from "./lib/progress-log.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -67,6 +92,13 @@ const FORCE = args.includes("--force");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
 const LIST_ONLY = args.includes("--list");
+// Only artists with nothing showing on the site — see the header.
+const MISSING_ONLY = args.includes("--missing-only");
+// Accepted and ignored: this script is unconditionally approved-only, so
+// the flag is recognised (rather than silently swallowed) purely so it
+// can be passed alongside the others without looking like it did
+// something. Reported in the run header below.
+const APPROVED_FLAG = args.includes("--approved");
 const platformsArg = args.find((a) => a.startsWith("--platforms="));
 const ALLOWED_PLATFORMS: string[] | undefined = platformsArg
   ? platformsArg.split("=")[1].split(",").map((p) => p.trim())
@@ -153,6 +185,43 @@ function printOwnershipTable() {
   );
 }
 
+/**
+ * Every artist_id with at least one image the site would actually
+ * display — the set --missing-only subtracts from the approved artists.
+ *
+ * One paged sweep of artist_images rather than a per-artist existence
+ * check: the whole point of the mode is to avoid a round-trip per
+ * artist. Paged on the (artist_id, platform) primary key, not on
+ * artist_id alone, because a non-unique sort key lets Postgres order
+ * ties differently between pages and silently drop rows across the
+ * boundary — a dropped row here would put an already-covered artist back
+ * into the run, so it costs correctness of the filter, not just tidiness.
+ */
+async function loadCoveredArtistIds(log: (line: string) => void): Promise<Set<string>> {
+  const PAGE_SIZE = 1000;
+  const covered = new Set<string>();
+  let rows = 0;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabaseClient()
+      .from("artist_images")
+      .select("artist_id, platform")
+      .order("artist_id")
+      .order("platform")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    if (!page || page.length === 0) break;
+    rows += page.length;
+    for (const row of page) {
+      // A held-back platform (linktree) isn't coverage — the artist
+      // still shows nothing. Same rule the front end renders by.
+      if (isDisplayablePlatform(row.platform as string)) covered.add(row.artist_id as string);
+    }
+    if (page.length < PAGE_SIZE) break;
+  }
+  log(`--missing-only: ${rows} stored image(s) covering ${covered.size} artist(s).`);
+  return covered;
+}
+
 async function main() {
   if (LIST_ONLY) {
     printOwnershipTable();
@@ -173,6 +242,20 @@ async function main() {
   if (ALLOWED_PLATFORMS) {
     logger.info(`Restricted to platforms: ${ALLOWED_PLATFORMS.join(", ")}\n`);
   }
+  if (MISSING_ONLY) {
+    logger.info(
+      "--missing-only: restricting to approved artists with no displayable image stored " +
+        "(the ones currently showing no picture on the site).\n"
+    );
+  }
+  if (APPROVED_FLAG) {
+    logger.info(
+      "--approved: no-op here — this script is unconditionally approved-only " +
+        "(enforced inside scrapeArtistImages, not by this flag).\n"
+    );
+  }
+
+  const covered = MISSING_ONLY ? await loadCoveredArtistIds(logger.info) : null;
 
   // PostgREST caps a single response at ~1000 rows, so a bare select
   // only ever returns the first 1000 approved artists (alphabetically,
@@ -181,8 +264,15 @@ async function main() {
   // still stops early, for testing.
   const PAGE_SIZE = 1000;
   const artists: { id: string; name: string }[] = [];
+  // Counted per page rather than derived from the totals at the end,
+  // which --limit's truncation would make wrong.
+  let skippedCovered = 0;
   for (let from = 0; ; from += PAGE_SIZE) {
-    const to = LIMIT ? Math.min(from + PAGE_SIZE, LIMIT) - 1 : from + PAGE_SIZE - 1;
+    // --limit is normally pushed into the range so the DB returns only
+    // what's needed. Under --missing-only it can't be: rows are dropped
+    // after they arrive, so pages must come back full and the cap is
+    // applied to what survives the filter (below) instead.
+    const to = LIMIT && !covered ? Math.min(from + PAGE_SIZE, LIMIT) - 1 : from + PAGE_SIZE - 1;
     const { data: page, error } = await supabaseClient()
       .from("artists")
       .select("id, name")
@@ -192,11 +282,19 @@ async function main() {
       .range(from, to);
     if (error) throw error;
     if (!page || page.length === 0) break;
-    artists.push(...page);
+    const kept = covered ? page.filter((a) => !covered.has(a.id)) : page;
+    skippedCovered += page.length - kept.length;
+    artists.push(...kept);
     if (page.length < PAGE_SIZE || (LIMIT && artists.length >= LIMIT)) break;
   }
+  if (LIMIT && artists.length > LIMIT) artists.length = LIMIT;
 
-  logger.info(`${artists.length} approved artist(s) to check.\n`);
+  logger.info(
+    covered
+      ? `${artists.length} approved artist(s) with no image to check ` +
+          `(${skippedCovered} already covered, skipped).\n`
+      : `${artists.length} approved artist(s) to check.\n`
+  );
 
   let storedCount = 0;
   let removedCount = 0;
@@ -241,6 +339,9 @@ async function main() {
   bar.finish();
 
   logger.info(`\nDone${DRY_RUN ? " (dry run)" : ""}.`);
+  if (covered) {
+    logger.info(`  artists skipped as already pictured: ${skippedCovered}`);
+  }
   logger.info(`  images stored:   ${storedCount}`);
   for (const [platform, count] of Object.entries(bySource)) {
     logger.info(`    via ${platform}: ${count}`);

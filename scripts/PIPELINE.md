@@ -797,7 +797,32 @@ For each artist with `directory_status = 'approved'` (checked inside
 future caller can bypass it), tries **every** linked profile the
 artist has, not just the first hit, and pulls the `og:image` meta tag
 as a best-effort profile photo from each one. No API key required.
-Supports `--limit=N`, `--force`, `--platforms=a,b`, and `DRY_RUN=1`.
+Supports `--missing-only`, `--limit=N`, `--force`, `--platforms=a,b`,
+`--approved` (a no-op — see below), and `DRY_RUN=1`.
+
+**`--missing-only` (2026-08-12)** narrows the run to approved artists
+with **no displayable image at all** — the ones whose cards and profile
+pages currently show nothing. It's the "fill the visible gaps first"
+mode: a full run walks every approved artist and spends two DB
+round-trips each rediscovering that most are already covered, while
+this loads `artist_images` once up front (paged on its
+`(artist_id, platform)` primary key) and skips those artists outright.
+As of 2026-08-12 that is 715 of 3,330 approved artists, so a run is
+~4× shorter. Coverage is judged by the same rule the front end renders
+by — `isDisplayablePlatform()` in `src/lib/artist-images.ts` — so an
+artist whose only stored image is a held-back one (linktree; 2 artists
+today) still counts as missing, because the site shows them nothing.
+It is not a substitute for a full run: an artist who already has, say,
+a spotify image but has since gained a youtube link is invisible to
+this mode. Combines with every other flag; with `--limit=N` the cap
+applies to the artists that survive the filter, not to the rows fetched.
+
+`--approved` is accepted and does nothing: this script is
+unconditionally approved-only (the guard is inside
+`scrapeArtistImages()`). It exists so the orchestrator's directory-only
+flag can be passed through without looking like it changed the run —
+the flag is recognised and reported as a no-op in the run header rather
+than silently swallowed. The orchestrator still doesn't forward it.
 
 Writes one row per successful platform to `artist_images`
 (`artist_id`, `platform`, `source_url`, ...) — see
@@ -843,6 +868,10 @@ from DB state on the next orchestrator run.
 
 ```bash
 npm run scrape-images
+```
+
+```bash
+npm run scrape-images -- --missing-only --approved
 ```
 
 As of 2026-07-09, `sync-soundcloud.mjs` (2a) and `sync-bandcamp.mjs`
@@ -1283,6 +1312,92 @@ put until they get one.
 > script that hard-deletes artists. Any `.range()` loop needs a unique
 > `ORDER BY` — which is why `makeFetchAll` in `scripts/lib/hoer-db.mjs`
 > takes an `orderCol` and defaults it to `id`.
+
+### HÖR sc_followee review cycle
+
+The other half of the HÖR review work. Phase 7a's follow-graph crawl
+seeds tens of thousands of `directory_status='sc_followee'` nodes, and
+the ones that *also* carry a `platform='hoer'` link are the interesting
+slice: SoundCloud accounts HÖR follows that nobody has yet ruled on.
+This is the same export → review-by-hand → apply loop as the pending
+cycle above, minus the auto-binding step.
+
+```bash
+npm run export-hoer-sc-followees               # 1. queue → .ods
+#    …add a `decision` column and fill it in, in LibreOffice…
+npm run apply-sc-followee-decisions            # 2a. dry run — read the summary
+npm run apply-sc-followee-decisions -- --apply # 2b. apply what you wrote
+```
+
+Step 2 is **dry-run without `--apply`** and writes an audit CSV of every
+row it is about to change into `outputs/` before it touches anything.
+
+As with the pending cycle, nothing removes rows from the queue: the
+export selects `directory_status='sc_followee'`, so anything decided
+simply stops appearing on the next export.
+
+#### 1. `export-hoer-sc-followees.mjs` — read-only
+
+Writes `outputs/hoer-sc-followees-<stamp>.ods`, one sheet named
+`HÖR sc_followees`, one row per non-deleted `sc_followee` artist holding
+a `platform='hoer'` link. Columns: `Artist` (hyperlinked to the site
+profile), `artist_id`, `SoundCloud followers` — the latter from
+`artist_enrichment.follower_count` for `platform='soundcloud'`, left
+blank for a node that was never enriched.
+
+**The export writes no `decision` column** — unlike the pending export,
+you add `decision` (and any `notes`) to the sheet yourself before step 2.
+
+The artist hyperlinks only resolve for a signed-in admin: `/artist/<id>`
+404s for anything not approved, and `sc_followee` is by definition not
+approved.
+
+`not_found` hoer rows are excluded — those record "we looked and there
+is no HÖR page", not a link. `--include-not-found` keeps them.
+
+Default sort is followers descending (unknown counts last, name as the
+tiebreak), which puts the artists most likely to be worth approving at
+the top of the sheet.
+
+```bash
+npm run export-hoer-sc-followees
+npm run export-hoer-sc-followees -- --sort=name
+npm run export-hoer-sc-followees -- --out=outputs/my-sheet.ods
+```
+
+#### 2. `apply-sc-followee-decisions.mjs` — applies the sheet
+
+Reads the `decision` column back and applies it. Sheet-driven only; it
+infers nothing.
+
+| decision | effect |
+| --- | --- |
+| `not eligible` | `directory_status='not_eligible'` |
+| `yes`, `approved` | `directory_status='approved'` |
+| blank | no action |
+
+Any other value is skipped and listed for review rather than guessed at.
+Nothing here deletes: this queue is unvetted crawl output, so the worst
+case for a wrong call is a status that the next pass can flip back.
+
+Rows are matched to artists **by the `artist_id` column** — an artist
+UUID — so no name or link matching is involved, and none of the
+one-URL-many-artists ambiguity of the pending cycle applies. A
+non-UUID `artist_id` on a row carrying a decision aborts the run, as do
+two rows giving one `artist_id` contradictory decisions. Sheet ids that
+are no longer in `artists` are skipped and listed.
+
+Matched artists whose current status is not plain `sc_followee` (some
+other pass got there first, or the row is soft-deleted) are listed under
+a `NOTE` for a human glance, but the sheet decision still wins.
+
+> **The default file is pinned, not "the latest export".** With no path
+> argument the script reads
+> `outputs/hoer-sc-followees-20260729-211957.ods` — the sheet this
+> review cycle started from. After a fresh export, pass the new file
+> explicitly: `npm run apply-sc-followee-decisions -- --apply
+> outputs/hoer-sc-followees-<stamp>.ods`. The argument parser takes the
+> first non-`--apply` argument as the path.
 
 ### Genre cleanup toolkit *(as-needed; see `GENRES.md`)*
 

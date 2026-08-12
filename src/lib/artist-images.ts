@@ -32,6 +32,18 @@ export interface ArtistImageSource {
 const DISPLAY_EXCLUDED_PLATFORMS = new Set(["linktree"]);
 
 /**
+ * Whether an artist_images row from this platform can appear on the
+ * site. Exported so callers that reason about image *coverage* rather
+ * than rendering — scripts/scrape-images.ts --missing-only, which looks
+ * for artists showing no picture at all — apply the same rule as the
+ * rotation below, instead of counting a stored-but-never-shown linktree
+ * row as coverage.
+ */
+export function isDisplayablePlatform(platform: string | null | undefined): boolean {
+  return !DISPLAY_EXCLUDED_PLATFORMS.has(platform ?? "");
+}
+
+/**
  * Deterministic 32-bit string hash (FNV-1a). Not cryptographic — just
  * needs to spread artist_id+date pairs roughly evenly across
  * `images.length` buckets.
@@ -61,7 +73,7 @@ export function pickArtistImage(
   // Exclude platforms held back from the rotation (e.g. linktree). Filter
   // rather than remove at the query layer so those rows stay available to
   // every other consumer.
-  const displayable = images.filter((img) => !DISPLAY_EXCLUDED_PLATFORMS.has(img.platform ?? ""));
+  const displayable = images.filter((img) => isDisplayablePlatform(img.platform));
   if (displayable.length === 0) return null;
   const dateKey = date.toISOString().slice(0, 10); // YYYY-MM-DD, UTC
   const index = hashString(`${artistId}:${dateKey}`) % displayable.length;
