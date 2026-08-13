@@ -172,21 +172,50 @@ calibration is a data exercise, not a code edit.
 
 ## Where it lives (data model)
 
-Keep `artist_harvested_genres` as the pure evidence log it already is,
-and add the inputs scoring needs to each row:
+`artist_harvested_genres` stays exactly as it is: a pure evidence log of
+what each source said, with **no scoring columns added to it**. It
+records provenance — `source_platform`, `raw_tag`, `genre_id`,
+`fetched_at`, `skipped` — and nothing about how much that evidence is
+worth. Weights are a judgement we apply *to* the evidence, and they
+change every time the scheme is recalibrated; the log of what a source
+actually said should not move when they do.
 
-- `signal_type` — structured / self_tag / editorial / bio
-- `prevalence` — nullable; set for per-track sources
-- (`source_platform`, `raw_tag`, `genre_id` already exist)
+That table has already carried one weight column and been the worse for
+it. Last.fm's `tag_count` sat there null in every row for months after
+Last.fm was removed, and was dropped in
+`supabase_migration_drop_harvested_genres_tag_count.sql`. Its name was
+also a lie: it held a 0–100 popularity score, not a count. Both lessons
+apply below.
 
-Add an aggregated **candidate** layer (new table, e.g.
-`artist_genre_candidates`) holding one row per `(artist_id, genre_id)`
-with:
+So the two inputs this scheme needs are found elsewhere:
 
-- `score` (S), `corroboration`, `sources` (JSONB — the evidence behind
-  it, for the review UI to explain *why*)
+- **`signal_type`** (structured / self_tag / editorial / bio) is
+  provenance, not weight — but it is *not* derivable from
+  `source_platform` alone, since one platform yields several kinds
+  (SoundCloud's `track.genre` is structured, its `tag_list` is a self
+  tag). Record it by making `source_platform` say which field the value
+  came from — e.g. `soundcloud_genre` vs `soundcloud_tag` — rather than
+  by adding a column. That keeps the table a log of *where a datum came
+  from*, which is what it is for.
+- **`prevalence`** is not a property of a single evidence row at all —
+  it is an aggregate over the artist's whole catalogue (see Volume &
+  consistency above). Compute it in the scoring pass and store it on the
+  candidate row, alongside the score it feeds.
+
+Everything weighted lives in an aggregated **candidate** layer (new
+table, e.g. `artist_genre_candidates`), one row per
+`(artist_id, genre_id)`:
+
+- `score` (S), `corroboration`, `prevalence`, `sources` (JSONB — the
+  evidence behind it, for the review UI to explain *why*)
 - `decision` — `auto` / `review` / `rejected` / `accepted`
 - timestamps
+
+If a weight is ever wanted on the live data rather than just on
+candidates — a confidence to sort or filter the directory by — it goes
+on `artist_genres`, which today holds only `artist_id` and `genre_id`.
+That is the table the weight would actually describe. Name it for what
+it is: a `score` or `confidence`, never a `count`.
 
 Per project convention, all of this is written to the database, not a
 cache file. Only `decision IN ('auto','accepted')` candidates are
