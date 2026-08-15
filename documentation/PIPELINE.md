@@ -1514,11 +1514,6 @@ Not part of the pipeline; run manually when debugging.
   ```bash
   npm run update-artist-count
   ```
-- **`commit-search-miss.sh`** (project root) — one-off git helper
-  that committed the search-miss feature; safe to delete.
-- **`test-xlsx.mjs`** (project root) — throwaway probe of the
-  original spreadsheet's Beatport column; safe to delete.
-
 - **`backfill-resolved-soundcloud-sync.mjs`** — one-off migration
   helper, written 2026-07-09 when the old 2a (`enrich-soundcloud.mjs`)
   + 2b (`harvest-soundcloud-links-and-bio.mjs`) pair merged into

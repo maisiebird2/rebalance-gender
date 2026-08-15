@@ -58,7 +58,9 @@ yarn-error.log*
 # vercel
 .vercel
 
-# supabase CLI (ephemeral local/link state; keep config.toml + migrations)
+# supabase CLI ephemeral local/link state, if the CLI is ever used here.
+# Note this project does NOT use the CLI for schema: migrations/ holds
+# hand-written SQL applied in the Supabase SQL editor, and is tracked.
 supabase/.branches
 supabase/.temp
 
