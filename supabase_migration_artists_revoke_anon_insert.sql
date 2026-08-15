@@ -51,14 +51,26 @@
 --      They go through POST /api/submit, which validates and writes
 --      with the service role.
 --
---   2. This class of grant will reappear on NEW tables: the database's
---      default privileges (pg_default_acl) still grant ALL to
---      anon/authenticated on every table created by postgres or
---      supabase_admin — that is Supabase's out-of-the-box behavior.
---      RLS-enabled-with-no-policy keeps those grants inert, but any
---      future CREATE POLICY ... FOR INSERT TO public on a new table
---      would reopen a direct write path. Tightening the default
---      privileges is a possible follow-up, left out of scope here.
+--   2. Default privileges in schema public are set per CREATING ROLE,
+--      and only one of the two entries is permissive (corrected
+--      2026-07-31 — an earlier version of this note claimed both were):
+--
+--        created by postgres       anon/authenticated get Dxtm only, so
+--                                  a new table is NOT reachable through
+--                                  PostgREST. This is the role the SQL
+--                                  editor and CLI use, i.e. every table
+--                                  we create.
+--        created by supabase_admin anon/authenticated get ALL. Only
+--                                  reachable via platform actions such
+--                                  as installing an extension into
+--                                  public, and not fixable from here:
+--                                  ALTER DEFAULT PRIVILEGES FOR ROLE
+--                                  supabase_admin needs membership in
+--                                  that role, which postgres does not
+--                                  have.
+--
+--      See supabase_check_public_role_exposure.sql, which monitors both
+--      entries and the resulting grants.
 --
 -- Verification: with the publishable key, an insert must now be denied
 -- (HTTP 401/403, SQLSTATE 42501 permission denied):
