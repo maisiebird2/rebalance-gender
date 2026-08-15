@@ -43,8 +43,12 @@ sheets, audit trails, ambiguity reports and failure dumps go to:
 /Users/maisiebird/Claude/Projects/Rebalance Gender/output files
 ```
 
-which is `<repo>/../output files`, the sibling of the checkout. `.gitignore`
-blanket-ignores `*.csv` and `*.ods` as a backstop.
+which is `<repo>/../output files`, the sibling of the checkout.
+
+`.gitignore` deliberately does **not** ignore `*.csv` / `*.ods`. Nothing
+writes them into the tree any more, so a spreadsheet appearing in
+`git status` is a signal that a script regressed — worth seeing, not
+hiding. Don't "fix" that by adding an ignore rule; fix the script.
 
 **Never build that path by hand.** Resolve it through
 `scripts/lib/output-path.mjs`:
