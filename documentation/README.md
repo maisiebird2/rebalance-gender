@@ -31,6 +31,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [IMAGE-HARVESTING-PLAN.md](IMAGE-HARVESTING-PLAN.md) | Image harvesting — ownership & shared policy |
 | [URL-RESOLUTION-PLAN.md](URL-RESOLUTION-PLAN.md) | URL redirect resolution |
 | [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) | Recommendation engine improvements |
+| [RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md](RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md) | Abandoned July sidebar work — **and the unrepaired `artist_similarity_scores` wipe that left recommendations dark in production** |
 
 ## Proposals (not accepted — decisions still open)
 
