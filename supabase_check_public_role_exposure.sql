@@ -17,20 +17,34 @@
 --     created by supabase_admin  anon/authenticated get arwdDxtm — EVERYTHING,
 --                                including SELECT and INSERT.
 --
---   The second entry is Supabase's stock default and is the residual hole. The
---   statement that would close it is:
+--   The second entry is Supabase's stock default and is the residual hole.
 --
---     ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
---       REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES
---       FROM anon, authenticated;
+--   ⛔️ NOTHING IN THIS FILE IS A STEP TO RUN AGAINST THE HOLE. The statement
+--   that would close it is reproduced below as TEXT TO SEND TO SUPABASE
+--   SUPPORT — it is not a migration, not a TODO, and it cannot succeed from
+--   this project. Every executable statement in this file is a read-only
+--   SELECT, starting at query 1.
 --
---   We cannot run it. ALTER DEFAULT PRIVILEGES FOR ROLE <r> requires membership
---   in <r>; supabase_admin is the platform superuser and `postgres` is neither a
---   superuser nor a member of it (pg_has_role('postgres','supabase_admin',
---   'MEMBER') = false, checked 2026-07-31). Running it as postgres fails with
---   "permission denied to change default privileges". Only Supabase can change
---   it — worth a support request if you want it closed at the platform level;
---   quote the ALTER above and the pg_has_role result.
+--   Quote this to support (do not paste it into the SQL editor):
+--
+--     | ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+--     |   REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES
+--     |   FROM anon, authenticated;
+--
+--   Why it cannot succeed here: ALTER DEFAULT PRIVILEGES FOR ROLE <r> requires
+--   membership in <r>. supabase_admin is the platform superuser, and `postgres`
+--   — the role the SQL editor connects as — is neither a superuser
+--   (rolsuper = false) nor a member of it
+--   (pg_has_role('postgres','supabase_admin','MEMBER') = false, checked
+--   2026-07-31). The best it can return is "permission denied to change
+--   default privileges".
+--
+--   It was tried once anyway, on 2026-07-31: the SQL editor sat on "running…"
+--   indefinitely, while the database showed no postgres backend, no active
+--   query, and zero ungranted locks. Nothing was changed, nothing was stuck,
+--   and nothing needed cancelling — the tab was simply closed. Expect that
+--   dead end rather than a clean error, which is the other reason this is
+--   marked do-not-run.
 --
 --   In the meantime the exposure is conditional, not live: it only bites if a
 --   relation in public is created BY supabase_admin, and as of 2026-07-31 all 37
@@ -79,16 +93,21 @@ WHERE c.relnamespace = 'public'::regnamespace
 ORDER BY c.relname;
 
 -- ── 3. Everything anon can actually read or write, table-level ───────────────
--- Expected as of 2026-07-31: 15 rows, all SELECT-only —
+-- THE INVARIANT, not the row count: every row must be SELECT-only. ANY true in
+-- an ins/upd/del column is a finding — no anonymous or logged-in write path is
+-- meant to exist, since all app writes go through the service role. The row
+-- count itself grows legitimately as public-facing tables are added, so don't
+-- treat a change in it as the signal; read the write columns.
+--
+-- The first run (2026-07-31) turned up exactly one violation: artist_labels
+-- granted INSERT/UPDATE/DELETE to authenticated, removed by
+-- supabase_migration_artist_labels_revoke_writes.sql.
+--
+-- Snapshot for orientation — 17 tables, all SELECT-only, 2026-07-31:
 --   artist_aliases, artist_bandcamp_albums, artist_enrichment, artist_genres,
 --   artist_images, artist_labels, artist_links, artist_locations,
---   artist_similarity_scores, biographies, genres, platforms, pronouns,
---   site_content, site_stats
--- ANY true in the ins/upd/del columns is a finding: no anonymous write path is
--- meant to exist, since all app writes go through the service role. The first
--- run of this file (2026-07-31) turned up exactly one — artist_labels granted
--- INSERT/UPDATE/DELETE to authenticated, removed by
--- supabase_migration_artist_labels_revoke_writes.sql.
+--   artist_similarity_scores, artist_type_assignments, artist_types,
+--   biographies, genres, platforms, pronouns, site_content, site_stats
 -- Note `artists` is deliberately absent here — its table-level SELECT was
 -- replaced by column-level grants, which query 4 covers.
 SELECT
