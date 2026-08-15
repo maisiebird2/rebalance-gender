@@ -30,7 +30,8 @@
 /logs/
 scripts/*-cache.json
 
-# NOTE: generated spreadsheets are deliberately NOT ignored here.
+# NOTE: generated spreadsheets, and the LibreOffice .~lock files that sit
+# beside an open one, are deliberately NOT ignored here.
 # Every script writes its .csv/.ods OUTSIDE the repo, to the `output files/`
 # folder beside the checkout, via scripts/lib/output-path.mjs — so there is
 # nothing to ignore. If a spreadsheet ever does appear in the tree, that is
@@ -38,8 +39,6 @@ scripts/*-cache.json
 # be hidden. Keeping the rules off also means a .csv that genuinely belongs
 # in the repo (a test fixture, say) can be committed without `git add -f`.
 
-# LibreOffice lock files left next to an open spreadsheet
-.~lock.*#
 __pycache__/
 *.pyc
 
