@@ -238,6 +238,7 @@ Nothing here needs to change, because the primary is still uniquely
 | **Allow multiple links per platform** | Uniform and simpler on the write side (no contextual assignment, no partial index), but relocates the cost to the **read side**: every consumer that does `find(l => l.platform === X)` — the SoundCloud widget, image enrichment, sync scripts — needs a "which one is primary?" rule, plus a `position` column and an artist-page grouping decision (two identical "SoundCloud" labels side by side). Rejected: multiple links per artist are uncommon, and when they occur it's usually an **alias** (better modelled as its own artist entry) or a **label/crew** (better modelled as its own entity later). |
 | **Magic string for not-found** (typing `soundcloud not found` into the URL field) | Cumbersome, and worse: requires knowing the platform *key* spelling, pollutes a URL field with non-URLs, and is ambiguous with a genuinely broken URL. A dropdown shows friendly labels and can't be mistyped. |
 | **Editable platform dropdown per row** | Defeats the purpose — the read-only label is the requirement. An override could be added later (see open questions). |
+| **Merge `artist_harvested_links` into `artist_links`** — one table holding every discovered link, with an `accepted` flag replacing the promotion step *(evaluated 2026-08-13)* | Genuinely attractive, and **cheapest to do as part of this proposal** rather than separately — see open question 7. Not rejected on performance: a partial index (`WHERE accepted`) keeps hot reads the shape they are now, and promotion gets *cheaper* (flip a boolean vs. copy across tables, dedup, write back a flag). It would also delete `artist_harvested_links.artist_links_url`, a column that exists only to hold a copy of the live table's URL for mismatch flagging — with one table, "mismatch" is a query, not a stored flag. Rejected **for now** on safety and blast radius: `artist_links` is anon-readable for approved artists while `artist_harvested_links` is RLS-enabled-with-no-policy (internal only, same convention as `harvest_failures`/`resolved_artists`), so merging downgrades an unforgeable table boundary into a `WHERE accepted` that every read site must remember — `links:artist_links(*)`, the `link_check` embed, and `getArtistsMissingLink`, where a forgotten filter fails *silently* (an unaccepted candidate makes an artist look already-linked, quietly emptying the missing-links queue). Ten scripts write the staging table, and the whole-set save (§5) would destroy every candidate row unless scoped to accepted ones. Also note table growth: candidates accumulate for non-directory artists (~100x directory count), moving a high-churn internal table onto the hot path. **If it is ever done:** revoke anon on the base table and make the public read path a view that hard-codes `accepted = true`, so the filter *cannot* be forgotten; protecting the staging columns with column-level grants instead would break `artist_links(*)` and force explicit column lists at every embed site (the `artists` table's existing constraint). Meanwhile [PROPOSAL-provenance-purge.md](PROPOSAL-provenance-purge.md) captures most of the provenance benefit with an `artist_links.source` column and no merge. |
 
 ---
 
@@ -286,3 +287,22 @@ pure derivation. Deferred; confirm that's tolerable.
      or add a `detected_platform` column at that point. Nothing in this plan
      blocks it.
    - Improving the "Other" display label on the artist page.
+
+**7. Merge the staging table while you're here?** *(added 2026-08-13)* This
+plan already turns `artist_links` into a state machine — a link is primary or
+`other`, derived from position. Folding `artist_harvested_links` in as a third
+state (`candidate → accepted-other → accepted-primary`, one status column)
+is a much smaller step *taken here* than as its own later refactor, because
+the read-side filtering, the save-path scoping, and the migration of every
+link-writing script all land in one pass instead of two. It also removes the
+`artist_links_url` cross-table copy. The safety work it requires — an
+`accepted = true` view as the public read path, with anon revoked on the base
+table — is listed in [Alternatives considered](#alternatives-considered).
+
+Decide this **with** question 1 (is this plan worth doing at all), not after:
+if the answer there is "not yet", the merge stays off the table too, and
+[PROPOSAL-provenance-purge.md](PROPOSAL-provenance-purge.md)'s `source` column
+is the cheap path to the same provenance. If the answer is "yes, build it",
+the merge is the one addition worth scoping in from the start rather than
+deferring — everything else in item 6 above defers cleanly; this one gets
+strictly more expensive later.
