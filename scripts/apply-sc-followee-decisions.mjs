@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Applies the manual review decisions in "hoer-sc-followees-20260729-211957.ods"
-// (in the output folder — see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md)
+// (in the output folder — see documentation/OUTPUT-FILE-LOCATION.md)
 // to the artists table.
 //
 // Reads the sheet named "HÖR sc_followees" (falls back to the sole sheet if the

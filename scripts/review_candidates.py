@@ -71,7 +71,7 @@ CSV_FIELDS = [
 
 # Generated spreadsheets go beside the repo, not inside it — the Python
 # mirror of scripts/lib/output-path.mjs. See
-# documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md.
+# documentation/OUTPUT-FILE-LOCATION.md.
 OUTPUT_DIR = Path(
     os.environ.get("REBALANCE_OUTPUT_DIR")
     or Path(__file__).resolve().parent.parent.parent / "output files"

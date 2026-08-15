@@ -3,7 +3,7 @@
 //
 // Every script that writes a .csv or .ods for a *person* to open resolves
 // its path through here, so the location is one edit rather than twenty-odd.
-// See documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md for the inventory this
+// See documentation/OUTPUT-FILE-LOCATION.md for the inventory this
 // replaced: outputs landed in three different places (the repo root, the
 // repo's outputs/, and the directory above the repo) depending on when the
 // script was written.

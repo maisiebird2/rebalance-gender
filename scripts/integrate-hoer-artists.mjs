@@ -328,7 +328,7 @@ async function main() {
   }
 
   // Review CSVs (dated, in the output folder), same convention as the other
-  // hoer scripts — see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md.
+  // hoer scripts — see documentation/OUTPUT-FILE-LOCATION.md.
   const stamp = timestamp();
   if (!DRY_RUN && conflictRows.length) {
     const p = writeCSV(

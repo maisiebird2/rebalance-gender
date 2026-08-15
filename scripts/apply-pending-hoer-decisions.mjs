@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Applies the manual review decisions in "pending-hoer-artists-20260726_MOD.ods"
-// (in the output folder — see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md)
+// (in the output folder — see documentation/OUTPUT-FILE-LOCATION.md)
 // to the artists table.
 //
 // Reads the sheet named "Pending HÖR artists" (errors if it is missing).

@@ -144,7 +144,7 @@ Add `scripts/lib/output-path.mjs`:
 // here, so the location is one edit rather than twenty-three.
 //
 // NOT for .cache/ intermediates — those are machine-to-machine plumbing and
-// stay in the checkout (see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md).
+// stay in the checkout (see documentation/OUTPUT-FILE-LOCATION.md).
 
 import fs from "node:fs";
 import path from "node:path";

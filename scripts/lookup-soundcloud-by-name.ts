@@ -12,7 +12,7 @@
 //
 // Output: soundcloud-lookup-results-<YYYY-MM-DD_HHMMSS>.csv, written to the
 // output folder beside the repo (see
-// documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md). Each run gets its own
+// documentation/OUTPUT-FILE-LOCATION.md). Each run gets its own
 // timestamped file, so previous results are never overwritten.
 //
 // URL cleaning reuses the same normalizeProfileLink() logic the website

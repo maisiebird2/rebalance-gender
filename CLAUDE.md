@@ -67,7 +67,7 @@ constant; mirror it if a second Python writer appears.
 The exception is `.cache/` — `pair-scores.csv` and the backfill `.ods` are
 machine-to-machine intermediates, not deliverables. They stay in `.cache/`.
 
-See [documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md](documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md)
+See [documentation/OUTPUT-FILE-LOCATION.md](documentation/OUTPUT-FILE-LOCATION.md)
 for the inventory of which script writes what.
 
 ## Working agreements

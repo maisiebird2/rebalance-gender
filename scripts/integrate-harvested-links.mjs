@@ -469,7 +469,7 @@ function classifyResolved(rawUrl) {
 
 // ------------------------------------------------------------
 // Writes the "not found" collisions to a datetime-stamped CSV in the output
-// folder (see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md).
+// folder (see documentation/OUTPUT-FILE-LOCATION.md).
 // Columns: artist name, artist edit-page URL, platform, platform URL.
 // Artist names are looked up from `artists` by id. Skipped in dry runs.
 // ------------------------------------------------------------

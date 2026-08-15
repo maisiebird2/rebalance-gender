@@ -22,4 +22,4 @@ for the ordered data pipeline.
 
 Generated spreadsheets (`.csv` / `.ods`) are **not** kept in this repo — they
 are written to the `output files/` folder beside the checkout. See
-[documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md](documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md).
+[documentation/OUTPUT-FILE-LOCATION.md](documentation/OUTPUT-FILE-LOCATION.md).

@@ -11,7 +11,7 @@ stage in order.
 > `REBALANCE_OUTPUT_DIR` to point somewhere else. Where a script takes a
 > sheet as an argument, a bare filename is looked up in that folder and a
 > `./`-prefixed one against the working directory. See
-> [OUTPUT-FILE-LOCATION-PROPOSAL.md](OUTPUT-FILE-LOCATION-PROPOSAL.md).
+> [OUTPUT-FILE-LOCATION.md](OUTPUT-FILE-LOCATION.md).
 
 ---
 

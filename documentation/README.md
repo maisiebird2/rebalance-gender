@@ -20,7 +20,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [MATCHING.md](MATCHING.md) | External platform matching — the two pipelines |
 | [SCORING.md](SCORING.md) | Similarity scoring for recommendations |
 | [REPORTS.md](REPORTS.md) | Admin reports and their download routes |
-| [OUTPUT-FILE-LOCATION-PROPOSAL.md](OUTPUT-FILE-LOCATION-PROPOSAL.md) | Where generated `.csv`/`.ods` files are written, and by which script |
+| [OUTPUT-FILE-LOCATION.md](OUTPUT-FILE-LOCATION.md) | Where generated `.csv`/`.ods` files are written, and by which script |
 
 ## Plans (accepted, in progress or done)
 
