@@ -114,6 +114,7 @@ export async function saveArtist(
   const labelListRaw = (formData.get("label_list") ?? "[]") as string;
   const aliasesRaw = (formData.get("aliases") ?? "[]") as string;
   const genresRaw = (formData.get("genres") ?? "[]") as string;
+  const typesRaw = (formData.get("types") ?? "[]") as string;
   const linksRaw = (formData.get("links") ?? "[]") as string;
 
   const notes = ((formData.get("notes") ?? "") as string).trim() || null;
@@ -129,6 +130,13 @@ export async function saveArtist(
     genreNames = (JSON.parse(genresRaw || "[]") as string[]).filter(Boolean);
   } catch {
     return { error: "Invalid genres data" };
+  }
+
+  let typeSlugs: string[] = [];
+  try {
+    typeSlugs = (JSON.parse(typesRaw || "[]") as string[]).filter(Boolean);
+  } catch {
+    return { error: "Invalid types data" };
   }
 
   let links: LinkInput[] = [];
@@ -281,6 +289,42 @@ export async function saveArtist(
       genreIds.map((genre_id) => ({ artist_id: artistId, genre_id }))
     );
     if (agErr) return { error: `Genres save error: ${agErr.message}` };
+  }
+
+  // ── 7b. Replace MANUAL type assignments ───────────────────────
+  // The form owns only the 'manual' rows; rows from other sources (a future
+  // harvester) are that source's to manage, so they're left intact and only
+  // the manual set is swapped. Slugs must exist in the closed artist_types
+  // vocabulary — an unknown one is a bug in the form, so reject it loudly.
+  await admin
+    .from("artist_type_assignments")
+    .delete()
+    .eq("artist_id", artistId)
+    .eq("source", "manual");
+
+  if (typeSlugs.length > 0) {
+    const { data: typeRows, error: tLoadErr } = await admin
+      .from("artist_types")
+      .select("id, name")
+      .in("name", typeSlugs);
+    if (tLoadErr) return { error: `Types load error: ${tLoadErr.message}` };
+
+    const idBySlug = new Map(
+      (typeRows ?? []).map((t) => [t.name as string, t.id as number])
+    );
+    const unknown = typeSlugs.filter((s) => !idBySlug.has(s));
+    if (unknown.length > 0) {
+      return { error: `Unknown artist type(s): ${unknown.join(", ")}` };
+    }
+
+    const { error: ataErr } = await admin.from("artist_type_assignments").insert(
+      typeSlugs.map((s) => ({
+        artist_id: artistId,
+        type_id: idBySlug.get(s)!,
+        source: "manual",
+      }))
+    );
+    if (ataErr) return { error: `Types save error: ${ataErr.message}` };
   }
 
   // ── 7. Replace links ──────────────────────────────────────────

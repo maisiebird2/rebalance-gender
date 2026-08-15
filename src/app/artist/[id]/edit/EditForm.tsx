@@ -15,6 +15,10 @@ import { STATUSES, statusLabel } from "@/lib/artist-status";
 interface Props {
   artist: ArtistWithRelations;
   genreOptions: string[];
+  /** The full type vocabulary (producer / DJ / vocalist) for the checkboxes. */
+  typeOptions: { name: string; label: string }[];
+  /** The artist's current MANUAL type slugs, to prefill the checkboxes. */
+  initialTypes: string[];
   platforms: Platform[];
   /** Name of the already-stored duplicate_of target, resolved by the page. */
   duplicateOfName: string | null;
@@ -27,7 +31,7 @@ type DupCheck =
   | { state: "ok"; id: string; name: string }
   | { state: "error"; message: string };
 
-export default function EditForm({ artist, genreOptions, platforms, duplicateOfName }: Props) {
+export default function EditForm({ artist, genreOptions, typeOptions, initialTypes, platforms, duplicateOfName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -46,6 +50,15 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
   const [genres, setGenres] = useState<string[]>(
     artist.genres?.map((g) => g.name).length > 0 ? artist.genres.map((g) => g.name) : [""]
   );
+  // Selected type slugs (producer / DJ / vocalist). A closed vocabulary, so
+  // it's a checkbox set rather than the free-text genre picker.
+  const [types, setTypes] = useState<string[]>(initialTypes);
+
+  function toggleType(name: string, checked: boolean) {
+    setTypes((prev) =>
+      checked ? [...new Set([...prev, name])] : prev.filter((t) => t !== name)
+    );
+  }
   const [locations, setLocations] = useState<LocationRow[]>(
     artist.locations?.length > 0
       ? artist.locations.map((l) => ({ city: l.city ?? "", country: l.country ?? "" }))
@@ -125,6 +138,7 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
     // Overwrite hidden inputs with current React state
     formData.set("links", JSON.stringify(serializedLinks()));
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
+    formData.set("types", JSON.stringify(types));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
     formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
     formData.set("aliases", JSON.stringify(aliasNames.filter(Boolean)));
@@ -180,6 +194,7 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
       {/* hidden inputs — values are overwritten from React state in buildFormData */}
       <input type="hidden" name="links" value={JSON.stringify(serializedLinks())} />
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
+      <input type="hidden" name="types" value={JSON.stringify(types)} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
       <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
       <input type="hidden" name="aliases" value={JSON.stringify(aliasNames.filter(Boolean))} />
@@ -278,6 +293,24 @@ export default function EditForm({ artist, genreOptions, platforms, duplicateOfN
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Location</legend>
         <LocationList values={locations} onChange={setLocations} />
+      </fieldset>
+
+      {/* ── Types (producer / DJ / vocalist) ───────────────────── */}
+      <fieldset className="space-y-3">
+        <legend className="text-base font-semibold">Types</legend>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {typeOptions.map((t) => (
+            <label key={t.name} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={types.includes(t.name)}
+                onChange={(e) => toggleType(t.name, e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
+              />
+              {t.label}
+            </label>
+          ))}
+        </div>
       </fieldset>
 
       {/* ── Genres ─────────────────────────────────────────────── */}

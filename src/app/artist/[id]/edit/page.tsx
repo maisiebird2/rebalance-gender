@@ -14,6 +14,7 @@ import type {
   Artist,
   Pronoun,
   Genre,
+  ArtistType,
   ArtistLocation,
   ArtistLabel,
   ArtistAlias,
@@ -46,6 +47,7 @@ const ARTIST_ADMIN_SELECT = `
   *,
   pronoun:pronouns(*),
   artist_genres(genres(*)),
+  artist_type_assignments(source, artist_types(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
   aliases:artist_aliases(*),
@@ -56,6 +58,7 @@ const ARTIST_ADMIN_SELECT = `
 type RawArtistRow = Artist & {
   pronoun: Pronoun | null;
   artist_genres: { genres: Genre | null }[];
+  artist_type_assignments: { source: string; artist_types: ArtistType | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
   aliases: ArtistAlias[];
@@ -89,15 +92,17 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
 
   // ── Load artist (all statuses), selected genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, genreOptions, platforms] = await Promise.all([
-    admin
-      .from("artists")
-      .select(ARTIST_ADMIN_SELECT)
-      .eq("id", id)
-      .maybeSingle(),
-    getGenrePickerOptions(),
-    getPlatforms(admin),
-  ]);
+  const [{ data, error }, genreOptions, platforms, { data: typeRows }] =
+    await Promise.all([
+      admin
+        .from("artists")
+        .select(ARTIST_ADMIN_SELECT)
+        .eq("id", id)
+        .maybeSingle(),
+      getGenrePickerOptions(),
+      getPlatforms(admin),
+      admin.from("artist_types").select("name, label, sort_order").order("sort_order"),
+    ]);
 
   if (error) {
     console.error("Edit page load error:", error);
@@ -106,6 +111,22 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
   if (!data) notFound();
 
   const artist = normalizeArtist(data);
+
+  // The full type vocabulary (producer / DJ / vocalist), for the checkboxes.
+  const typeOptions = ((typeRows ?? []) as { name: string; label: string }[]).map(
+    (t) => ({ name: t.name, label: t.label })
+  );
+
+  // Prefill the checkboxes with the artist's MANUAL types only. Rows from other
+  // sources (e.g. a future harvester) are owned by that source and aren't
+  // editable here, so the form leaves them alone on save.
+  const initialTypes = Array.from(
+    new Set(
+      ((data as unknown as RawArtistRow).artist_type_assignments ?? [])
+        .filter((ta) => ta.source === "manual" && ta.artist_types)
+        .map((ta) => ta.artist_types!.name)
+    )
+  );
 
   // Name of the stored duplicate_of target, so the form can show which entry
   // the saved ID refers to without the admin having to open it. Queried
@@ -141,6 +162,8 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
       <EditForm
         artist={artist}
         genreOptions={genreOptions}
+        typeOptions={typeOptions}
+        initialTypes={initialTypes}
         platforms={platforms}
         duplicateOfName={duplicateOfName}
       />
