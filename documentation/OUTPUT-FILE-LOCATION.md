@@ -284,8 +284,12 @@ file where it actually lives.
   `apply-sc-followee-decisions.mjs`, `apply-pending-hoer-decisions.mjs`,
   `integrate-harvested-links.mjs`, `lookup-soundcloud-by-name.ts`,
   `genre-report.mjs`, `apply-genre-status.mjs`.
-- `.gitignore` — `/outputs/` dropped. The blanket `*.csv` / `*.ods` rules
-  stay; they are the backstop against a future script regressing.
+- `.gitignore` — `/outputs/` and all eleven per-script spreadsheet patterns
+  dropped, with nothing put in their place. Since every writer now resolves
+  through the helper, a `.csv` or `.ods` turning up in the tree means a
+  script regressed, and `git status` showing it is the point. An ignore rule
+  would hide exactly the signal worth having — and would also block a
+  spreadsheet that genuinely belongs in the repo, such as a test fixture.
 
 ## 7. Alternatives considered
 
