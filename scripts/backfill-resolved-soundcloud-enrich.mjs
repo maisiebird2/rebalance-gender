@@ -5,7 +5,7 @@
 // SoundCloud enrichment data, from before this state tracking
 // existed. enrich-soundcloud.mjs (Phase 2a) used to track progress
 // in enrich-soundcloud-cache.json; that's now replaced by DB-tracked
-// state in resolved_artists (see scripts/PIPELINE.md, Phase 2a).
+// state in resolved_artists (see documentation/PIPELINE.md, Phase 2a).
 // Without this backfill, the next 2a run would treat every
 // already-enriched artist as unprocessed and re-fetch them all.
 //

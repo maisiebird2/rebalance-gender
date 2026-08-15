@@ -79,7 +79,7 @@
 // that's actually a Spotify/Instagram/whatever URL (a data-entry or
 // form-submission mistake, not a dead SoundCloud profile) is skipped
 // without calling /resolve, and logged to harvest_failures instead —
-// see scripts/PIPELINE.md, "Guard harvesters against wrong-field
+// see documentation/PIPELINE.md, "Guard harvesters against wrong-field
 // URLs" (found via a real case: a wrong-field URL burned a /resolve
 // call, got 404-marked processed, and left no record of why). Like a
 // 404, a wrong-field mismatch DOES mark the artist processed — the

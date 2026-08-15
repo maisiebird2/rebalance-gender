@@ -13,7 +13,7 @@
 // own the Supabase reads/writes; this module owns normalization, pronoun
 // detection, bio/genre overlap, name similarity, and CSV read/write.
 //
-// See scripts/HOER-STATUS-RESOLUTION-PLAN.md for the design.
+// See documentation/HOER-STATUS-RESOLUTION-PLAN.md for the design.
 // ============================================================
 
 import fs from "node:fs";

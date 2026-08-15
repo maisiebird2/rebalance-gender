@@ -10,7 +10,7 @@
 //   - kind: "sql" — a button that copies a SQL query to the clipboard, to be
 //     pasted into the Supabase SQL editor. Used when the query is too heavy to
 //     run inside a serverless function's time budget (see the sc-followee-
-//     duplicates entry and REPORTS.md).
+//     duplicates entry and documentation/REPORTS.md).
 //
 // To add a report: append an entry here. A "download" entry also needs a
 // matching route; a "sql" entry is self-contained.

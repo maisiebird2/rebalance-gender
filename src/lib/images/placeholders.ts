@@ -16,7 +16,7 @@
 // Match on the stable hash or filename, never the full URL, so every
 // size variant and CDN host of the same placeholder is caught.
 //
-// See scripts/IMAGE-HARVESTING-PLAN.md (Phase 1).
+// See documentation/IMAGE-HARVESTING-PLAN.md (Phase 1).
 // ============================================================
 
 interface PlaceholderPattern {

@@ -7,7 +7,7 @@
 // identity space, keyed on the ppma_author TERM id. It creates NO `artists`
 // rows: a term starts life UNBOUND (artist_id null), an candidate awaiting the
 // socials match in Phase D (integrate-hoer-artists.mjs). See
-// scripts/HOER-SYNC-REWORK-PLAN.md.
+// documentation/HOER-SYNC-REWORK-PLAN.md.
 //
 // Everything a term needs is inline in the set's `authors` payload (slug,
 // display/first/last name, bio, user id, guest flag) — so in the normal case

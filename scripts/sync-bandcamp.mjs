@@ -85,7 +85,7 @@
 // and uploads it to artist-images/{artist_id}/bandcamp.{ext}. An
 // artist can hold images from several platforms at once now (this one
 // plus, say, SoundCloud's) rather than one platform's pick silently
-// overwriting another's — see scripts/PIPELINE.md, "Multi-image
+// overwriting another's — see documentation/PIPELINE.md, "Multi-image
 // artist_images table". This script never writes to
 // artist_enrichment.profile_image_url (explicitly nulled in that
 // upsert instead, so a pre-migration value doesn't linger looking
@@ -113,7 +113,7 @@
 //     'bandcamp_page') when a redirected track/album page happens to
 //     have it, but not promoted to a first-class column — flagged as a
 //     future collaboration-signal enhancement, same status Discogs'
-//     members/groups fields have in PIPELINE.md.
+//     members/groups fields have in documentation/PIPELINE.md.
 //
 // Wrong-field URL guard: before fetching, the stored artist_links.url
 // is checked against the *.bandcamp.com pattern (rejecting both
@@ -882,7 +882,7 @@ export async function syncArtist(artist, opts = {}) {
 
     // Location — best-effort raw_text only (structured city/country
     // parsing is a future enhancement, same status as Discogs
-    // namevariations/aliases in PIPELINE.md); never clobbers an
+    // namevariations/aliases in documentation/PIPELINE.md); never clobbers an
     // existing row.
     if (sidebar.location && !artistIdsWithLocation.has(artistId)) {
       const { error: locationError } = await supabase

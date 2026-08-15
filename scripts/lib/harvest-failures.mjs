@@ -1,6 +1,6 @@
 // ============================================================
 // Shared helpers for the harvest_failures table (see
-// supabase_migration_harvest_failures.sql and scripts/PIPELINE.md,
+// supabase_migration_harvest_failures.sql and documentation/PIPELINE.md,
 // "Persist harvest failures as queryable data").
 //
 // One row per (artist_id, service) holding the *current* failure for

@@ -1,7 +1,7 @@
 // ============================================================
 // Pure, DB-free helpers for the HÖR term seeder
 // (seed-hoer-terms.mjs — Phase B of the rework; see
-// scripts/HOER-SYNC-REWORK-PLAN.md).
+// documentation/HOER-SYNC-REWORK-PLAN.md).
 //
 // Deterministic and side-effect-free so it can be unit-tested without a
 // database or the network (see hoer-seed.test.mjs). The script owns the

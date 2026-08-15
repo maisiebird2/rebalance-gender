@@ -8,7 +8,7 @@
 // api_response_cache. So obtaining a Discogs image is not a separate
 // API call — it's extracting a field the sync already has in hand and
 // writing it to artist_images, exactly the way sync-soundcloud extracts
-// avatar_url. See scripts/IMAGE-HARVESTING-PLAN.md and
+// avatar_url. See documentation/IMAGE-HARVESTING-PLAN.md and
 // src/lib/scrape-images.ts (which now treats discogs as
 // OWNED_BY_DEDICATED_HARVESTER, i.e. this module owns its image and the
 // og:image scrape stays out of the way).

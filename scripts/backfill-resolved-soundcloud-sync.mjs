@@ -10,7 +10,7 @@
 // those already-synced artists as unprocessed and re-fetch them all
 // from SoundCloud from scratch. Same idea as
 // backfill-resolved-soundcloud-enrich.mjs did for the original
-// cache-file → resolved_artists switch — see scripts/PIPELINE.md.
+// cache-file → resolved_artists switch — see documentation/PIPELINE.md.
 //
 // "Fully synced under the old system" = has a resolved_artists row
 // for service='soundcloud-enrich' AND a row for

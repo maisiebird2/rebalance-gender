@@ -268,7 +268,7 @@ Phases 1–3 are the agreed first pass.
   for the recommendation engine — a sixth signal alongside
   genre / MB-tag / follow-graph, and cheap to compute once this exists. Out of
   scope, but the schema doesn't preclude it. See
-  [`scripts/SCORING.md`](scripts/SCORING.md).
+  [`SCORING.md`](SCORING.md).
 - **Out of scope, flagged now:** whether organisations appear in homepage
   search, whether they get their own directory listing and filter, and
   organisation images. All additive later.

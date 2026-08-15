@@ -22,7 +22,7 @@
 //                        often carry genre hints ("HARD TECHNO/HARD MUSIC
 //                        DJ AND PRODUCER"); genres are NOT parsed here —
 //                        that's a deliberate future cross-platform pass
-//                        over artist_harvested_bios (see PIPELINE.md).
+//                        over artist_harvested_bios (see documentation/PIPELINE.md).
 //   - Profile picture  → artist_images (platform='linktree'), source_url
 //                        only (store-images.mjs, 5b, re-hosts). APPROVED-
 //                        ONLY, checked inside syncArtist regardless of
@@ -55,7 +55,7 @@
 // table, so bare-domain rows stay staged, human-readable, and
 // un-promoted. Retain-everything, promote-known-only: the day a domain
 // is added to the known list (a platforms row), a 2d re-run promotes the
-// already-gathered backlog for it. See PIPELINE.md, "sync-linktree".
+// already-gathered backlog for it. See documentation/PIPELINE.md, "sync-linktree".
 //
 // Wrong-field URL guard: before spending a fetch, the stored link's host
 // is checked against linktr.ee. A non-Linktree URL saved in the linktree

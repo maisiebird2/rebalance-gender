@@ -6,7 +6,7 @@
 // Rotation strategy: deterministic, seeded by artist_id + today's
 // date (UTC), not a denormalized "current pick" column and not
 // fully-random-per-page-load. This was a deliberate choice (see
-// scripts/PIPELINE.md, "Multi-image artist_images table"):
+// documentation/PIPELINE.md, "Multi-image artist_images table"):
 //   - Stable within a day, so a page rendered more than once (or
 //     hydrated client-side after SSR) never shows a different image
 //     on the same visit — no flicker, no hydration mismatch.
@@ -28,7 +28,7 @@ export interface ArtistImageSource {
 // the public display rotation. Linktree avatars are sometimes a logo or
 // event flyer rather than an artist photo, so sync-linktree.mjs stores
 // them (for durability / a possible future decision) but they don't
-// enter pickArtistImage's rotation. See scripts/PIPELINE.md, "sync-linktree".
+// enter pickArtistImage's rotation. See documentation/PIPELINE.md, "sync-linktree".
 const DISPLAY_EXCLUDED_PLATFORMS = new Set(["linktree"]);
 
 /**

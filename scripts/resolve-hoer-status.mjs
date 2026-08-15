@@ -16,7 +16,7 @@
 // (The standalone migrate-hoer-dupe-links.mjs does the same from a saved report
 // — use it to backfill dupes marked before this step existed.)
 //
-// See scripts/HOER-STATUS-RESOLUTION-PLAN.md for the full design. Run the
+// See documentation/HOER-STATUS-RESOLUTION-PLAN.md for the full design. Run the
 // name_search punctuation migration FIRST (this script aborts if it detects
 // the migration hasn't been applied) and run report-hoer-internal-dupes.mjs
 // (and resolve those by hand) before this.
