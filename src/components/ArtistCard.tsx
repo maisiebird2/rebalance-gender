@@ -94,6 +94,19 @@ export default function ArtistCard({ artist, footer }: ArtistCardProps) {
             )}
           </div>
 
+          {artist.types?.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {artist.types.map((type) => (
+                <span
+                  key={type.id}
+                  className="ff-mono rounded-md border border-gray-300 px-2 py-0.5 text-[11px] font-medium tracking-wide text-gray-600 dark:border-white/15 dark:text-gray-300"
+                >
+                  {type.label}
+                </span>
+              ))}
+            </div>
+          )}
+
           {artist.genres?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {artist.genres.map((genre, i) => (

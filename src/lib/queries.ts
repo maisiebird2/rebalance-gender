@@ -8,6 +8,7 @@ import type {
   Artist,
   Pronoun,
   Genre,
+  ArtistType,
   ArtistLocation,
   ArtistLabel,
   ArtistAlias,
@@ -22,6 +23,8 @@ import type {
 type RawArtistRow = Artist & {
   pronoun: Pronoun | null;
   artist_genres: { genres: (Genre & { status?: string }) | null }[];
+  // One row per (type × source); flattened + deduped to types[] below.
+  artist_type_assignments: { artist_types: ArtistType | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
   aliases: ArtistAlias[];
@@ -84,6 +87,7 @@ const ARTIST_SELECT = `
   updated_at,
   pronoun:pronouns(*),
   artist_genres(genres(*)),
+  artist_type_assignments(artist_types(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
   aliases:artist_aliases(*),
@@ -101,12 +105,14 @@ const ARTIST_SELECT = `
 // Keep this in sync with the fields ArtistCard.tsx actually reads.
 // normalizeArtist() needs genres.status (to keep only approved) and the
 // full images columns (to resolve displayImageUrl via pickArtistImage).
+// artist_type_assignments carries the role pills (producer/DJ/vocalist).
 const CARD_SELECT = `
   id,
   name,
   directory_status,
   pronoun:pronouns(*),
   artist_genres(genres(id, name, status)),
+  artist_type_assignments(artist_types(id, name, label, sort_order)),
   locations:artist_locations(city, country),
   aliases:artist_aliases(name),
   images:artist_images(platform, source_url, storage_url, storage_path, fetched_at, stored_at)
@@ -120,9 +126,21 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
     .map((ag) => ag.genres)
     .filter((g): g is Genre & { status?: string } => g?.status === "approved");
 
+  // The junction holds one row per (type × source), so the same type can
+  // appear several times (e.g. tagged 'manual' AND harvested from discogs).
+  // Collapse to one entry per type id, then order by sort_order.
+  const typesById = new Map<number, ArtistType>();
+  for (const ta of row.artist_type_assignments ?? []) {
+    if (ta.artist_types) typesById.set(ta.artist_types.id, ta.artist_types);
+  }
+  const types: ArtistType[] = Array.from(typesById.values()).sort(
+    (a, b) => a.sort_order - b.sort_order
+  );
+
   return {
     ...row,
     genres,
+    types,
     images: row.images ?? [],
     displayImageUrl: pickArtistImage(row.id, row.images),
   };

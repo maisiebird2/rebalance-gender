@@ -77,6 +77,20 @@ export interface Genre {
   name: string;
 }
 
+/**
+ * A role an artist can be tagged with — 'producer', 'dj', 'vocalist'.
+ * Backed by the closed, hand-seeded `artist_types` lookup (see
+ * supabase_migration_artist_types.sql), not a harvested vocabulary like
+ * genres. `name` is the canonical slug; `label` is the display form
+ * ('dj' → 'DJ'); `sort_order` gives stable UI ordering.
+ */
+export interface ArtistType {
+  id: number;
+  name: string;
+  label: string;
+  sort_order: number;
+}
+
 export interface Pronoun {
   id: number;
   value: string;
@@ -228,6 +242,12 @@ export interface Artist {
 export interface ArtistWithRelations extends Artist {
   pronoun: Pronoun | null;
   genres: Genre[];
+  /**
+   * The artist's roles (producer / DJ / vocalist), deduped down to one
+   * entry per type across however many sources claimed it, ordered by
+   * sort_order. See normalizeArtist() in queries.ts.
+   */
+  types: ArtistType[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
   aliases: ArtistAlias[];
