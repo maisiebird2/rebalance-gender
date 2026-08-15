@@ -4,8 +4,10 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **plan only — nothing implemented.** Branch `resolve-url-redirects`,
-cut from `origin/main` at `44400f0`.
+Status: **step 1 of 7 done** — Module 1 is implemented and tested; nothing
+calls it yet, so behaviour is unchanged. Branch `resolve-url-redirects`,
+rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
+moved this document from `scripts/` to `documentation/`.
 
 Scope note: this is about **resolution** (a network round-trip that answers
 "where does this actually point?"), not **canonicalization** (the string
@@ -21,7 +23,7 @@ is a pure host swap with zero `fetch` calls — out of scope.
 Two independent redirect-followers already exist, and they disagree on nearly
 every detail:
 
-| | `resolveShareUrl`<br>`src/lib/profile-links.ts:739` | `resolveShortLink`<br>`scripts/integrate-harvested-links.mjs:442` |
+| | `resolveShareUrl`<br>`src/lib/profile-links.ts:739` | `resolveShortLink`<br>`scripts/integrate-harvested-links.mjs:443` |
 |---|---|---|
 | Hosts | `on.soundcloud.com` | `bit.ly` |
 | Method | HEAD `redirect:"follow"`, GET fallback, reads `res.url` | HEAD `redirect:"manual"`, reads `Location`, ≤5 hops |
@@ -159,21 +161,54 @@ Server-only. **Not** added to `profile-links.ts`:
 that module, so fetch-based resolver code sitting there is already one
 tree-shaking regression away from shipping to the browser.
 
+**Implemented**, with 34 tests in `src/lib/resolve-url-redirects.test.ts`. As
+built:
+
 ```ts
+export type HostTier = "validate" | "reclassify";
+
 export interface ResolveResult {
   url: string;          // resolved, or the original on any failure
   resolved: boolean;    // did it actually change?
-  finalStatus: number | null;  // status at the destination, when known
+  tier: HostTier | null;        // null when the host isn't resolvable
+  destination: string | null;   // final URL reached, even when rejected
+  finalStatus: number | null;   // status at the destination, when known
   reason?: "not-resolvable" | "no-redirect" | "validation-failed"
-         | "timeout" | "network-error" | "max-hops";
+         | "dead-destination" | "max-hops" | "timeout" | "network-error";
 }
 
 export function isResolvableHost(url: string): boolean;
+export function hostTier(url: string): HostTier | null;
+export function hostExpectation(url: string): string | null;
+export const NOT_RESOLVED_HOSTS: ReadonlyMap<string, string>;  // tier C + why
 export async function resolveRedirect(
   url: string,
   opts?: { timeoutMs?: number; maxHops?: number; userAgent?: string }
 ): Promise<ResolveResult>;
 ```
+
+Four additions to the interface sketched above, all of which Module 2 needs:
+
+- `tier` — so a caller knows whether to re-run classification (Tier B) or keep
+  the platform it already had (Tier A), without re-deriving the host.
+- `destination` — the final URL even when it was rejected, so a failure report
+  can say what a link pointed at. Deliberately separate from `url` so that
+  value can never be mistaken for a usable result.
+- `dead-destination` — split out from the generic failure reasons, because
+  "resolved fine, but the target 404s" is the one case a backfill must not act
+  on, and it needs to be distinguishable in a report.
+- `NOT_RESOLVED_HOSTS` — the Tier C table, exported for documentation rather
+  than runtime use. A test asserts every host in it is non-resolvable, so
+  promoting one to Tier B has to be a deliberate act.
+
+Two behaviours worth recording, both discovered while writing the tests:
+
+- **Timeout bounds the whole chain, not each hop.** One `AbortController` spans
+  every request, so a 5-hop chain can't quietly cost `maxHops × timeoutMs`.
+- **A self-redirect is reported as `max-hops`, not `no-redirect`.** Hops are
+  counted rather than inferred from "did the URL change", so a URL redirecting
+  to itself is described as the loop it is instead of looking like a host that
+  never redirected.
 
 - Never throws. Every failure path returns the original URL with a `reason`.
 - Follows hops manually (`redirect: "manual"`, read `Location`) so the hop
@@ -228,7 +263,7 @@ Save paths, all currently calling `resolveProfileLinkUrlAsync` inline:
 | Path | File |
 |---|---|
 | Public submit | `src/app/api/submit/route.ts:265` |
-| Edit form | `src/app/artist/[id]/edit/actions.ts:311` |
+| Edit form | `src/app/artist/[id]/edit/actions.ts:355` |
 | Apply revision (admin) | `src/app/admin/actions.ts:369` |
 | Missing-links tool (admin) | `src/app/admin/missing-links/actions.ts:41` |
 
@@ -264,8 +299,8 @@ defeat its purpose. It keeps its 5 s timeout; it just calls the new library.
 
 Delete `SHORTENER_HOSTS`, `isShortenerUrl`, `followOneRedirect`,
 `resolveShortLink`, `MAX_REDIRECT_HOPS` and the module-level `resolveCache`
-(lines ~396–455, i.e. `SHORTENER_HOSTS` at :405 through `resolveShortLink`
-at :442); call the library instead. The surrounding step at ~544–580
+(lines ~397–456, i.e. `SHORTENER_HOSTS` at :406 through `resolveShortLink`
+at :443); call the library instead. The surrounding step at ~545–581
 keeps its current shape — batch, 150 ms throttle, persist back to
 `artist_harvested_links` so resolution is a one-time cost per row.
 
@@ -327,8 +362,11 @@ the corrected URL. No bios, images, or genres are touched.
 
 ## Order of work
 
-1. Module 1 + tests. Self-contained, no callers yet.
-2. Module 2 + tests.
+1. ~~Module 1 + tests. Self-contained, no callers yet.~~ **Done.** Verified
+   against the live network as well as the mocked tests: all ten probe cases
+   behaved exactly as the grounding section predicts, including both
+   validation rejections and the dead `soundcloud.app.goo.gl` destination.
+2. Module 2 + tests. ← next
 3. Backfill script; `--dry-run` over live data and read the report. **Stop and
    review the numbers here** — this is the checkpoint before anything mutates
    `artist_links`.
