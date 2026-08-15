@@ -10,10 +10,10 @@
 //   hor_name, hor_url, hor_date, hor_genres
 // Only hor_name is used — it's what gets searched on SoundCloud.
 //
-// Output: soundcloud-lookup-results-<YYYY-MM-DD_HHMMSS>.csv, written one
-// level up from this repo (i.e. in the "Rebalance Gender" folder, not
-// inside rebalance-gender-repo). Each run gets its own timestamped file,
-// so previous results are never overwritten.
+// Output: soundcloud-lookup-results-<YYYY-MM-DD_HHMMSS>.csv, written to the
+// output folder beside the repo (see
+// documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md). Each run gets its own
+// timestamped file, so previous results are never overwritten.
 //
 // URL cleaning reuses the same normalizeProfileLink() logic the website
 // uses for SoundCloud profile links (src/lib/profile-links.ts), so the
@@ -29,6 +29,7 @@ import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath, resolveInputPath } from "./lib/output-path.mjs";
 import { normalizeProfileLink } from "../src/lib/profile-links.js";
 import { cleanLinkUrl } from "../src/lib/platforms.js";
 
@@ -75,7 +76,7 @@ if (!csvPathArg) {
   );
   process.exit(1);
 }
-const csvPath = path.resolve(process.cwd(), csvPathArg);
+const csvPath = resolveInputPath(csvPathArg);
 if (!fs.existsSync(csvPath)) {
   console.error(`CSV not found: ${csvPath}`);
   process.exit(1);
@@ -278,8 +279,7 @@ async function main() {
     )
     .join("\n");
 
-  // One level up from the repo, i.e. in the "Rebalance Gender" folder.
-  const outPath = path.resolve(__dirname, "..", "..", `soundcloud-lookup-results-${timestamp()}.csv`);
+  const outPath = outputPath(`soundcloud-lookup-results-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csvOut);
   console.log(`\nWrote ${rows.length} row(s) to ${outPath}`);
 }

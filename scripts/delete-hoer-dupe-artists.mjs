@@ -41,6 +41,7 @@ import "./lib/http-dispatcher.mjs";
 import path from "node:path";
 import { loadEnvLocal, createSupabase, makeFetchAll } from "./lib/hoer-db.mjs";
 import { writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
+import { outputPath } from "./lib/output-path.mjs";
 import { HOER } from "./lib/hoer-links.mjs";
 
 const APPLY = process.argv.includes("--apply");
@@ -182,7 +183,7 @@ async function main() {
   const kept = audit.filter((a) => a.action === "kept").length;
   console.log(`kept (survivors): ${kept}   skipped: ${skipped}`);
 
-  const outPath = path.resolve(process.cwd(), `hoer-dupe-artist-delete-${timestamp()}.csv`);
+  const outPath = outputPath(`hoer-dupe-artist-delete-${timestamp()}.csv`);
   writeCSV(outPath, AUDIT_COLUMNS, audit);
   console.log(`\nWrote audit log:\n  ${outPath}`);
 }

@@ -20,6 +20,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [MATCHING.md](MATCHING.md) | External platform matching — the two pipelines |
 | [SCORING.md](SCORING.md) | Similarity scoring for recommendations |
 | [REPORTS.md](REPORTS.md) | Admin reports and their download routes |
+| [OUTPUT-FILE-LOCATION-PROPOSAL.md](OUTPUT-FILE-LOCATION-PROPOSAL.md) | Where generated `.csv`/`.ods` files are written, and by which script |
 
 ## Plans (accepted, in progress or done)
 
@@ -38,4 +39,3 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [PROPOSAL-organisations.md](PROPOSAL-organisations.md) | Labels, clubs and events as real entries |
 | [PROPOSAL-platform-links.md](PROPOSAL-platform-links.md) | Paste-to-detect platform links |
 | [PROPOSAL-provenance-purge.md](PROPOSAL-provenance-purge.md) | Platform-data provenance & cascading purge |
-| [OUTPUT-FILE-LOCATION-PROPOSAL.md](OUTPUT-FILE-LOCATION-PROPOSAL.md) | Moving every generated `.csv`/`.ods` write out of the repo |

@@ -16,7 +16,7 @@
 //
 //   exactly one target  -> mark the candidate duplicate
 //   more than one       -> mark nothing; the case is written to
-//                          outputs/hoer-dupe-ambiguous-<stamp>.csv
+//                          hoer-dupe-ambiguous-<stamp>.csv in the output folder
 //   none                -> nothing
 //
 // obscure and rejected count as targets even though neither shows in the
@@ -51,11 +51,9 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
+import { outputPath } from "./lib/output-path.mjs";
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");
 
 loadEnvLocal();
@@ -66,10 +64,10 @@ const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
 const normalizeUrl = (u) => (u ?? "").trim().replace(/\/+$/, "").toLowerCase();
 const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
-function writeCsv(file, header, rows) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+function writeCsv(name, header, rows) {
+  const file = outputPath(name);
   fs.writeFileSync(file, [header.join(",")].concat(rows.map((r) => r.map(esc).join(","))).join("\n") + "\n");
-  return path.relative(REPO, file);
+  return file;
 }
 
 // Some rows carry the bare https://hoer.live/artist URL with no page slug;
@@ -168,7 +166,7 @@ async function main() {
 
   if (ambiguous.length) {
     const rel = writeCsv(
-      path.join(REPO, "outputs", `hoer-dupe-ambiguous-${stamp}.csv`),
+      `hoer-dupe-ambiguous-${stamp}.csv`,
       ["artist_id", "name", "hoer_url", "candidate_count", "candidates"],
       ambiguous.map((r) => [
         r.artist?.id ?? "",
@@ -211,7 +209,7 @@ async function main() {
   }
 
   const rel = writeCsv(
-    path.join(REPO, "outputs", `bind-hoer-duplicates-${stamp}.csv`),
+    `bind-hoer-duplicates-${stamp}.csv`,
     ["artist_id", "name", "hoer_url", "prior_status", "duplicate_of", "target_name", "target_status"],
     [...proposals].map(([id, t]) => [
       id,

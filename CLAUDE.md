@@ -46,15 +46,29 @@ sheets, audit trails, ambiguity reports and failure dumps go to:
 which is `<repo>/../output files`, the sibling of the checkout. `.gitignore`
 blanket-ignores `*.csv` and `*.ods` as a backstop.
 
-Note that the *scripts* have not been migrated yet — most still write into
-the repo root or a recreated `outputs/` directory. See
-[documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md](documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md)
-for the full inventory and the proposed helper. If you touch a script that
-writes a spreadsheet, moving it onto the new convention is a welcome
-drive-by; if you add a *new* one, write to `output files/` from the start.
+**Never build that path by hand.** Resolve it through
+`scripts/lib/output-path.mjs`:
+
+```js
+import { outputPath, resolveInputPath } from "./lib/output-path.mjs";
+
+const out = outputPath(`my-report-${stamp}.csv`);  // creates the dir, returns abs
+const sheet = resolveInputPath(userSuppliedArg);   // bare name -> output folder
+```
+
+`outputPath(name)` honours an absolute `name`, so an `--out=/tmp/x.ods`
+override still works. `resolveInputPath(name)` implements the argument rule:
+a **bare filename** is looked up in the output folder, while an absolute,
+`./`-prefixed or otherwise path-shaped one resolves against the working
+directory. `REBALANCE_OUTPUT_DIR` overrides the folder. Python has no helper
+module — `scripts/review_candidates.py` carries the equivalent `OUTPUT_DIR`
+constant; mirror it if a second Python writer appears.
 
 The exception is `.cache/` — `pair-scores.csv` and the backfill `.ods` are
 machine-to-machine intermediates, not deliverables. They stay in `.cache/`.
+
+See [documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md](documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md)
+for the inventory of which script writes what.
 
 ## Working agreements
 

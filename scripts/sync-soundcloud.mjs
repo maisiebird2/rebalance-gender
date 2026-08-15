@@ -209,6 +209,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
@@ -1224,8 +1225,7 @@ async function writeFailuresCsv() {
       )
       .join("\n") + "\n";
 
-  const outDir = path.resolve(__dirname, "..", "..");
-  const outPath = path.join(outDir, `sync-soundcloud-failures-${timestamp()}.csv`);
+  const outPath = outputPath(`sync-soundcloud-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
   logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }

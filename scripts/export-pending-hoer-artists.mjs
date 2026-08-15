@@ -3,7 +3,7 @@
 // Export pending artists who have a HÖR link, as an ODS spreadsheet
 //
 // Regenerates the review sheet that produced
-// outputs/pending-hoer-artists-20260726.ods (built by hand in an earlier
+// pending-hoer-artists-20260726.ods (built by hand in an earlier
 // session; this script is the committed version of that recipe).
 //
 // One row per artist with directory_status = 'pending' AND a
@@ -43,7 +43,7 @@
 //   npm run export-pending-hoer-artists
 //   npm run export-pending-hoer-artists -- --check-links
 //   npm run export-pending-hoer-artists -- --sort=name
-//   npm run export-pending-hoer-artists -- --out=outputs/my-sheet.ods
+//   npm run export-pending-hoer-artists -- --out=my-sheet.ods
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY,
 // and NEXT_PUBLIC_SITE_URL for the artist-page hyperlinks).
@@ -53,10 +53,10 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
-import path from "node:path";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { hoerFetch } from "./lib/hoer-http.mjs";
 import { buildOds } from "../src/lib/ods.ts";
+import { outputPath } from "./lib/output-path.mjs";
 
 // ── CLI args ────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -74,7 +74,7 @@ if (!["name", "status"].includes(SORT)) {
 }
 
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-const OUT = argValue("out", path.join("outputs", `pending-hoer-artists-${stamp}.ods`));
+const OUT = argValue("out", `pending-hoer-artists-${stamp}.ods`);
 
 loadEnvLocal();
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.rebalance-gender.app").replace(/\/+$/, "");
@@ -162,8 +162,7 @@ async function main() {
     ]),
   });
 
-  const abs = path.resolve(OUT);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const abs = outputPath(OUT);
   fs.writeFileSync(abs, ods);
   console.log(`\nWrote ${abs}`);
 }

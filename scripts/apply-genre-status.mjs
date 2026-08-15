@@ -4,7 +4,9 @@
 //
 // Applies genre status changes that you make by hand in the
 // genre-report.csv (or any CSV with `id`, `name`, `status`
-// columns). Workflow:
+// columns). A bare --csv= filename is looked up in the output
+// folder; use ./name.csv for one in the working directory.
+// Workflow:
 //
 //   1. node scripts/genre-report.mjs         # produces genre-report.csv
 //   2. Open the CSV, set the `status` cell to `deleted` for every
@@ -41,13 +43,14 @@ import { createClient } from '@supabase/supabase-js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveInputPath } from './lib/output-path.mjs'
 
 // ── CLI ──────────────────────────────────────────────────
 const args    = process.argv.slice(2)
 const DRY_RUN = process.env.DRY_RUN === '1' || args.includes('--dry-run')
 const csvArg  = args.find(a => a.startsWith('--csv='))
 const sqlArg  = args.find(a => a.startsWith('--sql-out='))
-const CSV     = csvArg ? csvArg.split('=').slice(1).join('=') : path.resolve(process.cwd(), 'genre-report.csv')
+const CSV     = resolveInputPath(csvArg ? csvArg.split('=').slice(1).join('=') : 'genre-report.csv')
 const SQL_OUT = sqlArg ? sqlArg.split('=').slice(1).join('=') : null
 
 const VALID_STATUS = new Set(['pending', 'approved', 'deleted'])

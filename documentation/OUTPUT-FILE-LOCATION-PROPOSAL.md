@@ -1,12 +1,16 @@
-# Proposal — write every generated spreadsheet outside the repo
+# Generated spreadsheets are written outside the repo
 
-> **Status: proposal, not implemented.** Written 2026-08-15 alongside the
+> **Status: implemented 2026-08-15.** Written as a proposal alongside the
 > repo reorganisation that moved every existing `.csv`/`.ods` out of the
-> checkout. That move relocated the *files*; this document is about
-> relocating the *code that writes them*. Until it is implemented, the
-> scripts below still write into the repo (or beside it) and the blanket
-> `*.csv` / `*.ods` rule in `.gitignore` is what stops those files from
-> being committed.
+> checkout, then implemented in the following commit. It is kept as the
+> reference for *why* the layout is what it is, and as the inventory of
+> which script writes what.
+>
+> Groups A, B, C and E below all now resolve through
+> `scripts/lib/output-path.mjs`. Group D (`.cache/`) was deliberately left
+> alone. The tables describing "current behaviour" in §2 are a record of
+> what the code did *before* the change — the shape of the problem, not
+> the state of the tree.
 
 **Target directory:**
 
@@ -231,53 +235,57 @@ out_path.parent.mkdir(parents=True, exist_ok=True)
 If a second Python writer ever appears, promote this to
 `scripts/lib/output_path.py` mirroring the `.mjs` helper.
 
-## 4. Rollout
+## 4. Rollout — done
 
-The scripts are independent, so this can land in one commit or several. If
-split, this order keeps the tree clean the whole way:
+All of it landed in one commit. What changed, beyond the mechanical path
+swap:
 
-1. **Add the helper** and the two `.gitignore`-adjacent doc updates. No
-   behaviour change.
-2. **Group A** (11 scripts) — the ones that litter the repo root. Highest
-   value, and the blanket `*.csv` ignore currently masks the damage.
-3. **Group C** (6 scripts) — mechanical; they already `mkdir`, so the diff
-   is the path expression plus deleting the now-redundant `mkdirSync`.
-4. **Group B** (6 scripts) — lowest urgency (already outside the repo), but
-   they are what produced the ~60 loose failure CSVs in the project folder.
-5. **Group E** — `review_candidates.py`.
-6. **Docs** — §6 below.
+- Six scripts had a `mkdirSync` that `outputPath()` now does; deleted.
+- Five had a `path`/`__dirname`/`fileURLToPath` import that existed only to
+  build the output path; removed once dead.
+- Three logged their result with `path.relative(REPO, …)`, which after the
+  move would print `../output files/…`. They print the absolute path now.
+- `review_candidates.py` gained an `OUTPUT_DIR` constant rather than a
+  second helper module, per §3.4.
+
+Verified: all 361 tests pass, `tsc --noEmit` reports nothing new, eslint is
+clean, every `scripts/**/*.mjs` parses, and a static check confirms all 24
+files importing the helper import exactly the symbols they use.
 
 ## 5. Input paths — the part that will bite
 
 Several scripts *read* a spreadsheet a previous script wrote. Moving the
 writers without the readers leaves defaults pointing at nothing.
 
-| Script | Default input | Status after the file move |
+| Script | Default input | Resolution |
 |---|---|---|
-| `apply-sc-followee-decisions.mjs` | `outputs/hoer-sc-followees-20260729-211957.ods` (line 31) | **Already broken** — that file is now in `output files/`. Fix with the Group C edit. |
-| `apply-genre-status.mjs` | `genre-report.csv` in `cwd` (line 50) | Breaks as soon as `genre-report.mjs` moves. Change both together. |
-| `apply-pending-hoer-decisions.mjs` | `<repo>/../pending-hoer-artists-20260726_MOD.ods` (line 53) | Still resolves — the file is in the project folder, not `output files/`. Point it at the helper when Group C lands. |
-| `apply-hoer-decisions-2026-07-26.mjs` | absolute path into `output files/` (line 24) | Works, but hard-codes the machine. Replace with the helper. |
-| `migrate.mjs` | three CSVs from `__dirname/../..` (line 252-255) | One-off historical import; leave. |
+| `apply-sc-followee-decisions.mjs` | `outputs/hoer-sc-followees-20260729-211957.ods` | Was **broken** by the file move. Now `resolveInputPath`, and the default filename resolves to the real file. |
+| `apply-genre-status.mjs` | `genre-report.csv` in `cwd` | Now `resolveInputPath`; `genre-report.mjs` writes the same name through `outputPath`, so the pair still lines up. |
+| `apply-pending-hoer-decisions.mjs` | `<repo>/../pending-hoer-artists-20260726_MOD.ods` | Was **also broken** — that sheet has since moved to `backup files/`. Now `resolveInputPath`, so a bare name looks in `output files/`; the not-found error names the folder it searched. The stale default is left as-is: it is a historical one-off sheet, already applied. |
+| `apply-hoer-decisions-2026-07-26.mjs` | absolute path into `output files/` (line 24) | Left alone deliberately — a dated one-off that has already run. It is the cautionary example for §3.1, not a live path. |
+| `migrate-hoer-dupe-links.mjs`, `apply-hoer-dupe-review.mjs`, `apply-review-csv.mjs`, `lookup-soundcloud-by-name.ts` | required positional CSV argument | Now `resolveInputPath`, so the reviewed sheet can be named without typing the folder. |
+| `migrate.mjs` | three CSVs from `__dirname/../..` (line 252-255) | One-off historical import; left. |
 
-The rule to apply: **a bare filename argument resolves against
-`OUTPUT_DIR`, an absolute or `./`-prefixed one against `cwd`.** That keeps
-`node scripts/apply-review-csv.mjs ./local-edit.csv` working while
+The rule: **a bare filename argument resolves against `OUTPUT_DIR`; an
+absolute, `./`-prefixed, or otherwise path-shaped one against `cwd`.** That
+keeps `node scripts/apply-review-csv.mjs ./local-edit.csv` working while
 `… apply-review-csv.mjs hoer-sc-followees-20260729-211957.ods` finds the
 file where it actually lives.
 
-## 6. Documentation to update with the change
+## 6. Documentation updated with the change
 
-- `documentation/PIPELINE.md` — nine `outputs/…` paths (lines 1195, 1205,
-  1234, 1283, 1333, 1341, 1365, 1396, 1399), including two `--out=outputs/…`
-  examples that would become wrong.
-- `documentation/MATCHING.md:88` — "`resolve-candidates-YYYY-MM-DD.csv` in
-  the project root".
-- Script header comments naming `outputs/`: `bind-hoer-duplicates.mjs:19`,
-  `export-lastfm-links.mjs:30`, `export-pending-hoer-artists.mjs:6,46`,
-  `export-hoer-sc-followees.mjs:27`, `apply-sc-followee-decisions.mjs:3`.
-- `.gitignore` — the `/outputs/` entry can be dropped once Group C lands.
-  Keep the blanket `*.csv` / `*.ods` rules regardless; they are the backstop.
+- `documentation/PIPELINE.md` — the nine `outputs/…` paths, and a note at
+  the top stating where every spreadsheet in the document goes.
+- `documentation/MATCHING.md` — "`resolve-candidates-YYYY-MM-DD.csv` in the
+  project root" → in the output folder.
+- Script header comments that named `outputs/` or "one level up from the
+  repo": `bind-hoer-duplicates.mjs`, `export-lastfm-links.mjs`,
+  `export-pending-hoer-artists.mjs`, `export-hoer-sc-followees.mjs`,
+  `apply-sc-followee-decisions.mjs`, `apply-pending-hoer-decisions.mjs`,
+  `integrate-harvested-links.mjs`, `lookup-soundcloud-by-name.ts`,
+  `genre-report.mjs`, `apply-genre-status.mjs`.
+- `.gitignore` — `/outputs/` dropped. The blanket `*.csv` / `*.ods` rules
+  stay; they are the backstop against a future script regressing.
 
 ## 7. Alternatives considered
 

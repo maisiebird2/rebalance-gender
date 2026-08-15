@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadEnvLocal, createSupabase } from "./lib/hoer-db.mjs";
 import { parseCSV, writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
+import { outputPath, resolveInputPath } from "./lib/output-path.mjs";
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run") || process.env.DRY_RUN === "1";
@@ -45,7 +46,7 @@ if (!csvArg) {
   );
   process.exit(1);
 }
-const csvPath = path.resolve(process.cwd(), csvArg);
+const csvPath = resolveInputPath(csvArg);
 if (!fs.existsSync(csvPath)) {
   console.error(`File not found: ${csvPath}`);
   process.exit(1);
@@ -147,7 +148,7 @@ async function main() {
 
   console.log(`\nchanged: ${changed}   skipped: ${skipped}\n`);
 
-  const outPath = path.resolve(process.cwd(), `hoer-dupe-review-applied-${timestamp()}.csv`);
+  const outPath = outputPath(`hoer-dupe-review-applied-${timestamp()}.csv`);
   writeCSV(outPath, ["artist_id", "hoer_name", "decision", "result", "note"], applied);
   console.log(`Wrote audit log:\n  ${outPath}`);
 }

@@ -31,7 +31,7 @@
 //
 // ── Usage ─────────────────────────────────────────────────
 //   node scripts/genre-report.mjs
-//        Writes genre-report.csv in the repo root and prints a summary.
+//        Writes genre-report.csv to the output folder and prints a summary.
 //
 //   node scripts/genre-report.mjs --out=/tmp/genres.csv
 //        Custom output path.
@@ -49,11 +49,12 @@ import { fileURLToPath } from 'node:url'
 
 import { loadGenreVocab, normalizeForLookup } from './lib/genre-vocab.mjs'
 import { nonGenreReason } from './lib/non-genre-hints.mjs'
+import { outputPath } from './lib/output-path.mjs'
 
 // ── CLI ──────────────────────────────────────────────────
 const args   = process.argv.slice(2)
 const outArg = args.find(a => a.startsWith('--out='))
-const OUT    = outArg ? outArg.split('=').slice(1).join('=') : path.resolve(process.cwd(), 'genre-report.csv')
+const OUT    = outputPath(outArg ? outArg.split('=').slice(1).join('=') : 'genre-report.csv')
 
 // ── Env ──────────────────────────────────────────────────
 function loadEnvLocal() {

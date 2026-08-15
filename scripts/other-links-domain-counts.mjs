@@ -34,6 +34,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -211,7 +212,6 @@ async function main() {
   if (noUrl > 0) console.error(`Rows with no URL skipped : ${noUrl}`);
 
   const ts = timestamp();
-  const outDir = path.resolve(__dirname, "..", "..");
 
   // ── Write domain-counts CSV ────────────────────────────────
   const countsHeader = ["domain", "count"];
@@ -220,7 +220,7 @@ async function main() {
       .concat(sorted.map(([domain, count]) => [csvCell(domain), count].join(",")))
       .join("\n") + "\n";
 
-  const countsPath = path.join(outDir, `other-links-domain-counts-${ts}.csv`);
+  const countsPath = outputPath(`other-links-domain-counts-${ts}.csv`);
   fs.writeFileSync(countsPath, countsCsv);
   console.error(`\nWrote ${sorted.length} domains to ${countsPath}`);
 
@@ -241,7 +241,7 @@ async function main() {
       )
       .join("\n") + "\n";
 
-  const subdomainsPath = path.join(outDir, `other-links-subdomains-${ts}.csv`);
+  const subdomainsPath = outputPath(`other-links-subdomains-${ts}.csv`);
   fs.writeFileSync(subdomainsPath, subdomainsCsv);
   console.error(`Wrote ${subdomainRows.length} subdomain URLs to ${subdomainsPath}`);
 }

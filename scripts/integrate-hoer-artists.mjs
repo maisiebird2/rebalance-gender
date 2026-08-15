@@ -42,14 +42,13 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadEnvLocal, createSupabase, makeFetchAll } from "./lib/hoer-db.mjs";
 import { artistUrl, normalizeUrl } from "./lib/hoer-library.mjs";
 import { eligibleMatchLinks, decideOutcome, MATCH_POOL_PLATFORMS } from "./lib/hoer-match.mjs";
 import { loadTagMap, stageFanoutForTerms } from "./lib/hoer-fanout.mjs";
 import { writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
+import { outputPath } from "./lib/output-path.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
 const STATE_SERVICE = "hoer-sync";
 
@@ -328,11 +327,12 @@ async function main() {
     console.log(`  Fan-out for ${boundTermIds.length} bound term(s): ${genres} genre row(s), ${bios} bio(s).`);
   }
 
-  // Review CSVs (repo root, dated), same convention as the other hoer scripts.
+  // Review CSVs (dated, in the output folder), same convention as the other
+  // hoer scripts — see documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md.
   const stamp = timestamp();
   if (!DRY_RUN && conflictRows.length) {
     const p = writeCSV(
-      path.join(__dirname, "..", `hoer-bind-conflicts-${stamp}.csv`),
+      outputPath(`hoer-bind-conflicts-${stamp}.csv`),
       ["term_id", "slug", "artist_id", "this_hoer_url", "existing_hoer_url"],
       conflictRows
     );
@@ -340,7 +340,7 @@ async function main() {
   }
   if (!DRY_RUN && ambiguousRows.length) {
     const p = writeCSV(
-      path.join(__dirname, "..", `hoer-bind-ambiguous-${stamp}.csv`),
+      outputPath(`hoer-bind-ambiguous-${stamp}.csv`),
       ["term_id", "slug", "display_name", "matched_artist_ids", "matched_via"],
       ambiguousRows
     );

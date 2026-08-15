@@ -24,7 +24,7 @@
 //
 //   npm run export-hoer-sc-followees
 //   npm run export-hoer-sc-followees -- --sort=name
-//   npm run export-hoer-sc-followees -- --out=outputs/my-sheet.ods
+//   npm run export-hoer-sc-followees -- --out=my-sheet.ods
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY,
 // and NEXT_PUBLIC_SITE_URL for the artist-page hyperlinks).
@@ -34,9 +34,9 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
-import path from "node:path";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { buildOds } from "../src/lib/ods.ts";
+import { outputPath } from "./lib/output-path.mjs";
 
 // ── CLI args ────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -53,7 +53,7 @@ if (!["followers", "name"].includes(SORT)) {
 }
 
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-const OUT = argValue("out", path.join("outputs", `hoer-sc-followees-${stamp}.ods`));
+const OUT = argValue("out", `hoer-sc-followees-${stamp}.ods`);
 
 loadEnvLocal();
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.rebalance-gender.app").replace(/\/+$/, "");
@@ -103,8 +103,7 @@ async function main() {
     ]),
   });
 
-  const abs = path.resolve(OUT);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const abs = outputPath(OUT);
   fs.writeFileSync(abs, ods);
 
   const missing = artists.filter((a) => a.followers === null).length;

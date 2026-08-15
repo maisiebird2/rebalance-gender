@@ -26,8 +26,10 @@ import argparse
 import csv
 import json
 import logging
+import os
 import sys
 from datetime import timezone, datetime
+from pathlib import Path
 import psycopg2
 import psycopg2.extras
 
@@ -67,8 +69,18 @@ CSV_FIELDS = [
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
+# Generated spreadsheets go beside the repo, not inside it — the Python
+# mirror of scripts/lib/output-path.mjs. See
+# documentation/OUTPUT-FILE-LOCATION-PROPOSAL.md.
+OUTPUT_DIR = Path(
+    os.environ.get("REBALANCE_OUTPUT_DIR")
+    or Path(__file__).resolve().parent.parent.parent / "output files"
+)
+
+
 def cmd_export(conn, args):
-    out_path = args.out or "candidates.csv"
+    out_path = Path(args.out) if args.out else OUTPUT_DIR / "candidates.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     service_filter = f"AND p.service = '{args.service}'" if args.service else ""
     status_filter  = f"AND p.status = '{args.status}'" if args.status else ""
 
@@ -281,7 +293,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_export = sub.add_parser("export", help="Export pending candidates to CSV")
-    p_export.add_argument("--out", help="Output CSV path (default: candidates.csv)")
+    p_export.add_argument("--out", help="Output CSV path (default: candidates.csv in the output folder)")
     p_export.add_argument("--service", choices=["musicbrainz", "spotify"])
     p_export.add_argument("--status",
                           choices=["best match", "close match", "tie", "pending",

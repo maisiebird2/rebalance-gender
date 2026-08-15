@@ -71,6 +71,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -87,7 +88,7 @@ const MIN_SCORE   = minScoreArg ? parseFloat(minScoreArg.split("=")[1]) : 0.6;
 const outputArg    = args.find((a) => a.startsWith("--output="));
 const timestamp    = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
 const rawOut       = outputArg ? outputArg.split("=")[1] : `duplicate-candidates-${timestamp}.csv`;
-const OUTPUT_PATH  = path.isAbsolute(rawOut) ? rawOut : path.resolve(process.cwd(), rawOut);
+const OUTPUT_PATH  = outputPath(rawOut);
 
 // ------------------------------------------------------------
 // Load .env.local

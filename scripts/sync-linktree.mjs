@@ -108,6 +108,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
@@ -718,7 +719,7 @@ async function writeFailuresCsv() {
       )
       .join("\n") + "\n";
 
-  const outPath = path.join(path.resolve(__dirname, "..", ".."), `sync-linktree-failures-${timestamp()}.csv`);
+  const outPath = outputPath(`sync-linktree-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
   logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }

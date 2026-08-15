@@ -28,6 +28,7 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import path from "node:path";
+import { outputPath } from "./lib/output-path.mjs";
 import {
   loadEnvLocal,
   createSupabase,
@@ -171,7 +172,7 @@ async function main() {
     "shared_genres",
     "evidence",
   ];
-  const outPath = path.resolve(process.cwd(), `hoer-internal-dupes-${timestamp()}.csv`);
+  const outPath = outputPath(`hoer-internal-dupes-${timestamp()}.csv`);
   writeCSV(outPath, columns, pairs);
 
   console.log(`\n${pairs.length} candidate pair(s) written to:\n  ${outPath}`);

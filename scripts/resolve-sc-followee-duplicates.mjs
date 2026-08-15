@@ -63,6 +63,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { outputPath } from "./lib/output-path.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -161,7 +162,7 @@ const CSV_COLUMNS = [
 
 function writeCsv(records) {
   const filename = `sc-followee-duplicates-${APPLY ? "applied" : "dryrun"}-${runStamp()}.csv`;
-  const outPath = path.join(process.cwd(), filename);
+  const outPath = outputPath(filename);
   const lines = [CSV_COLUMNS.join(",")];
   for (const r of records) {
     lines.push(CSV_COLUMNS.map((c) => csvCell(r[c])).join(","));
