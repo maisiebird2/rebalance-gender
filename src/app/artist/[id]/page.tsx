@@ -173,6 +173,20 @@ export default async function ArtistPage({ params }: PageProps) {
             </div>
           </div>
 
+          {/* Types (producer / DJ / vocalist) */}
+          {artist.types?.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {artist.types.map((type) => (
+                <span
+                  key={type.id}
+                  className="rounded-full border border-gray-300 px-2 py-0.5 text-xs font-medium text-gray-600 dark:border-white/15 dark:text-gray-300"
+                >
+                  {type.label}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Genres */}
           {artist.genres?.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-1.5">
