@@ -23,7 +23,7 @@
 // Next-bundled lib, so this is the single definition of the vocabulary
 // rather than a fact copied into each.
 //
-// See scripts/IMAGE-HARVESTING-PLAN.md (Phase 0).
+// See documentation/IMAGE-HARVESTING-PLAN.md (Phase 0).
 // ============================================================
 
 export const IMAGE_FAILURE_SERVICE_PREFIX = "image:";

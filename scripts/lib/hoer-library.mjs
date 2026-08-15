@@ -1,7 +1,7 @@
 // ============================================================
 // Pure, DB-free helpers for the HÖR library harvester
 // (harvest-hoer-library.mjs — Phase A of the rework; see
-// scripts/HOER-SYNC-REWORK-PLAN.md).
+// documentation/HOER-SYNC-REWORK-PLAN.md).
 //
 // Everything here is deterministic and side-effect-free so it can be
 // unit-tested without a database or the network (see hoer-library.test.mjs).

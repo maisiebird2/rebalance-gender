@@ -82,7 +82,7 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // Bandcamp link arrived since the last round, and the loop still
 // terminates naturally. The same page fetch also does the full
 // Bandcamp profile pull (discography, bio, location, image, genre
-// tags) — see sync-bandcamp.mjs / Phase 2b in PIPELINE.md.
+// tags) — see sync-bandcamp.mjs / Phase 2b in documentation/PIPELINE.md.
 // HÖR is NO LONGER a loop member. It used to be (sync-hoer.mjs), because
 // its page socials feed the other harvesters — but it was reworked into a
 // four-script library-driven pipeline (harvest-hoer-library → seed-hoer-terms
@@ -91,7 +91,7 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 // socials, and its input is fixed before the loop starts, so it doesn't need
 // to re-run each round; round 1's integrate-harvested-links promotes its
 // socials and the loop feeds on them from there. See
-// scripts/HOER-SYNC-REWORK-PLAN.md and orchestrate-platform-enrichment.mjs.
+// documentation/HOER-SYNC-REWORK-PLAN.md and orchestrate-platform-enrichment.mjs.
 //
 // sync-soundcloud.mjs (Phase 2a) joined this loop on 2026-07-11 (was a
 // standalone pre-loop orchestrator stage). It stages the "Links" section

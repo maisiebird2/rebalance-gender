@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadEnvLocal, createSupabase } from "./lib/hoer-db.mjs";
 import { parseCSV, writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
+import { outputPath, resolveInputPath } from "./lib/output-path.mjs";
 import {
   HOER,
   HOER_LINK_AUDIT_COLUMNS,
@@ -59,7 +60,7 @@ if (!csvArg) {
   );
   process.exit(1);
 }
-const csvPath = path.resolve(process.cwd(), csvArg);
+const csvPath = resolveInputPath(csvArg);
 if (!fs.existsSync(csvPath)) {
   console.error(`File not found: ${csvPath}`);
   process.exit(1);
@@ -272,7 +273,7 @@ async function main() {
       : `\ncopied: ${copied}   skipped: ${skipped}   conflicts: ${conflicts}   errors: ${errors}\n`
   );
 
-  const outPath = path.resolve(process.cwd(), `hoer-link-migration-applied-${timestamp()}.csv`);
+  const outPath = outputPath(`hoer-link-migration-applied-${timestamp()}.csv`);
   writeCSV(outPath, HOER_LINK_AUDIT_COLUMNS, applied);
   console.log(`Wrote audit log:\n  ${outPath}`);
 }

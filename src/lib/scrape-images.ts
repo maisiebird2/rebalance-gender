@@ -167,7 +167,7 @@ export const PLATFORM_PRIORITY = [
 // applies in exactly one situation: the owner ran and recorded a
 // *transient* failure. If the owner has not run yet, succeeded, or
 // recorded a definitive "no image exists", scraping is not this script's
-// job — the owner will get to it. See scripts/IMAGE-HARVESTING-PLAN.md.
+// job — the owner will get to it. See documentation/IMAGE-HARVESTING-PLAN.md.
 export const OWNED_BY_DEDICATED_HARVESTER: ReadonlySet<string> = new Set([
   "soundcloud",
   "bandcamp",
@@ -184,7 +184,7 @@ export const OWNED_BY_DEDICATED_HARVESTER: ReadonlySet<string> = new Set([
 // scrape always wins the row and is then overwritten by the dedicated
 // harvester's result on the next run. Those harvesters already re-detect
 // such artists from DB state, so nothing needs to trigger them here.
-// See scripts/IMAGE-HARVESTING-PLAN.md (Phase 3).
+// See documentation/IMAGE-HARVESTING-PLAN.md (Phase 3).
 export const SCRAPE_ONLY_PLATFORMS: readonly string[] = PLATFORM_PRIORITY.filter(
   (p) => !OWNED_BY_DEDICATED_HARVESTER.has(p)
 );
@@ -522,7 +522,7 @@ export async function scrapeArtistImages(
     // fallback for exactly one situation: the owner ran and failed in a
     // way that might not recur. If it has not run yet, or it succeeded,
     // or it recorded a definitive answer, this is not our platform to
-    // fetch — see scripts/IMAGE-HARVESTING-PLAN.md.
+    // fetch — see documentation/IMAGE-HARVESTING-PLAN.md.
     if (OWNED_BY_DEDICATED_HARVESTER.has(platform) && !transientFailurePlatforms.has(platform)) {
       result.skippedProtected.push(platform);
       continue;

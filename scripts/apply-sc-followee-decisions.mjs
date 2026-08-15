@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Applies the manual review decisions in "hoer-sc-followees-20260729-211957.ods"
-// (in outputs/) to the artists table.
+// (in the output folder — see documentation/OUTPUT-FILE-LOCATION.md)
+// to the artists table.
 //
 // Reads the sheet named "HÖR sc_followees" (falls back to the sole sheet if the
 // file has exactly one). Sheet columns:
@@ -23,12 +24,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOdsRows } from "./lib/ods-read.mjs";
+import { outputPath, resolveInputPath } from "./lib/output-path.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");
-const ODS =
+const ODS = resolveInputPath(
   process.argv.slice(2).find((a) => a !== "--apply") ??
-  path.join(REPO, "outputs", "hoer-sc-followees-20260729-211957.ods");
+    "hoer-sc-followees-20260729-211957.ods"
+);
 
 for (const line of fs.readFileSync(path.join(REPO, ".env.local"), "utf-8").split("\n")) {
   const t = line.trim();
@@ -165,8 +168,7 @@ if (!APPLY) {
 
 // --- audit trail ---
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-const auditPath = path.join(REPO, "outputs", `apply-sc-followee-decisions-${stamp}.csv`);
-fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+const auditPath = outputPath(`apply-sc-followee-decisions-${stamp}.csv`);
 const esc = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 fs.writeFileSync(
   auditPath,
@@ -178,7 +180,7 @@ fs.writeFileSync(
     )
     .join("\n") + "\n"
 );
-console.log(`\nAudit written to ${path.relative(REPO, auditPath)}`);
+console.log(`\nAudit written to ${auditPath}`);
 
 console.log("Applying…");
 for (const [status, ts] of byStatus) {

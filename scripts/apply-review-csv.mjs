@@ -34,6 +34,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveInputPath } from "./lib/output-path.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -53,7 +54,7 @@ if (!csvArg) {
   process.exit(1);
 }
 
-const csvPath = path.resolve(process.cwd(), csvArg);
+const csvPath = resolveInputPath(csvArg);
 if (!fs.existsSync(csvPath)) {
   console.error(`File not found: ${csvPath}`);
   process.exit(1);

@@ -5,7 +5,7 @@
 // Ingests HÖR's library of sets (WordPress posts) into the hoer_sets ledger.
 // This is the spine of the new system: everything else (seed-hoer-terms,
 // enrich-hoer-terms, integrate-hoer-artists) reads from this table rather
-// than re-crawling HÖR. See scripts/HOER-SYNC-REWORK-PLAN.md.
+// than re-crawling HÖR. See documentation/HOER-SYNC-REWORK-PLAN.md.
 //
 // It replaces the roster-first sync-hoer.mjs, whose fixed ~100-request
 // enumeration of all 9,954 ppma_author terms ran every round. Here the posts

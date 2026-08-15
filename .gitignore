@@ -29,20 +29,18 @@
 # per-run enrichment detail logs (see scripts/lib/progress-log.mjs)
 /logs/
 scripts/*-cache.json
-resolve-candidates-*.csv
-sc-followee-duplicates-*.csv
-genre-report*.csv
-# HÖR resolver / link-migration dated outputs
-hoer-status-resolution-*.csv
-hoer-inferred-dupes-review-*.csv
-hoer-exact-ambiguous-*.csv
-hoer-internal-dupes-*.csv
-hoer-dupe-review-applied-*.csv
-hoer-link-migration-*.csv
-hoer-bind-ambiguous-*.csv
-hoer-dupe-artist-delete-*.csv
-# generated review sheets, audit trails and ambiguity reports
-/outputs/
+
+# Generated spreadsheets — review sheets, audit trails, ambiguity reports,
+# failure dumps. These are written OUTSIDE the repo, to the `output files/`
+# folder beside the checkout, via scripts/lib/output-path.mjs. Nothing in
+# this repo is meant to be a .csv or .ods, so the blanket ignore is the
+# safety net that stops a stray run from re-littering the tree — every
+# entry this replaced was a per-script pattern added after the fact,
+# always one script behind.
+*.csv
+*.ods
+# LibreOffice lock files left next to an open spreadsheet
+.~lock.*#
 __pycache__/
 *.pyc
 

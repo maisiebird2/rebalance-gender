@@ -87,7 +87,7 @@
 // it became a loop harvester like Bandcamp — so this orchestrator is the
 // name cleanup, the loop, then images.)
 //
-// This is the same ordering as Phase 1 → Phase 2 of PIPELINE.md, wired
+// This is the same ordering as Phase 1 → Phase 2 of documentation/PIPELINE.md, wired
 // together so it can be launched (and, later, scheduled) with one flag.
 //
 // --approved

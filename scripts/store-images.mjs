@@ -15,7 +15,7 @@
 // "best" source, written to artists.profile_image_url/source): every
 // row in artist_images gets re-hosted, not just one per artist, since
 // an artist can now display images from several platforms. See
-// scripts/PIPELINE.md, "Multi-image artist_images table".
+// documentation/PIPELINE.md, "Multi-image artist_images table".
 //
 // The SoundCloud-CDN 500×500 resize rewrite (toSize500) is applied
 // ONLY to platform === 'soundcloud' rows; every other source is

@@ -5,6 +5,14 @@ scripts should be run, and the purpose of each. The goal is to
 eventually have a single `orchestrate.mjs` script that calls each
 stage in order.
 
+> **Where the spreadsheets go.** Every `.csv` and `.ods` named below is
+> written to the `output files/` folder beside the checkout, never into the
+> repo. Scripts resolve it through `scripts/lib/output-path.mjs`; set
+> `REBALANCE_OUTPUT_DIR` to point somewhere else. Where a script takes a
+> sheet as an argument, a bare filename is looked up in that folder and a
+> `./`-prefixed one against the working directory. See
+> [OUTPUT-FILE-LOCATION.md](OUTPUT-FILE-LOCATION.md).
+
 ---
 
 ## Overview
@@ -1192,7 +1200,7 @@ npm run bind-hoer-duplicates -- --apply           # 3. auto-bind the rest
 ```
 
 Steps 2 and 3 are **dry-run without `--apply`**, and each writes an
-audit CSV of every row it is about to change into `outputs/` before it
+audit CSV of every row it is about to change into the output folder before it
 touches anything. Run them bare first and read the summary.
 
 Nothing removes rows from the queue explicitly: the export selects
@@ -1202,7 +1210,7 @@ next export.
 
 #### 1. `export-pending-hoer-artists.mjs` — read-only
 
-Writes `outputs/pending-hoer-artists-<stamp>.ods`, one sheet named
+Writes `pending-hoer-artists-<stamp>.ods`, one sheet named
 `Pending HÖR artists`, one row per non-deleted `pending` artist holding
 a `platform='hoer'` link. Columns: `Artist` (hyperlinked to the site
 profile), `artist_id`, `HÖR link` (hyperlinked to itself), then the
@@ -1231,7 +1239,7 @@ proposes a delete.
 ```bash
 npm run export-pending-hoer-artists
 npm run export-pending-hoer-artists -- --check-links
-npm run export-pending-hoer-artists -- --out=outputs/my-sheet.ods
+npm run export-pending-hoer-artists -- --out=my-sheet.ods
 ```
 
 #### 2. `apply-pending-hoer-decisions.mjs` — applies the sheet
@@ -1280,7 +1288,7 @@ candidate here.
   `approved`, `pending`, `sc_followee`, `obscure` or `rejected`.
 - **exactly one target** → mark the candidate `duplicate`,
   `duplicate_of` = that artist. **More than one** → mark nothing, write
-  the case to `outputs/hoer-dupe-ambiguous-<stamp>.csv`. **None** →
+  the case to `hoer-dupe-ambiguous-<stamp>.csv`. **None** →
   nothing.
 
 `obscure` and `rejected` count as targets even though neither appears in
@@ -1330,7 +1338,7 @@ npm run apply-sc-followee-decisions -- --apply # 2b. apply what you wrote
 ```
 
 Step 2 is **dry-run without `--apply`** and writes an audit CSV of every
-row it is about to change into `outputs/` before it touches anything.
+row it is about to change into the output folder before it touches anything.
 
 As with the pending cycle, nothing removes rows from the queue: the
 export selects `directory_status='sc_followee'`, so anything decided
@@ -1338,7 +1346,7 @@ simply stops appearing on the next export.
 
 #### 1. `export-hoer-sc-followees.mjs` — read-only
 
-Writes `outputs/hoer-sc-followees-<stamp>.ods`, one sheet named
+Writes `hoer-sc-followees-<stamp>.ods`, one sheet named
 `HÖR sc_followees`, one row per non-deleted `sc_followee` artist holding
 a `platform='hoer'` link. Columns: `Artist` (hyperlinked to the site
 profile), `artist_id`, `SoundCloud followers` — the latter from
@@ -1362,7 +1370,7 @@ the top of the sheet.
 ```bash
 npm run export-hoer-sc-followees
 npm run export-hoer-sc-followees -- --sort=name
-npm run export-hoer-sc-followees -- --out=outputs/my-sheet.ods
+npm run export-hoer-sc-followees -- --out=my-sheet.ods
 ```
 
 #### 2. `apply-sc-followee-decisions.mjs` — applies the sheet
@@ -1393,10 +1401,10 @@ a `NOTE` for a human glance, but the sheet decision still wins.
 
 > **The default file is pinned, not "the latest export".** With no path
 > argument the script reads
-> `outputs/hoer-sc-followees-20260729-211957.ods` — the sheet this
+> `hoer-sc-followees-20260729-211957.ods` — the sheet this
 > review cycle started from. After a fresh export, pass the new file
 > explicitly: `npm run apply-sc-followee-decisions -- --apply
-> outputs/hoer-sc-followees-<stamp>.ods`. The argument parser takes the
+> hoer-sc-followees-<stamp>.ods`. The argument parser takes the
 > first non-`--apply` argument as the path.
 
 ### Genre cleanup toolkit *(as-needed; see `GENRES.md`)*

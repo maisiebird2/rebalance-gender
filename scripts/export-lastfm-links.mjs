@@ -27,7 +27,7 @@
 //
 //   npm run export-lastfm-links
 //   npm run export-lastfm-links -- --include-not-found
-//   npm run export-lastfm-links -- --out=outputs/my-sheet.ods
+//   npm run export-lastfm-links -- --out=my-sheet.ods
 //
 // Requires .env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SECRET_KEY,
 // and NEXT_PUBLIC_SITE_URL for the artist-page hyperlinks).
@@ -37,9 +37,9 @@
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
-import path from "node:path";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { buildOds } from "../src/lib/ods.ts";
+import { outputPath } from "./lib/output-path.mjs";
 
 // ── CLI args ────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -50,7 +50,7 @@ function argValue(name, fallback) {
 const INCLUDE_NOT_FOUND = args.includes("--include-not-found");
 
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-const OUT = argValue("out", path.join("outputs", `lastfm-links-${stamp}.ods`));
+const OUT = argValue("out", `lastfm-links-${stamp}.ods`);
 
 loadEnvLocal();
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.rebalance-gender.app").replace(/\/+$/, "");
@@ -123,8 +123,7 @@ async function main() {
     ]),
   });
 
-  const abs = path.resolve(OUT);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const abs = outputPath(OUT);
   fs.writeFileSync(abs, ods);
 
   const unparsed = artists.filter((a) => a.url && !a.lastfm).length;

@@ -85,7 +85,7 @@
 // and uploads it to artist-images/{artist_id}/bandcamp.{ext}. An
 // artist can hold images from several platforms at once now (this one
 // plus, say, SoundCloud's) rather than one platform's pick silently
-// overwriting another's — see scripts/PIPELINE.md, "Multi-image
+// overwriting another's — see documentation/PIPELINE.md, "Multi-image
 // artist_images table". This script never writes to
 // artist_enrichment.profile_image_url (explicitly nulled in that
 // upsert instead, so a pre-migration value doesn't linger looking
@@ -113,7 +113,7 @@
 //     'bandcamp_page') when a redirected track/album page happens to
 //     have it, but not promoted to a first-class column — flagged as a
 //     future collaboration-signal enhancement, same status Discogs'
-//     members/groups fields have in PIPELINE.md.
+//     members/groups fields have in documentation/PIPELINE.md.
 //
 // Wrong-field URL guard: before fetching, the stored artist_links.url
 // is checked against the *.bandcamp.com pattern (rejecting both
@@ -163,6 +163,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
@@ -882,7 +883,7 @@ export async function syncArtist(artist, opts = {}) {
 
     // Location — best-effort raw_text only (structured city/country
     // parsing is a future enhancement, same status as Discogs
-    // namevariations/aliases in PIPELINE.md); never clobbers an
+    // namevariations/aliases in documentation/PIPELINE.md); never clobbers an
     // existing row.
     if (sidebar.location && !artistIdsWithLocation.has(artistId)) {
       const { error: locationError } = await supabase
@@ -976,8 +977,7 @@ async function writeFailuresCsv() {
       )
       .join("\n") + "\n";
 
-  const outDir = path.resolve(__dirname, "..", "..");
-  const outPath = path.join(outDir, `sync-bandcamp-failures-${timestamp()}.csv`);
+  const outPath = outputPath(`sync-bandcamp-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
   logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }

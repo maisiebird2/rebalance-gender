@@ -203,7 +203,7 @@ work above but not yet built. None removes any frontend functionality:
 Scripts live in `scripts/` and run from the repo root with `npm run <name>`
 (or `node scripts/<name>.mjs` for scripts not yet in `package.json`).
 
-**Read `scripts/PIPELINE.md` for the full ordered pipeline.** Summary:
+**Read `PIPELINE.md` for the full ordered pipeline.** Summary:
 
 | Phase | What it does |
 |---|---|
@@ -217,7 +217,7 @@ Scripts live in `scripts/` and run from the repo root with `npm run <name>`
 | 7 | Recommendation signals — SC follow graph, MB tags, genre harvesting |
 | 8 | Review and data quality passes |
 
-**Read `scripts/GENRES.md`** for how genres are harvested, normalised,
+**Read `GENRES.md`** for how genres are harvested, normalised,
 deduplicated/pruned, and displayed (the ≥3-approved-artists filter rule).
 
 Python scripts (scoring pipeline) require conda; packages:
@@ -227,7 +227,7 @@ Python scripts (scoring pipeline) require conda; packages:
 
 ## Recommendation engine
 
-**Read `scripts/SCORING.md` for full detail.** Summary:
+**Read `SCORING.md` for full detail.** Summary:
 
 Three-step pipeline, all run from the repo root:
 
@@ -251,7 +251,7 @@ Five signals: `genre_score`, `mb_tag_score`, `mb_collab_score`,
 Cache files (gitignored): `.cache/signals.json`, `.cache/pair-scores.csv`.
 
 Current coverage gaps (as of June 2026): SC follow graph ~11% complete,
-MB tags 0% (enrichment not run), genres 21%. See `scripts/IMPROVEMENT_PLAN.md`
+MB tags 0% (enrichment not run), genres 21%. See `IMPROVEMENT_PLAN.md`
 for the remediation plan.
 
 ---

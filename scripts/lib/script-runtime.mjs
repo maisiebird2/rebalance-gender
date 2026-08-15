@@ -2,7 +2,7 @@
 // How to spawn another scripts/ entry point as a child process.
 //
 // The scripts here are .mjs but freely import TypeScript from src/lib
-// (see scripts/PIPELINE.md), so plain `node` can't load most of them —
+// (see documentation/PIPELINE.md), so plain `node` can't load most of them —
 // it fails at the first .ts import with ERR_MODULE_NOT_FOUND. Every
 // spawner must therefore go through tsx, which runs .mjs and .ts alike.
 //

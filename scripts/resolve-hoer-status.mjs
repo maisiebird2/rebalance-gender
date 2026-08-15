@@ -16,7 +16,7 @@
 // (The standalone migrate-hoer-dupe-links.mjs does the same from a saved report
 // — use it to backfill dupes marked before this step existed.)
 //
-// See scripts/HOER-STATUS-RESOLUTION-PLAN.md for the full design. Run the
+// See documentation/HOER-STATUS-RESOLUTION-PLAN.md for the full design. Run the
 // name_search punctuation migration FIRST (this script aborts if it detects
 // the migration hasn't been applied) and run report-hoer-internal-dupes.mjs
 // (and resolve those by hand) before this.
@@ -38,7 +38,7 @@
 // FIRST import: registers the HTTP/1.1-only dispatcher process-wide
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
-import path from "node:path";
+import { outputPath } from "./lib/output-path.mjs";
 import {
   loadEnvLocal,
   createSupabase,
@@ -452,9 +452,8 @@ async function main() {
 
   // ---- Write CSVs ----
   const stamp = timestamp();
-  const outDir = process.cwd();
 
-  const masterPath = path.resolve(outDir, `hoer-status-resolution-${stamp}.csv`);
+  const masterPath = outputPath(`hoer-status-resolution-${stamp}.csv`);
   writeCSV(
     masterPath,
     [
@@ -474,7 +473,7 @@ async function main() {
     changed
   );
 
-  const reviewPath = path.resolve(outDir, `hoer-inferred-dupes-review-${stamp}.csv`);
+  const reviewPath = outputPath(`hoer-inferred-dupes-review-${stamp}.csv`);
   writeCSV(
     reviewPath,
     [
@@ -492,14 +491,14 @@ async function main() {
     reviewRows
   );
 
-  const ambiguousPath = path.resolve(outDir, `hoer-exact-ambiguous-${stamp}.csv`);
+  const ambiguousPath = outputPath(`hoer-exact-ambiguous-${stamp}.csv`);
   writeCSV(
     ambiguousPath,
     ["artist_id", "hoer_name", "hoer_url", "matched_artist_id", "matched_name"],
     ambiguousRows
   );
 
-  const linkPath = path.resolve(outDir, `hoer-link-migration-${stamp}.csv`);
+  const linkPath = outputPath(`hoer-link-migration-${stamp}.csv`);
   writeCSV(linkPath, HOER_LINK_AUDIT_COLUMNS, linkAudit);
 
   console.log("\nWrote:");

@@ -37,8 +37,8 @@
 //     platform) unique slot, so inserting the harvested candidate
 //     would violate artist_links_artist_platform_unique. These pairs
 //     are skipped entirely: no insert, no flag, no terminal error.
-//     Instead each is recorded to a datetime-stamped CSV written one
-//     level up from the repo root at the end of the run (columns:
+//     Instead each is recorded to a datetime-stamped CSV written to the
+//     output folder at the end of the run (columns:
 //     artist name, artist edit-page URL, platform, harvested URL), so
 //     a human can review a candidate the harvester found for a
 //     platform previously judged not-found. The CSV is only created
@@ -115,6 +115,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from "../src/lib/profile-links.js";
 import { cleanLinkUrl } from "../src/lib/platforms.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
@@ -467,9 +468,8 @@ function classifyResolved(rawUrl) {
 }
 
 // ------------------------------------------------------------
-// Writes the "not found" collisions to a datetime-stamped CSV one level
-// up from the repo root (parent of the checkout — path.join(__dirname,
-// "..", ".."), so `.../<parent>/harvested-link-collisions-<stamp>.csv`).
+// Writes the "not found" collisions to a datetime-stamped CSV in the output
+// folder (see documentation/OUTPUT-FILE-LOCATION.md).
 // Columns: artist name, artist edit-page URL, platform, platform URL.
 // Artist names are looked up from `artists` by id. Skipped in dry runs.
 // ------------------------------------------------------------
@@ -504,8 +504,7 @@ async function writeCollisionCsv(collisions) {
     );
   }
 
-  const filename = `harvested-link-collisions-${runTimestamp()}.csv`;
-  const outPath = path.join(__dirname, "..", "..", filename);
+  const outPath = outputPath(`harvested-link-collisions-${runTimestamp()}.csv`);
   fs.writeFileSync(outPath, lines.join("\n") + "\n", "utf-8");
   console.log(`\n${collisions.length} "not found" collision(s) written to ${outPath}`);
 }

@@ -10,7 +10,7 @@
 //
 // The default pair (resident_advisor → soundcloud) exists because RA
 // artist pages usually list a SoundCloud, but RA cannot be harvested
-// automatically — see the Resident Advisor section in PIPELINE.md.
+// automatically — see the Resident Advisor section in documentation/PIPELINE.md.
 // Hence: a hand-filled sheet rather than a scraper.
 //
 // "MISSING" follows the same rule as the admin Missing-links page (see

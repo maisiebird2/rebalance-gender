@@ -9,7 +9,7 @@
 //   import "./lib/http-dispatcher.mjs";
 //
 // Why this exists (diagnosed in store-images.mjs 2026-07-24; history
-// in scripts/PIPELINE.md, "5b. store-images.mjs"): undici 8 — the
+// in documentation/PIPELINE.md, "5b. store-images.mjs"): undici 8 — the
 // npm package AND the copy bundled into Node ≥26's built-in fetch —
 // negotiates HTTP/2 by default (`allowH2` defaults to true in
 // undici/lib/core/connect.js), and HTTP/2 multiplexes every request

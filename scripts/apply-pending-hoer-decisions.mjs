@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Applies the manual review decisions in "pending-hoer-artists-20260726_MOD.ods"
-// (one level above the repo) to the artists table.
+// (in the output folder — see documentation/OUTPUT-FILE-LOCATION.md)
+// to the artists table.
 //
 // Reads the sheet named "Pending HÖR artists" (errors if it is missing).
 // Sheet columns: Artist | HÖR link | decision | duplicate of | notes
@@ -36,7 +37,8 @@
 //
 // Usage: npm run apply-pending-hoer-decisions [-- --apply] [-- path/to.ods]
 //        npx tsx scripts/apply-pending-hoer-decisions.mjs --apply
-//        (default is dry-run/verify; default sheet is the file named above)
+//        (default is dry-run/verify; a bare filename resolves inside the
+//        output folder, a ./-prefixed one against the working directory)
 
 import "./lib/http-dispatcher.mjs";
 import { createClient } from "@supabase/supabase-js";
@@ -44,17 +46,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOdsRows } from "./lib/ods-read.mjs";
+import { OUTPUT_DIR, outputPath, resolveInputPath } from "./lib/output-path.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");
 const FLAGS = new Set(["--apply"]);
-const ODS =
+const ODS = resolveInputPath(
   process.argv.slice(2).find((a) => !FLAGS.has(a)) ??
-  path.join(REPO, "..", "pending-hoer-artists-20260726_MOD.ods");
+    "pending-hoer-artists-20260726_MOD.ods"
+);
 
 if (!fs.existsSync(ODS)) {
-  console.error(`ODS not found: ${path.resolve(ODS)}`);
-  console.error("Pass a path, or omit it to use the default one level above the repo.");
+  console.error(`ODS not found: ${ODS}`);
+  console.error(
+    `A bare filename is looked up in the output folder (${OUTPUT_DIR}).\n` +
+      "Pass an absolute path, or a ./-prefixed one to resolve against the " +
+      "working directory instead."
+  );
   process.exit(1);
 }
 
@@ -342,8 +350,7 @@ if (!APPLY) {
 }
 
 // --- audit trail ---
-const auditPath = path.join(REPO, "outputs", `apply-pending-hoer-decisions-${stamp}.csv`);
-fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+const auditPath = outputPath(`apply-pending-hoer-decisions-${stamp}.csv`);
 const esc = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 fs.writeFileSync(
   auditPath,
@@ -365,7 +372,7 @@ fs.writeFileSync(
     )
     .join("\n") + "\n"
 );
-console.log(`\nAudit written to ${path.relative(REPO, auditPath)}`);
+console.log(`\nAudit written to ${auditPath}`);
 
 console.log("Applying…");
 

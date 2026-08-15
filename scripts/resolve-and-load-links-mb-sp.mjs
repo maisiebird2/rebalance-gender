@@ -40,6 +40,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { createClient } from '@supabase/supabase-js'
 import { isBlankArtistName } from './lib/name-utils.mjs'
+import { outputPath } from './lib/output-path.mjs'
 // ── Environment ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 ;(function loadEnv() {
@@ -588,7 +589,7 @@ async function exportCsv() {
     ].join(','))
   }
   const date    = new Date().toISOString().slice(0, 10)
-  const outPath = path.resolve(__dirname, '..', `resolve-candidates-${date}.csv`)
+  const outPath = outputPath(`resolve-candidates-${date}.csv`)
   fs.writeFileSync(outPath, lines.join('\n'), 'utf8')
   log(`Exported ${lines.length - 1} rows → ${path.basename(outPath)}`)
   return outPath

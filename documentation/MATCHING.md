@@ -85,7 +85,7 @@ One script does the whole flow end to end:
 3. Upsert candidates to `pending_artist_links`
    (conflict key `artist_id, service, external_id`).
 4. Export a CSV snapshot of the entire staging table to
-   `resolve-candidates-YYYY-MM-DD.csv` in the project root.
+   `resolve-candidates-YYYY-MM-DD.csv` in the output folder beside the repo.
 5. Load every `best match` row into `artist_links`
    (`{artist_id, platform, url}`) and mark it `loaded`.
 

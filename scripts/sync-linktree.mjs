@@ -22,7 +22,7 @@
 //                        often carry genre hints ("HARD TECHNO/HARD MUSIC
 //                        DJ AND PRODUCER"); genres are NOT parsed here —
 //                        that's a deliberate future cross-platform pass
-//                        over artist_harvested_bios (see PIPELINE.md).
+//                        over artist_harvested_bios (see documentation/PIPELINE.md).
 //   - Profile picture  → artist_images (platform='linktree'), source_url
 //                        only (store-images.mjs, 5b, re-hosts). APPROVED-
 //                        ONLY, checked inside syncArtist regardless of
@@ -55,7 +55,7 @@
 // table, so bare-domain rows stay staged, human-readable, and
 // un-promoted. Retain-everything, promote-known-only: the day a domain
 // is added to the known list (a platforms row), a 2d re-run promotes the
-// already-gathered backlog for it. See PIPELINE.md, "sync-linktree".
+// already-gathered backlog for it. See documentation/PIPELINE.md, "sync-linktree".
 //
 // Wrong-field URL guard: before spending a fetch, the stored link's host
 // is checked against linktr.ee. A non-Linktree URL saved in the linktree
@@ -108,6 +108,7 @@ import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { outputPath } from "./lib/output-path.mjs";
 import { recordFailure, clearFailure, loadFailureUrls } from "./lib/harvest-failures.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
@@ -718,7 +719,7 @@ async function writeFailuresCsv() {
       )
       .join("\n") + "\n";
 
-  const outPath = path.join(path.resolve(__dirname, "..", ".."), `sync-linktree-failures-${timestamp()}.csv`);
+  const outPath = outputPath(`sync-linktree-failures-${timestamp()}.csv`);
   fs.writeFileSync(outPath, csv);
   logger.info(`\nWrote ${rows.length} current failure(s) to ${outPath}`);
 }

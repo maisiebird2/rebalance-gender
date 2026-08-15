@@ -17,7 +17,7 @@
 // (This script used to have a hard-coded ROLLUP map merging
 // subgenres into parents before the cut. It was removed — genre
 // transformations are no longer hard-coded in scripts; see
-// scripts/GENRE_CONFIDENCE.md for where a parent/child system
+// documentation/GENRE_CONFIDENCE.md for where a parent/child system
 // would live if one is built.)
 //
 // ── Usage ─────────────────────────────────────────────────
