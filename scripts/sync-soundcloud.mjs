@@ -1001,7 +1001,13 @@ export async function syncArtist(artist, opts = {}) {
         // explicitly nulled (not omitted) so a stale pre-migration
         // value doesn't sit around looking authoritative.
         profile_image_url: null,
-        bio: bio ? `SoundCloud bio: ${bio}` : bio,
+        // Stored unprefixed. This used to be written as
+        // `SoundCloud bio: ${bio}`, but the artist page and the edit form
+        // both render the string verbatim under a "SoundCloud bio" heading,
+        // so the label read as the first words of the bio —
+        // supabase_migration_strip_soundcloud_bio_prefix.sql stripped it
+        // from the rows written before this.
+        bio,
         follower_count: user.followers_count ?? null,
         track_count: user.track_count ?? null,
         recent_tracks: null,
@@ -1101,10 +1107,10 @@ export async function syncArtist(artist, opts = {}) {
     // Cleaned, display-ready bio → biographies (platform='soundcloud'), the
     // one-bio-per-artist-per-platform home. Same pattern as sync-discogs: the
     // raw text stays in artist_harvested_bios (above) as an audit trail, the
-    // parsed text lands here. No "SoundCloud bio:" prefix — platform is its own
-    // column here (unlike the shared artist_enrichment.bio field). Only written
-    // when we have a non-generic parsed bio; a generic description leaves the
-    // seeded backfill row untouched.
+    // parsed text lands here — the same unprefixed string written to
+    // artist_enrichment.bio above. Only written when we have a non-generic
+    // parsed bio; a generic description leaves the seeded backfill row
+    // untouched.
     if (bio) {
       const { error: biographyError } = await supabase.from("biographies").upsert(
         {
