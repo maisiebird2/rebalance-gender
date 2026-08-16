@@ -61,7 +61,9 @@ export type SkipReason =
    *  unparseable/non-http destination. */
   | "unclassifiable"
   /** The UPDATE itself failed. */
-  | "write-failed";
+  | "write-failed"
+  /** The DELETE of a redundant duplicate failed. */
+  | "delete-failed";
 
 export interface RowOutcome {
   id: number;
@@ -73,10 +75,12 @@ export interface RowOutcome {
   newPlatform?: string;
   newUrl?: string;
   newHandle?: string | null;
-  status: "updated" | "skipped";
+  status: "updated" | "skipped" | "deleted";
   reason?: SkipReason;
-  /** On "platform-collision" only: the link already occupying the slot this row
-   *  would have moved into. Both sides are needed to pick a winner. */
+  /** On "platform-collision" and "duplicate-of-existing": the link already
+   *  occupying the slot this row would have moved into. For a collision both
+   *  sides are needed to pick a winner; for a duplicate it names the row that
+   *  makes this one redundant. */
   conflictLinkId?: number;
   conflictUrl?: string | null;
   /** Where the link actually pointed, when that was discovered — including for
@@ -105,12 +109,32 @@ export interface ResolveArtistLinksOptions {
   delayMs?: number;
   /** Forwarded to the network core (timeout, hop cap, user agent). */
   resolve?: ResolveOptions;
+  /**
+   * Delete rows whose resolved URL is EXACTLY what the artist already holds
+   * under the right platform — the "duplicate-of-existing" outcome.
+   *
+   * Off by default, and deliberately so. This module's contract is otherwise
+   * "rewrite rows, never remove them", which is what makes it safe to run from
+   * a form save; nobody saving a link expects a different row to disappear.
+   * Only the backfill turns this on, and only when asked.
+   *
+   * Nothing is lost when it does: the row being removed is an unresolved
+   * shortener under the wrong platform, pointing at a destination the surviving
+   * row already stores in canonical form, with a handle this one lacks.
+   *
+   * Never deletes on "platform-collision" — that is a genuinely different link,
+   * and choosing between two of those is a person's call.
+   */
+  deleteDuplicates?: boolean;
   onProgress?: (outcome: RowOutcome) => void;
 }
 
 export interface ResolveArtistLinksReport {
   updated: RowOutcome[];
   skipped: RowOutcome[];
+  /** Redundant duplicates removed. Always empty unless `deleteDuplicates` is
+   *  set; populated but unwritten in a dry run. */
+  deleted: RowOutcome[];
   /** Rows examined — those whose host is resolvable. Not the size of the table. */
   examined: number;
 }
@@ -157,13 +181,22 @@ export async function resolveArtistLinks(
   scope: ResolveScope,
   opts: ResolveArtistLinksOptions = {}
 ): Promise<ResolveArtistLinksReport> {
-  const { dryRun = false, delayMs = DEFAULT_DELAY_MS, limit, host, resolve, onProgress } = opts;
+  const {
+    dryRun = false,
+    delayMs = DEFAULT_DELAY_MS,
+    limit,
+    host,
+    resolve,
+    deleteDuplicates = false,
+    onProgress,
+  } = opts;
 
   const candidates = await fetchCandidates(client, scope, { host, limit });
   const updated: RowOutcome[] = [];
   const skipped: RowOutcome[] = [];
+  const deleted: RowOutcome[] = [];
 
-  if (candidates.length === 0) return { updated, skipped, examined: 0 };
+  if (candidates.length === 0) return { updated, skipped, deleted, examined: 0 };
 
   // Valid platform keys, so a Tier B reclassification can't violate
   // artist_links_platform_fkey. Same guard 2d applies to staged rows — a
@@ -220,12 +253,41 @@ export async function resolveArtistLinks(
       }
     }
 
+    // A redundant duplicate: this row resolves to precisely what the artist
+    // already holds under the right platform, so removing it loses nothing.
+    // Opt-in only — see the deleteDuplicates docs.
+    if (deleteDuplicates && outcome.reason === "duplicate-of-existing") {
+      const removal: RowOutcome = { ...outcome, status: "deleted", reason: "duplicate-of-existing" };
+
+      if (!dryRun) {
+        const { error } = await client.from("artist_links").delete().eq("id", row.id);
+        if (error) {
+          const failed: RowOutcome = {
+            ...outcome,
+            status: "skipped",
+            reason: "delete-failed",
+            error: error.message,
+          };
+          skipped.push(failed);
+          onProgress?.(failed);
+          continue;
+        }
+        // The row is gone, so its slot is genuinely free now. Releasing it lets
+        // a later row in this same run legitimately move into that platform.
+        takenSlots.delete(slotKey(row.artist_id, row.platform));
+      }
+
+      deleted.push(removal);
+      onProgress?.(removal);
+      continue;
+    }
+
     if (outcome.status === "updated") updated.push(outcome);
     else skipped.push(outcome);
     onProgress?.(outcome);
   }
 
-  return { updated, skipped, examined: candidates.length };
+  return { updated, skipped, deleted, examined: candidates.length };
 }
 
 /** Decides what should happen to one row. Pure apart from the network call, so

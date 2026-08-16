@@ -4,12 +4,13 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **steps 1–5 of 7 done** — both modules, the backfill script, the 2d
-rewiring and the form paths are implemented and tested. **Nothing has been
-written to `artist_links` or `artist_harvested_links` yet**: the backfill and
-2d have only ever been dry-run. The form paths are now wired, so the first
-real writes will happen when someone saves a link through the app — everything
-else waits for step 6. Branch `resolve-url-redirects`,
+Status: **steps 1–6 of 7 done.** The backfill has now been **run for real
+against production** — 28 rows in `artist_links` rewritten on 2026-08-16, with
+idempotency and every row verified afterwards (see "The backfill run" below).
+`artist_harvested_links` is still untouched: 2d has only ever been dry-run, and
+running it is a separate decision from this work — see the open questions, since
+that run also reported a very large unpromoted backlog. Only step 7, the
+`PIPELINE.md` write-up, remains. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -573,12 +574,103 @@ the corrected URL. No bios, images, or genres are touched.
    is possible without that — `npm run build` compiles (the client/server
    boundary is the real risk here), pages render 200 at runtime, 397 tests,
    tsc and eslint clean.
-6. Run the backfill for real.
+6. ~~Run the backfill for real.~~ **Done — 2026-08-16.** See below.
 7. Document in `PIPELINE.md` — the tier table is the part future-me will look
    for.
 
 Steps 1–2 are pure addition and can land without behaviour change. Every step
 after 3 is independently revertible.
+
+## The backfill run — 2026-08-16
+
+The first and so far only intentional write to `artist_links` from this work.
+Run in two batches against production, smallest first.
+
+| | Examined | Rewritten | Left alone |
+|---|---:|---:|---:|
+| Dry run beforehand | 55 | (28) | 27 |
+| `--limit=5` | 5 | 4 | 1 |
+| Remainder | 51 | 24 | 27 |
+| **Dry run afterwards** | **27** | **0** | **27** |
+
+55 → 28 rewritten → 27 remaining, and the follow-up dry run proposes nothing:
+idempotency holds in production, not just in tests. The 27 that remain are
+precisely the rows that cannot be resolved, and they will stay in every future
+report — that is the design, not a backlog.
+
+Verified afterwards by reading all 28 rows back and diffing them against the
+run reports: `url`, `platform` and `handle` match on all 28, `original_url` is
+populated on all 28, and none still holds a shortener. The
+`clear_enrichment_on_url_change` trigger did what was expected — `sync_error`
+and `follow_graph_built_at` were nulled for the affected artist+platform pairs,
+so those platforms will re-sync against the corrected URLs.
+
+Platform moves actually written:
+
+| Move | Rows |
+|---|---:|
+| `soundcloud` → `soundcloud` | 9 |
+| `other` → `other` | 8 |
+| `facebook` → `facebook` | 6 |
+| `other` → `youtube` | 2 |
+| `other` → `instagram` / `spotify` / `facebook` | 3 |
+
+The 12 rows that changed platform are the ones this could not have done before
+resolution: their platform was a guess made from the shortener's own hostname.
+
+**Audit trail.** Both live runs wrote a CSV recording the before and after of
+every row, and these are the record of what changed in production — keep them:
+
+- `output files/link-redirect-resolution-20260816-125737.csv` (first 5)
+- `output files/link-redirect-resolution-20260816-125920.csv` (remainder)
+- `output files/link-redirect-resolution-20260816-130004.csv` (the 27 left)
+
+`original_url` also holds each pre-resolution URL in the database itself, so a
+row can be reverted without the CSVs.
+
+**The 27 left alone**, unchanged from the dry runs: 10 `validation-failed`
+(`spotify.link` / `vm.tiktok.com`), 9 `dead-destination`, 4 `no-redirect`,
+3 `duplicate-of-existing`, 1 `network-error`. The last is worth a retry
+sometime — it is the only one that might be transient.
+
+### `--delete-duplicates`, and the three redundant rows
+
+The 3 `duplicate-of-existing` rows were briefly described as needing a
+decision. They did not. Each artist already held the correct link under the
+correct platform, and the flagged row was an unresolved shortener under `other`
+pointing at the identical destination, with a null handle — carrying nothing
+the surviving row lacked, while rendering on the public page as a second,
+generic copy of a link already shown:
+
+```
+Bass House Music   #143205 youtube     youtube.com/channel/UCv0C_…
+                   #143207 other       goo.gl/aJPKsn                  -> same
+DESIREE            #204667 soundcloud  soundcloud.com/desireersa
+                   #206437 other       soundcloud.app.goo.gl/KmjM6…   -> same
+Lolsnake           #215144 soundcloud  soundcloud.com/lolsnake
+                   #215147 other       soundcloud.app.goo.gl/Nbpw…    -> same
+```
+
+The only real question was who removes them, and whether by hand each time.
+More will accumulate — every save of a shortener for a platform the artist
+already has produces one — so this became a flag rather than a one-off.
+
+`--delete-duplicates` removes ONLY rows whose resolved URL is exactly what the
+artist already holds under the right platform. It never touches a
+`platform-collision`, where the two links genuinely differ and a person has to
+choose. It is off by default and lives behind an explicit flag because
+everything else in this work rewrites rather than removes, and that difference
+should be visible in the command you typed. Deletions are logged
+unconditionally, never hidden behind `--debug`.
+
+`deleteDuplicates` is likewise off by default in `resolveArtistLinks`, so the
+form paths never delete: nobody saving a link expects a different row to
+disappear.
+
+Run on 2026-08-16 after a dry run confirmed it targeted exactly those three.
+All three are gone; all three survivors are intact with their handles; and none
+of the three artists has a stray `other` row any more. Record:
+`output files/link-redirect-resolution-20260816-131323.csv`.
 
 ## Open questions
 
