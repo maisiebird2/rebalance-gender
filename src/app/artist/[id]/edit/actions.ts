@@ -6,7 +6,8 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
+import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 import {
@@ -344,16 +345,18 @@ export async function saveArtist(
 
   await admin.from("artist_links").delete().eq("artist_id", artistId);
 
-  // Resolve each link's stored URL once (async: SoundCloud mobile share links
-  // need a redirect-follow), keyed by the link object so both the insert below
-  // and the new-image-URL check reuse the same resolved value — no double fetch.
+  // Canonicalize each link's stored URL once, keyed by the link object so both
+  // the insert below and the new-image-URL check reuse the same value.
+  //
+  // Synchronous: this used to await a redirect-follow for SoundCloud mobile
+  // share links, which was affordable when it was one network call on one
+  // field. Now that every shortener host resolves, doing it here would put a
+  // round-trip per link between the editor and their saved form, so it happens
+  // after the response instead — see scheduleLinkResolution below.
   const resolvedUrls = new Map<(typeof links)[number], string>();
   for (const l of links) {
     if (!l.not_found && l.url?.trim()) {
-      resolvedUrls.set(
-        l,
-        await resolveProfileLinkUrlAsync(l.platform, l.url.trim())
-      );
+      resolvedUrls.set(l, resolveProfileLinkUrl(l.platform, l.url.trim()));
     }
   }
 
@@ -384,6 +387,7 @@ export async function saveArtist(
         })
       );
       if (lErr) return { error: `Links save error: ${lErr.message}` };
+      scheduleLinkResolution(admin, artistId);
     }
   }
 

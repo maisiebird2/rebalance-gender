@@ -4,11 +4,12 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **steps 1–4 of 7 done** — both modules, the backfill script, and the
-2d rewiring are implemented and tested. **Nothing has been written to
-`artist_links` or `artist_harvested_links` yet**: the backfill and 2d have
-only been dry-run, and the form paths are not yet wired up, so live behaviour
-is unchanged. Branch `resolve-url-redirects`,
+Status: **steps 1–5 of 7 done** — both modules, the backfill script, the 2d
+rewiring and the form paths are implemented and tested. **Nothing has been
+written to `artist_links` or `artist_harvested_links` yet**: the backfill and
+2d have only ever been dry-run. The form paths are now wired, so the first
+real writes will happen when someone saves a link through the app — everything
+else waits for step 6. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -343,42 +344,69 @@ written; `artist_links` is otherwise untouched.
 
 ### 1. Forms — resolve after the response, not before it
 
-Save paths, all currently calling `resolveProfileLinkUrlAsync` inline:
+**Done.** All four save paths now store the synchronously-canonicalized URL and
+schedule the network step for after the response:
 
-| Path | File |
-|---|---|
-| Public submit | `src/app/api/submit/route.ts:265` |
-| Edit form | `src/app/artist/[id]/edit/actions.ts:355` |
-| Apply revision (admin) | `src/app/admin/actions.ts:369` |
-| Missing-links tool (admin) | `src/app/admin/missing-links/actions.ts:41` |
+| Path | File | Client passed to `after()` |
+|---|---|---|
+| Public submit | `src/app/api/submit/route.ts` | `supabase` (admin) |
+| Edit form | `src/app/artist/[id]/edit/actions.ts` | `admin` |
+| Apply revision (admin) | `src/app/admin/actions.ts` | `admin` |
+| Missing-links tool (admin) | `src/app/admin/missing-links/actions.ts` | `admin` |
+
+Each switched from `await resolveProfileLinkUrlAsync(...)` to the plain
+synchronous `resolveProfileLinkUrl(...)`, then calls
+`scheduleLinkResolution(client, artistId)` once the rows are written.
 
 The `revise` route (`src/app/api/revise/route.ts`) stores `revision_data` JSON
-and saves no links, so it needs no change — revisions resolve when an admin
-applies them, at the `admin/actions.ts` site above.
+and saves no links, so it needed no change — a revision's links first become
+real rows when an admin approves it, at the `admin/actions.ts` site above.
 
-Today inline resolution is cheap because it fires only for `on.soundcloud.com`
-on a single field. Once the form paths know the full host table, a submission
-with five shortened links becomes five sequential network calls on the critical
-path. So the save writes links as-is and schedules the work:
+Inline resolution used to be cheap: one network call, only for
+`on.soundcloud.com`, only on the SoundCloud field. At the full host table a
+submission with five shortened links would have meant five sequential
+round-trips before the user saw anything. `after()` is stable in the installed
+Next 16, runs post-response in the same invocation, and needs no new
+infrastructure on Vercel. The codebase already used it for image scraping, so
+`scheduleLinkResolution` follows that convention (`after(async () => { try …
+catch }`) — an unhandled rejection in a detached callback would otherwise
+surface as a server error for a save that already succeeded.
 
-```ts
-import { after } from "next/server";
-// … save links …
-after(() => resolveArtistLinks(admin, { artistId }));
-```
-
-`after` is stable in the installed Next 16 (`next/server`), runs post-response
-in the same invocation, and needs no new infrastructure on Vercel.
+`scheduleLinkResolution` lives in its own module rather than in
+`resolve-artist-links.ts`, because that module is imported by `scripts/` under
+tsx and importing `next/server` there would drag the framework into a plain
+Node script.
 
 Accepted consequence: the page rendered right after the save shows the
-unresolved URL until revalidation. Either call `revalidatePath` at the end of
-the callback or let it be — it's a link tidying itself, not a correctness
-issue. Recommend letting it be, and revisiting if it looks odd in practice.
+unresolved URL until revalidation. Left alone deliberately — a link tidying
+itself a beat later is not a correctness problem.
 
-**`src/lib/submission-helpers.ts:153` stays inline.** That call is duplicate
-*detection* — it resolves a submitted link to match it against existing
-artists before deciding whether to accept the submission. Deferring it would
-defeat its purpose. It keeps its 5 s timeout; it just calls the new library.
+#### Duplicate detection: inline, but no longer half-blind
+
+`src/lib/submission-helpers.ts` still resolves inline, because it has to know
+where a submitted link really points BEFORE deciding whether the artist already
+exists. Deferring it would defeat the purpose. It keeps its 5 s timeout.
+
+What changed is what it can see. `resolveShareUrl` now delegates to the shared
+resolver instead of carrying its own `redirect: "follow"` implementation and its
+own one-host list, and `resolveProfileLinkUrlAsync` gates on **the host** rather
+than on `platformKey === "soundcloud"`. Both were silently narrowing dup
+detection: a submitted `soundcloud.app.goo.gl` or `bit.ly` link was never
+resolved, so it was compared as a shortener against stored canonical URLs, never
+matched, and a duplicate artist could be created for someone already in the
+directory. A shortener typed into a non-SoundCloud field was ignored for the
+same reason.
+
+`SOUNDCLOUD_SHARE_HOSTS` survives in `profile-links.ts` but narrowed to one job:
+the *synchronous* guard `isSoundcloudShareLink`, which stops
+`normalizeProfileLink` mangling an unresolved share link's opaque id into a
+bogus `soundcloud.com/<id>`. That guard runs on the client, so it stays
+dependency-free.
+
+This makes `profile-links.ts` import `resolve-url-redirects.ts` — its only
+import. `ProfileLinkField.tsx` is a `"use client"` component that imports this
+module, so the boundary matters: everything reachable from the sync exports is
+still pure string work, and `npm run build` compiles clean.
 
 ### 2. `integrate-harvested-links.mjs` (2d)
 
@@ -537,8 +565,14 @@ the corrected URL. No bios, images, or genres are touched.
 4. ~~Rewire 2d. `DRY_RUN=1`, compare against the dry-run report.~~ **Done.**
    Also extracted `reclassifyResolvedUrl` so 2d and Module 2 share one
    reclassification policy rather than two copies.
-5. Rewire the four form paths to `after()`; leave submission-helpers inline.
-   ← next
+5. ~~Rewire the four form paths to `after()`; leave submission-helpers inline.~~
+   **Done.** Also pointed `resolveShareUrl` at the shared resolver, which
+   widened duplicate detection from one host to all of them.
+   **Not verified end-to-end**: exercising a save means writing to the live
+   database, which step 6 is the first sanctioned point for. Verified as far as
+   is possible without that — `npm run build` compiles (the client/server
+   boundary is the real risk here), pages render 200 at runtime, 397 tests,
+   tsc and eslint clean.
 6. Run the backfill for real.
 7. Document in `PIPELINE.md` — the tier table is the part future-me will look
    for.

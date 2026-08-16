@@ -358,19 +358,23 @@ export async function approveRevision(
 
   // Merge links (upsert — don't delete links not mentioned in revision).
   if (rd.links && Object.keys(rd.links).length) {
-    const { resolveProfileLinkUrlAsync } = await import("@/lib/profile-links");
-    const rows = await Promise.all(
-      Object.entries(rd.links)
-        .filter(([, url]) => url?.trim())
-        .map(async ([platform, url]) => ({
-          artist_id: artistId,
-          platform,
-          original_url: url.trim(),
-          url: await resolveProfileLinkUrlAsync(platform, url.trim()),
-        }))
-    );
+    const { resolveProfileLinkUrl } = await import("@/lib/profile-links");
+    const rows = Object.entries(rd.links)
+      .filter(([, url]) => url?.trim())
+      .map(([platform, url]) => ({
+        artist_id: artistId,
+        platform,
+        original_url: url.trim(),
+        url: resolveProfileLinkUrl(platform, url.trim()),
+      }));
     if (rows.length) {
       await admin.from("artist_links").upsert(rows, { onConflict: "artist_id,platform" });
+      // Shortener/share links are followed after the response — see
+      // scheduleLinkResolution. This is where a *revision's* links land: the
+      // revise route only stores revision_data, so an approved revision is
+      // the first moment its links become real rows.
+      const { scheduleLinkResolution } = await import("@/lib/schedule-link-resolution");
+      scheduleLinkResolution(admin, artistId);
     }
   }
 
