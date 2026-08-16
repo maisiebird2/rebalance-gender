@@ -65,18 +65,26 @@
 // then re-run. ("youtube", "facebook", and "tiktok" were added
 // 2026-07-03 and now promote normally.)
 //
-// Before any of the above, link shorteners (currently just bit.ly)
-// are resolved to their real target. This is done with a HEAD
-// request and redirect:"manual" — we only ever read the redirect
-// response's `Location` header, never the destination page's body —
-// so it's fast and stays fast even across many rows. The resolved
-// URL replaces both parsed_url and raw_url — the original bit.ly link
-// is discarded, since only the real target is worth keeping — and is
-// reclassified by domain (same platform list as
-// sync-soundcloud.mjs), both in-memory for this run's
+// Before any of the above, links whose real target is only knowable
+// over the network — SoundCloud mobile share links, Google/Firebase
+// short links, bit.ly and friends — are resolved to that target by
+// src/lib/resolve-url-redirects.ts. This script used to carry its own
+// bit.ly-only resolver; see documentation/URL-RESOLUTION-PLAN.md for
+// why that became one shared module, and for the host tiers it works
+// from. Resolution refuses answers that are worse than the link it
+// started with (a destination that 404s, or one that doesn't match
+// what the host promised), so a refusal leaves the row untouched
+// rather than degrading it.
+//
+// The resolved URL replaces parsed_url and is reclassified by domain
+// (see reclassifyResolved below), both in-memory for this run's
 // decisions and persisted back to artist_harvested_links so future
-// runs don't need to re-resolve it. This is the one place this script
-// makes outbound HTTP calls; everything else is pure DB-to-DB.
+// runs don't need to re-resolve it. raw_url is NOT touched: it holds
+// the link exactly as scraped, and a shortener that later dies is
+// unrecoverable if it's overwritten. (This script used to replace
+// raw_url too, "dropping the bit.ly clutter".) This is the one place
+// this script makes outbound HTTP calls; everything else is pure
+// DB-to-DB.
 //
 // After resolution, harvested rows are de-duplicated on
 // (artist_id, parsed_url): resolution can leave two staging rows for
@@ -118,7 +126,8 @@ import { fileURLToPath } from "node:url";
 import { outputPath } from "./lib/output-path.mjs";
 import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from "../src/lib/profile-links.js";
 import { cleanLinkUrl } from "../src/lib/platforms.js";
-import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
+import { reclassifyResolvedUrl } from "../src/lib/classify-platform-url.js";
+import { isResolvableHost, resolveRedirect } from "../src/lib/resolve-url-redirects.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -393,79 +402,20 @@ function urlsMatch(a, b) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ------------------------------------------------------------
-// Link shortener resolution (currently just bit.ly).
+// Reclassification of a resolved URL lives in classify-platform-url.ts
+// (reclassifyResolvedUrl), shared with resolve-artist-links.ts so that
+// staging rows and live rows are governed by one policy rather than by
+// two copies that drift apart. The replaced resolver classified with
+// CLASSIFY_CONFIGS.harvested_links; that call site was its only user, so
+// the config is now unreferenced.
 //
-// A HEAD request with redirect:"manual" gets back the redirect
-// response itself (status 3xx + a `Location` header) instead of
-// fetch silently following it — so we never download the
-// destination page's body, just the one header we need. Chained
-// redirects (a short link pointing at another short link) are
-// followed up to MAX_REDIRECT_HOPS times.
-// ------------------------------------------------------------
-const SHORTENER_HOSTS = new Set(["bit.ly"]);
-const MAX_REDIRECT_HOPS = 5;
-const resolveCache = new Map(); // shortUrl -> resolvedUrl | null
-
-function isShortenerUrl(rawUrl) {
-  try {
-    const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, "");
-    return SHORTENER_HOSTS.has(host);
-  } catch {
-    return false;
-  }
-}
-
-async function followOneRedirect(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +link resolving)",
-      },
-    });
-    const location = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && location) {
-      return new URL(location, url).toString();
-    }
-    return null; // not a redirect — this is the final destination
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function resolveShortLink(rawUrl) {
-  if (resolveCache.has(rawUrl)) return resolveCache.get(rawUrl);
-
-  let current = rawUrl;
-  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
-    const next = await followOneRedirect(current);
-    if (!next || next === current) break;
-    current = next;
-  }
-
-  const resolved = current === rawUrl ? null : current;
-  resolveCache.set(rawUrl, resolved);
-  return resolved;
-}
-
-// ------------------------------------------------------------
-// Reclassifies a resolved URL by domain. Mirrors the platform map
-// in sync-soundcloud.mjs (kept as a separate copy,
-// same as every other per-script convention in this folder, rather
-// than a shared import).
-// ------------------------------------------------------------
-
-
-function classifyResolved(rawUrl) {
-  return classifyPlatformUrl(rawUrl, CLASSIFY_CONFIGS.harvested_links);
-}
+// Worth recording why the skip config had to go: it skips soundcloud.com,
+// which is right at harvest time (a link back to SoundCloud found ON a
+// SoundCloud page is a self-link) but wrong after resolution. Keeping it
+// would also be destructive now the host list is wider than bit.ly —
+// every one of the 523 staged on.soundcloud.com rows resolves to
+// soundcloud.com, so the skip would null their parsed_platform and strand
+// rows that promote correctly today.
 
 // ------------------------------------------------------------
 // Writes the "not found" collisions to a datetime-stamped CSV in the output
@@ -551,33 +501,59 @@ async function main() {
     rowUpdates.set(id, { ...(rowUpdates.get(id) ?? { id }), ...fields });
   }
 
-  const shortenerRows = harvested.filter((row) => isShortenerUrl(row.parsed_url));
+  const shortenerRows = harvested.filter((row) => isResolvableHost(row.parsed_url));
   let resolvedCount = 0;
   let resolveFailedCount = 0;
+  const failuresByReason = new Map();
 
   if (shortenerRows.length > 0) {
     console.log(`Resolving ${shortenerRows.length} shortened link(s)...`);
     for (const row of shortenerRows) {
-      const resolved = await resolveShortLink(row.parsed_url);
-      if (resolved) {
-        const newPlatform = classifyResolved(resolved);
+      const result = await resolveRedirect(row.parsed_url);
+      const outcome = result.resolved
+        ? reclassifyResolvedUrl(result.url, row.parsed_platform)
+        : { kind: "unresolved" };
+
+      if (result.resolved && outcome.kind === "platform") {
+        const newPlatform = outcome.platform;
         if (DEBUG) {
-          console.log(
-            `  resolved ${row.parsed_url} -> ${resolved} (platform: ${newPlatform ?? "excluded"})`
-          );
+          console.log(`  resolved ${row.parsed_url} -> ${result.url} (platform: ${newPlatform})`);
         }
-        row.parsed_url = resolved;
+        row.parsed_url = result.url;
         row.parsed_platform = newPlatform;
-        row.raw_url = resolved; // drop the bit.ly clutter — keep only the real target
-        mergeUpdate(row.id, { parsed_url: resolved, parsed_platform: newPlatform, raw_url: resolved });
+        // raw_url is left alone. It holds the link exactly as scraped, and a
+        // shortener that later dies is unrecoverable if we overwrite it — so
+        // the original is kept and only parsed_url carries the destination.
+        // (This script used to clobber raw_url with the resolved value.)
+        mergeUpdate(row.id, { parsed_url: result.url, parsed_platform: newPlatform });
         resolvedCount++;
       } else {
+        // Two ways to end up here, both meaning "leave the row exactly as it
+        // is": the resolver couldn't get a trustworthy answer, or it did and
+        // the destination is one we must not store (twitter/x is skip-listed
+        // by project policy, so a bit.ly pointing there stays a bit.ly rather
+        // than being laundered into a promotable link).
+        const reason = result.resolved ? "destination-not-storable" : result.reason;
         resolveFailedCount++;
-        if (DEBUG) console.log(`  could not resolve ${row.parsed_url}`);
+        failuresByReason.set(reason, (failuresByReason.get(reason) ?? 0) + 1);
+        if (DEBUG) {
+          console.log(`  could not resolve ${row.parsed_url} (${reason})`);
+          if (result.destination) {
+            console.log(`    saw ${result.destination} [${result.finalStatus ?? "?"}]`);
+          }
+        }
       }
       await sleep(150);
     }
-    console.log(`Resolved ${resolvedCount}, failed to resolve ${resolveFailedCount}.\n`);
+    console.log(`Resolved ${resolvedCount}, left as-is ${resolveFailedCount}.`);
+    if (failuresByReason.size > 0) {
+      // Not all failures are equal: "validation-failed" and "dead-destination"
+      // are the resolver refusing a bad answer, which is a success of a kind.
+      for (const [reason, count] of [...failuresByReason.entries()].sort((a, b) => b[1] - a[1])) {
+        console.log(`  ${String(count).padStart(4)}  ${reason}`);
+      }
+    }
+    console.log("");
   }
 
   // ------------------------------------------------------------

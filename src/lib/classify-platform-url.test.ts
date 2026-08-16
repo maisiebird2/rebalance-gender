@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "./classify-platform-url";
+import {
+  classifyPlatformUrl,
+  CLASSIFY_CONFIGS,
+  reclassifyResolvedUrl,
+} from "./classify-platform-url";
 
 describe("classifyPlatformUrl — shared table", () => {
   it("maps the core platforms", () => {
@@ -113,5 +117,64 @@ describe("classifyPlatformUrl — per-harvester configs", () => {
 
   it("Linktree still resolves mapped platforms ahead of its bare-domain fallback", () => {
     expect(classifyPlatformUrl("https://www.instagram.com/x", CLASSIFY_CONFIGS.linktree)).toBe("instagram");
+  });
+});
+
+describe("reclassifyResolvedUrl", () => {
+  it("takes a positive identification over the row's existing key", () => {
+    // The case this exists for: a soundcloud.app.goo.gl row sits under "other"
+    // only because classification ran on the shortener host. Resolution is when
+    // that becomes knowable.
+    expect(reclassifyResolvedUrl("https://soundcloud.com/kling_und_klang", "other")).toEqual({
+      kind: "platform",
+      platform: "soundcloud",
+    });
+    expect(reclassifyResolvedUrl("https://www.youtube.com/channel/UC_dO", "other")).toEqual({
+      kind: "platform",
+      platform: "youtube",
+    });
+  });
+
+  it("keeps the existing key when no rule matches, rather than downgrading to 'other'", () => {
+    // homepage, djanes, 1001tracklists and hoer are real platform keys that
+    // live outside DOMAIN_PLATFORM_MAP, as are sync-linktree's bare-domain
+    // staging keys. "other" is a fallback, not a finding, so it must not win.
+    for (const existing of ["homepage", "djanes", "1001tracklists", "hoer", "ffm.to"]) {
+      expect(reclassifyResolvedUrl("https://some-personal-site.example.com/x", existing)).toEqual({
+        kind: "platform",
+        platform: existing,
+      });
+    }
+  });
+
+  it("leaves an already-'other' row as 'other'", () => {
+    expect(reclassifyResolvedUrl("https://docs.google.com/forms/d/e/abc", "other")).toEqual({
+      kind: "platform",
+      platform: "other",
+    });
+  });
+
+  it("refuses a destination the project excludes", () => {
+    // Twitter/X is skip-listed by policy. A shortener resolving there must not
+    // be laundered into a storable link.
+    expect(reclassifyResolvedUrl("https://x.com/someone", "other")).toEqual({ kind: "refused" });
+    expect(reclassifyResolvedUrl("https://twitter.com/someone", "other")).toEqual({ kind: "refused" });
+    expect(reclassifyResolvedUrl("https://t.co/abc", "other")).toEqual({ kind: "refused" });
+  });
+
+  it("refuses an unparseable or non-http destination", () => {
+    expect(reclassifyResolvedUrl("mailto:someone@example.com", "other")).toEqual({ kind: "refused" });
+    expect(reclassifyResolvedUrl("not a url", "other")).toEqual({ kind: "refused" });
+  });
+
+  it("ignores the harvester self-link skips", () => {
+    // The skip configs are about where a link was FOUND. After resolution the
+    // question is where it goes, so a resolved soundcloud.com URL is a real
+    // SoundCloud link — the old harvested_links config would have nulled this,
+    // stranding all 523 staged on.soundcloud.com rows.
+    expect(reclassifyResolvedUrl("https://soundcloud.com/real-artist", "soundcloud")).toEqual({
+      kind: "platform",
+      platform: "soundcloud",
+    });
   });
 });
