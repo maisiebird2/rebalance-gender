@@ -113,6 +113,51 @@ export function classifyPlatformUrl(rawUrl: string, opts: ClassifyOptions = {}):
   return typeof fallback === "function" ? fallback(bareDomain(host)) : fallback;
 }
 
+// ── Reclassifying a link that was just resolved ───────────────────
+
+/** What to do with a row whose URL has just been resolved from a shortener. */
+export type ReclassifyOutcome =
+  /** The destination is one we must not store — a policy-skipped host
+   *  (twitter/x), a non-http scheme, or an unparseable URL. The caller should
+   *  leave the row alone entirely rather than store the destination. */
+  | { kind: "refused" }
+  /** Use this platform key. Either a positive identification, or the row's
+   *  existing key when the destination didn't match any rule. */
+  | { kind: "platform"; platform: string };
+
+/**
+ * Platform key for a URL that has just been RESOLVED from a shortener or share
+ * link, given the key the row currently carries.
+ *
+ * Shared by stage 2d (staging rows) and resolve-artist-links.ts (live rows) so
+ * that one policy governs both. Resolution is the moment a link's real target
+ * becomes knowable, and both tables need the same three answers:
+ *
+ *   - Skip-listed or unparseable destination -> "refused". Storing it would
+ *     smuggle in a link the project excludes.
+ *   - No rule matched ("other" — the classifier's FALLBACK, not a finding) ->
+ *     keep whatever the row already had. Overriding would downgrade keys that
+ *     live outside DOMAIN_PLATFORM_MAP (homepage, djanes, 1001tracklists,
+ *     hoer, and sync-linktree's bare-domain staging keys).
+ *   - A positive identification -> use it. This is the case that matters: a
+ *     soundcloud.app.goo.gl row sits under "other" only BECAUSE classification
+ *     ran on the shortener host before anything could resolve it.
+ *
+ * Deliberately classified against the SHARED table with no per-harvester
+ * options. Those configs skip links back to a harvester's own source platform,
+ * which is about where a link was FOUND — reasoning that doesn't survive
+ * resolution, where the question is where the URL actually goes.
+ */
+export function reclassifyResolvedUrl(
+  resolvedUrl: string,
+  currentPlatform: string
+): ReclassifyOutcome {
+  const classified = classifyPlatformUrl(resolvedUrl);
+  if (classified === null) return { kind: "refused" };
+  if (classified === "other") return { kind: "platform", platform: currentPlatform };
+  return { kind: "platform", platform: classified };
+}
+
 // ── Per-harvester configurations ──────────────────────────────────
 // Each harvester's deviation from the shared table, kept here beside the table
 // itself so the differences are visible in one place instead of spread across

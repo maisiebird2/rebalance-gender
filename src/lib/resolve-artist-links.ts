@@ -30,7 +30,7 @@
 // ============================================================
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { classifyPlatformUrl } from "./classify-platform-url";
+import { reclassifyResolvedUrl } from "./classify-platform-url";
 import { canonicalizeResidentAdvisorUrl, deriveHandle, resolveProfileLinkUrl } from "./profile-links";
 import { cleanLinkUrl } from "./platforms";
 import {
@@ -260,12 +260,10 @@ async function decideRow(
   // under `other` with a null handle. Resolution is exactly the moment that
   // becomes knowable, so it's the moment to fix it.
   //
-  // Classified with the SHARED table and no per-harvester options: the
-  // harvester configs skip links back to their own source platform, which is
-  // right when staging a discovered link and wrong here. A bit.ly on a live row
-  // that resolves to SoundCloud is a genuine SoundCloud link, not a self-link.
-  const classified = classifyPlatformUrl(result.url);
-  if (classified === null) {
+  // The policy itself lives in classify-platform-url.ts, shared with stage 2d,
+  // so staging rows and live rows are reclassified the same way.
+  const reclassified = reclassifyResolvedUrl(result.url, row.platform);
+  if (reclassified.kind === "refused") {
     return {
       ...base,
       status: "skipped",
@@ -274,14 +272,7 @@ async function decideRow(
       finalStatus: result.finalStatus,
     };
   }
-
-  // "other" is the classifier's fallback, not a finding — it means "no rule
-  // matched this domain". Accepting it would DOWNGRADE the platform keys that
-  // live outside the shared domain table (homepage, djanes, 1001tracklists,
-  // hoer): a bit.ly stored as `homepage` that resolves to someone's personal
-  // site would be relabelled `other`, losing real information. So a fallback
-  // never overrides what's already there — only a positive identification does.
-  const newPlatform = classified === "other" ? row.platform : classified;
+  const newPlatform = reclassified.platform;
 
   if (!validPlatforms.has(newPlatform)) {
     return {

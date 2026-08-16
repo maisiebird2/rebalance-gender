@@ -4,10 +4,11 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **steps 1–3 of 7 done** — both modules and the backfill script are
-implemented and tested. **Nothing has been written to `artist_links` yet**:
-the backfill has only been dry-run, and the form paths and 2d are not yet
-wired up, so live behaviour is unchanged. Branch `resolve-url-redirects`,
+Status: **steps 1–4 of 7 done** — both modules, the backfill script, and the
+2d rewiring are implemented and tested. **Nothing has been written to
+`artist_links` or `artist_harvested_links` yet**: the backfill and 2d have
+only been dry-run, and the form paths are not yet wired up, so live behaviour
+is unchanged. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -381,25 +382,87 @@ defeat its purpose. It keeps its 5 s timeout; it just calls the new library.
 
 ### 2. `integrate-harvested-links.mjs` (2d)
 
-Delete `SHORTENER_HOSTS`, `isShortenerUrl`, `followOneRedirect`,
-`resolveShortLink`, `MAX_REDIRECT_HOPS` and the module-level `resolveCache`
-(lines ~397–456, i.e. `SHORTENER_HOSTS` at :406 through `resolveShortLink`
-at :443); call the library instead. The surrounding step at ~545–581
-keeps its current shape — batch, 150 ms throttle, persist back to
+**Done.** `SHORTENER_HOSTS`, `isShortenerUrl`, `followOneRedirect`,
+`resolveShortLink`, `MAX_REDIRECT_HOPS` and the module-level `resolveCache` are
+gone — about 60 lines of bespoke resolver replaced by a call to the library.
+The surrounding step keeps its shape: batch, 150 ms throttle, persist back to
 `artist_harvested_links` so resolution is a one-time cost per row.
 
-Two behaviour changes, both deliberate:
+Three behaviour changes, all deliberate:
 
-- Resolution now covers all Tier A + B hosts, not just `bit.ly`. The big one is
-  `on.soundcloud.com`: **523 staged rows** that the forms path would have
-  resolved but 2d never did.
-- The staging row currently discards the short URL (`row.raw_url = resolved`,
-  "drop the bit.ly clutter"). Per the preserve decision, `raw_url` now keeps
-  the original and only `parsed_url` gets the resolved value.
+- Resolution now covers all Tier A + B hosts, not just `bit.ly`. Measured on
+  the staging table: **1,312 rows** now qualify, against 306 before.
+- `raw_url` is no longer clobbered. It used to be overwritten with the resolved
+  value ("drop the bit.ly clutter"); per the preserve decision it keeps the
+  link exactly as scraped, and only `parsed_url` carries the destination.
+- Reclassification no longer uses `CLASSIFY_CONFIGS.harvested_links`. See below
+  — this one was forced.
 
 The existing post-resolution dedup on `(artist_id, parsed_url)` already handles
 two shorteners collapsing to one target, so widening the host list needs no new
 collision logic there.
+
+#### The skip config had to go
+
+`harvested_links` skips `soundcloud.com`, because a link back to SoundCloud
+found *on* a SoundCloud page is a self-link. That reasoning is about where a
+link was **found**, and it does not survive resolution, where the question is
+where the URL actually **goes**. Keeping it would have been destructive at the
+new host coverage: all 523 staged `on.soundcloud.com` rows resolve to
+`soundcloud.com`, so the skip would have nulled their `parsed_platform` and
+stranded rows that promote correctly today. The self-link skip still applies
+where it belongs — at harvest time, via each harvester's own config.
+
+That call site was the only user of `CLASSIFY_CONFIGS.harvested_links`, which
+is now unreferenced (its own test still covers it). Worth deciding separately
+whether to delete the config.
+
+#### One policy, shared — and a leak it closed
+
+Reclassification-after-resolution now lives in **one** place,
+`reclassifyResolvedUrl()` in `classify-platform-url.ts`, used by both 2d and
+`resolve-artist-links.ts`. The first cut of this step had a private copy in the
+script, which is exactly the duplication this project exists to remove — and
+the copy was already wrong. It collapsed "no rule matched" and "policy
+refuses this host" into one branch, so a shortener resolving to Twitter/X
+would have kept its platform and stored the URL, laundering an excluded link
+into a promotable one. The dry run caught two live instances:
+
+```
+resolved http://bit.ly/2MVYUDL -> https://twitter.com/dijondijon_ (platform: other)
+resolved http://bit.ly/2noZyjE -> https://twitter.com/swinetax  (platform: other)
+```
+
+The shared version returns three outcomes instead of two — `refused`, keep the
+existing key, or take a positive identification — so those rows now stay as
+`bit.ly` and are counted under a `destination-not-storable` reason.
+
+#### Dry run — 2026-08-16
+
+Snapshot, not a steady state: the staging table changes constantly, and the
+classification half of this run predates the shared-policy fix above.
+
+**1,312 rows had a resolvable host; 1,055 resolved, 257 left as-is.**
+
+| Left as-is | Rows |
+|---|---:|
+| `dead-destination` | 149 |
+| `no-redirect` | 57 |
+| `validation-failed` | 36 |
+| `network-error` | 8 |
+| `timeout` | 4 |
+| `max-hops` | 3 |
+
+The 149 dead destinations are the single biggest category, which is the point
+of resolving staging rows before promoting them: each is a link that would
+otherwise have been promoted into `artist_links` pointing at a 404.
+
+**Unrelated pre-existing finding.** The same run reported *101,852* pairs
+awaiting insertion into `artist_links` against 55,897 already linked. That is
+not caused by this change — resolution only touches the 1,312 resolvable-host
+rows, so at most that many of the 101,852 could be attributable to it. It looks
+like a large unpromoted staging backlog, i.e. 2d has not been run to completion
+in a long time. Flagged as its own question, not part of this work.
 
 ### 3. `scripts/resolve-link-redirects.mjs` — new backfill
 
@@ -471,8 +534,11 @@ the corrected URL. No bios, images, or genres are touched.
    `output files/link-redirect-resolution-20260815-212047.csv`.
    **← STOP HERE.** This is the checkpoint: nothing has mutated `artist_links`
    yet, and step 6 is the first thing that will.
-4. Rewire 2d. `DRY_RUN=1`, compare against the dry-run report.
+4. ~~Rewire 2d. `DRY_RUN=1`, compare against the dry-run report.~~ **Done.**
+   Also extracted `reclassifyResolvedUrl` so 2d and Module 2 share one
+   reclassification policy rather than two copies.
 5. Rewire the four form paths to `after()`; leave submission-helpers inline.
+   ← next
 6. Run the backfill for real.
 7. Document in `PIPELINE.md` — the tier table is the part future-me will look
    for.
