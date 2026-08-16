@@ -18,10 +18,12 @@
 // them to artist_links the same way), so this script shouldn't need
 // to be run again unless old bios are reintroduced.
 //
-// NOTE: this script used to write the extracted URL to the now-retired
-// artists.linktree_url column. If you're looking at existing data in
-// that column, see scripts/migrate-linktree-to-links.ts, which moves
-// it into artist_links (and flags any conflicts for manual review).
+// NOTE: this script used to write the extracted URL to the
+// artists.linktree_url column. That column no longer exists: its values
+// were staged into artist_harvested_links for Phase 2d to promote, and
+// it was dropped by supabase_migration_drop_artists_linktree_url.sql
+// (2026-08-16). A Linktree link now lives in artist_links like any
+// other platform link.
 // ============================================================
 
 // FIRST import: registers the HTTP/1.1-only dispatcher process-wide
