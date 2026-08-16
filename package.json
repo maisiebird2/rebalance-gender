@@ -42,7 +42,6 @@
     "summarize-bios": "node scripts/summarize-bios.mjs",
     "linkify-bios": "tsx scripts/linkify-bios.ts",
     "update-artist-count": "node scripts/update-artist-count.mjs",
-    "migrate-linktree-to-links": "tsx scripts/migrate-linktree-to-links.ts",
     "lookup-soundcloud-by-name": "tsx scripts/lookup-soundcloud-by-name.ts",
     "other-links-domain-counts": "node scripts/other-links-domain-counts.mjs",
     "report-hoer-internal-dupes": "node scripts/report-hoer-internal-dupes.mjs",

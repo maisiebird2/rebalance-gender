@@ -9,10 +9,17 @@
 -- The 183 values left in it were drained by
 -- scripts/migrate-linktree-to-links.ts on 2026-08-16, which staged each
 -- one into artist_harvested_links (source_platform = 'linktree') for
--- Phase 2d to promote, then cleared the column. That script is the
+-- Phase 2d to promote, then cleared the column. That script was the
 -- prerequisite for this migration, and the guard below refuses to run
--- until it has been: a link that only exists in this column would
--- otherwise be destroyed outright.
+-- until the column is empty: a link that only exists in this column
+-- would otherwise be destroyed outright.
+--
+-- That script has since been deleted — with the column gone it could
+-- only ever fail — so on a database where the guard DOES fire (a
+-- restore, or another environment that never had the drain run),
+-- recover it from git history: it was removed in the commit that added
+-- this line, and PIPELINE.md's "Legacy scripts" section describes what
+-- it did.
 --
 -- Nothing else depends on the column: no index, constraint, view or
 -- function references it, and no script selects it apart from the
@@ -55,9 +62,10 @@ BEGIN
 
   IF remaining > 0 THEN
     RAISE EXCEPTION
-      'artists.linktree_url still holds % non-null value(s). Run '
-      '"npm run migrate-linktree-to-links" to stage them into '
-      'artist_harvested_links first — dropping now would destroy them.',
+      'artists.linktree_url still holds % non-null value(s). Stage them '
+      'into artist_harvested_links first (see the header — recover '
+      'scripts/migrate-linktree-to-links.ts from git history); dropping '
+      'now would destroy them.',
       remaining;
   END IF;
 END

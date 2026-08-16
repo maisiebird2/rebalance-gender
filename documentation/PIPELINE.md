@@ -1625,20 +1625,21 @@ in the automated pipeline:
   bios never need this pass. Safe to re-run, but no longer part of
   the pipeline.
 
-- **`migrate-linktree-to-links.ts`** — one-time migration of the
-  retired `artists.linktree_url` column. Nothing writes to that column
-  any more; this drains what is left in it by staging each value into
+- **`migrate-linktree-to-links.ts`** — **removed 2026-08-16**, unlike
+  the spent scripts above, which stay because they are still safe to
+  re-run. This one no longer can be: it was the one-time migration of
+  the `artists.linktree_url` column, and that column has since been
+  dropped, so every run would fail on a column that isn't there.
+  What it did, for the record: staged each remaining value into
   `artist_harvested_links` (`source_platform = 'linktree'`, `source_url`
-  = the stored value) and then clearing the column. The links reach
-  `artist_links` the normal way, via 2d — the script does **not** write
-  `artist_links` itself, so 2d owns the dedup, the shortener
-  resolution and the `artist_links_url` conflict flagging as it does
-  for every harvested link. Values it cannot classify (unparseable,
-  `mailto:`, a policy-skipped host) are left in the column and listed
-  at the end for manual review. Idempotent; `--limit=N` and `DRY_RUN=1`
-  supported. Ran clean against production on 2026-08-16 (159 staged, 24
-  already staged, 0 unusable), so the column now holds nothing and is
-  dropped by `supabase_migration_drop_artists_linktree_url.sql`.
+  = the stored value), then cleared the column — deliberately *not*
+  writing `artist_links` itself, so 2d owned the dedup, the shortener
+  resolution and the `artist_links_url` conflict flagging as it does for
+  every harvested link. It ran clean against production on 2026-08-16
+  (183 artists: 159 newly staged, 24 already staged by a harvester, 0
+  unusable), after which
+  `supabase_migration_drop_artists_linktree_url.sql` dropped the column.
+  Recoverable from git history if it is ever needed as a template.
 
 - **Python candidate pipeline** (`resolve_candidates.py`,
   `review_candidates.py`, `load_links.py`, `recommend.py`, and the
@@ -2350,12 +2351,12 @@ site's own submit/revise forms, and follower counts already come from
 SoundCloud and Spotify.
 
 (Note: Linktree URLs used to also live in a separate
-`artists.linktree_url` column; that's been retired in favor of
-`artist_links` only — see `scripts/migrate-linktree-to-links.ts` for
-the one-time migration, which stages the column's values into
-`artist_harvested_links` (`source_platform = 'linktree'`) and lets 2d
-promote them, rather than writing `artist_links` directly. This
-harvester should read its seed URLs from `artist_links`
+`artists.linktree_url` column. That column is gone — its values were
+staged into `artist_harvested_links` (`source_platform = 'linktree'`)
+for 2d to promote, and the column was then dropped by
+`supabase_migration_drop_artists_linktree_url.sql`. See the
+"Legacy scripts" note on `migrate-linktree-to-links.ts` for the detail.
+This harvester should read its seed URLs from `artist_links`
 (platform = `linktree`), not from `artists`.)
 
 ### Move `artist_enrichment.raw_data` into `api_response_cache` — ✅ DONE (2026-07-10)
