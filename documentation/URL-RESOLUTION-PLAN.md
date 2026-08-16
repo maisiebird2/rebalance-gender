@@ -4,8 +4,10 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **steps 1–2 of 7 done** — both modules are implemented and tested;
-nothing calls them yet, so behaviour is unchanged. Branch `resolve-url-redirects`,
+Status: **steps 1–3 of 7 done** — both modules and the backfill script are
+implemented and tested. **Nothing has been written to `artist_links` yet**:
+the backfill has only been dry-run, and the form paths and 2d are not yet
+wired up, so live behaviour is unchanged. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -298,7 +300,8 @@ skipped.**
 |---|---:|
 | `validation-failed` | 10 |
 | `dead-destination` | 9 |
-| `platform-collision` | 5 |
+| `duplicate-of-existing` | 3 |
+| `platform-collision` | 2 |
 | `no-redirect` | 4 |
 | `network-error` | 1 |
 
@@ -315,6 +318,23 @@ every one of those would have been a live row overwritten with a Branch deep
 link, a TikTok homepage, or a 404. The 8 `other` → `other` rows are genuinely
 generic — Google Docs/Forms, Dropbox, Mixmag, Jotform — so they keep their
 platform and just get a durable URL in place of a shortener.
+
+The five one-slot-two-links cases were originally reported as a single
+`platform-collision` reason. Adding the incumbent's URL to the report showed
+that was conflating two unrelated situations: three were exact duplicates
+(the resolved URL is character-for-character what the artist's existing link
+holds — redundant rows, mechanical cleanup) and only two were genuine
+contests. Hence the `duplicate-of-existing` split. The two real ones were:
+
+| Artist | Resolves to | Incumbent holds |
+|---|---|---|
+| Gud | `youtube.com/channel/UC_dO_-MSuK6zqjl4vpjfo2g` | `youtube.com/watch?v=gG53f7OAiQk` |
+| Leo Lingus | `soundcloud.com/kling_und_klang` | `soundcloud.com/leolingus` |
+
+**Both were resolved by hand in the live database on 2026-08-15**, after this
+run — so a re-run will report fewer than 2 collisions. The counts above are
+as-of the run, not a current-state description. Nothing else here has been
+written; `artist_links` is otherwise untouched.
 
 ---
 
@@ -383,14 +403,27 @@ collision logic there.
 
 ### 3. `scripts/resolve-link-redirects.mjs` — new backfill
 
-Modelled on `resolve-residentadvisor-urls.mjs`. Thin: argument parsing, scope
-selection, reporting. All logic lives in Module 2.
+**Implemented.** Modelled on `resolve-residentadvisor-urls.mjs`. Thin:
+argument parsing, scope selection, reporting. All logic lives in Module 2.
 
 ```bash
-npm run resolve-link-redirects -- --dry-run      # report only
-npm run resolve-link-redirects                   # live rows
-npm run resolve-link-redirects -- --host=goo.gl  # one host
+npm run resolve-link-redirects -- --dry-run         # report only, no writes
+npm run resolve-link-redirects                      # rewrite live rows
+npm run resolve-link-redirects -- --host=goo.gl     # one host only
+npm run resolve-link-redirects -- --artist=<uuid>   # one artist
+npm run resolve-link-redirects -- --ids=12,34       # specific artist_links rows
+npm run resolve-link-redirects -- --limit=20        # cap rows examined
+npm run resolve-link-redirects -- --delay=300       # ms between network calls
+npm run resolve-link-redirects -- --debug           # log every row's decision
+DRY_RUN=1 npm run resolve-link-redirects            # same as --dry-run
 ```
+
+Every run writes a CSV of **every row it examined** — proposed changes and
+skips with their reasons — through `outputPath()`, so it lands in the sibling
+`output files/` folder rather than the checkout. Columns: status, reason,
+artist name, artist edit URL, link id, platform → new platform, url → new url,
+new handle, the destination actually seen, and its HTTP status. In a dry run
+that CSV is the point of the exercise. Nothing to resolve means no CSV.
 
 **No queue table.** The set of rows needing resolution is exactly "rows whose
 host is in the tier table" — fully derivable from the URL. This query *is* the
@@ -432,11 +465,12 @@ the corrected URL. No bios, images, or genres are touched.
    validation rejections and the dead `soundcloud.app.goo.gl` destination.
 2. ~~Module 2 + tests.~~ **Done.** A dry run over live data was used as the
    verification, and it corrected the reclassification policy (above).
-3. Backfill script; `--dry-run` over live data and read the report. **Stop and
-   review the numbers here** — this is the checkpoint before anything mutates
-   `artist_links`. The dry-run numbers above are what the script should
-   reproduce; it is now mostly argument parsing and reporting around
-   `resolveArtistLinks`. ← next
+3. ~~Backfill script; `--dry-run` over live data and read the report.~~
+   **Script done; awaiting review.** It reproduces the Module 2 dry-run numbers
+   exactly (57 examined / 28 would update / 29 skipped) and the report is at
+   `output files/link-redirect-resolution-20260815-212047.csv`.
+   **← STOP HERE.** This is the checkpoint: nothing has mutated `artist_links`
+   yet, and step 6 is the first thing that will.
 4. Rewire 2d. `DRY_RUN=1`, compare against the dry-run report.
 5. Rewire the four form paths to `after()`; leave submission-helpers inline.
 6. Run the backfill for real.

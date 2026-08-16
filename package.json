@@ -33,6 +33,7 @@
     "enrich-hoer-terms": "tsx scripts/enrich-hoer-terms.mjs",
     "integrate-hoer-artists": "tsx scripts/integrate-hoer-artists.mjs",
     "resolve-residentadvisor-urls": "tsx scripts/resolve-residentadvisor-urls.mjs",
+    "resolve-link-redirects": "tsx scripts/resolve-link-redirects.mjs",
     "sync-linktree": "tsx scripts/sync-linktree.mjs",
     "harvest-links-loop": "node scripts/harvest-links-loop.mjs",
     "orchestrate-platform-enrichment": "node scripts/orchestrate-platform-enrichment.mjs",

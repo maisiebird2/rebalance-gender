@@ -48,8 +48,13 @@ export type SkipReason =
   /** Resolved, canonicalized, and came out identical to what's already stored. */
   | "unchanged"
   /** Reclassification would move the row onto a (artist_id, platform) slot the
-   *  artist already occupies. */
+   *  artist already occupies, with a DIFFERENT link in it. Needs a human. */
   | "platform-collision"
+  /** Same as above, except the resolved URL is exactly what the occupying link
+   *  already holds — so this row is a redundant copy of it, not a competing
+   *  claim. Separated out because the two need completely different handling:
+   *  one is a judgement call, the other is mechanical cleanup. */
+  | "duplicate-of-existing"
   /** Reclassified to a key with no row in `platforms` — the FK would reject it. */
   | "unknown-platform"
   /** classifyPlatformUrl returned null: a policy-skipped host (twitter/x) or an
@@ -70,6 +75,10 @@ export interface RowOutcome {
   newHandle?: string | null;
   status: "updated" | "skipped";
   reason?: SkipReason;
+  /** On "platform-collision" only: the link already occupying the slot this row
+   *  would have moved into. Both sides are needed to pick a winner. */
+  conflictLinkId?: number;
+  conflictUrl?: string | null;
   /** Where the link actually pointed, when that was discovered — including for
    *  skipped rows, so a report can explain the decision. */
   destination?: string | null;
@@ -112,6 +121,19 @@ interface ArtistLinkRow {
   platform: string;
   url: string;
   original_url: string | null;
+}
+
+interface SlotRow {
+  id: number;
+  artist_id: string;
+  platform: string;
+  url: string | null;
+}
+
+/** The link occupying one (artist_id, platform) slot. */
+interface SlotOccupant {
+  id: number;
+  url: string | null;
 }
 
 const DEFAULT_DELAY_MS = 150;
@@ -187,9 +209,15 @@ export async function resolveArtistLinks(
       }
 
       // Claim the slot so a later row in this same run can't be told the
-      // platform is free when this row just took it.
-      takenSlots.add(slotKey(row.artist_id, outcome.newPlatform!));
-      takenSlots.delete(slotKey(row.artist_id, row.platform));
+      // platform is free when this row just took it, and release the one it
+      // vacated so a later row can legitimately move in.
+      takenSlots.set(slotKey(row.artist_id, outcome.newPlatform!), {
+        id: row.id,
+        url: outcome.newUrl!,
+      });
+      if (outcome.newPlatform !== row.platform) {
+        takenSlots.delete(slotKey(row.artist_id, row.platform));
+      }
     }
 
     if (outcome.status === "updated") updated.push(outcome);
@@ -205,7 +233,7 @@ export async function resolveArtistLinks(
 async function decideRow(
   row: ArtistLinkRow,
   validPlatforms: Set<string>,
-  takenSlots: Set<string>,
+  takenSlots: Map<string, SlotOccupant>,
   resolveOpts: ResolveOptions | undefined
 ): Promise<RowOutcome> {
   const base = { id: row.id, artistId: row.artist_id, platform: row.platform, url: row.url };
@@ -266,23 +294,13 @@ async function decideRow(
     };
   }
 
-  // artist_links carries UNIQUE (artist_id, platform), so moving a row to a
-  // platform the artist already has would violate it. Which of the two links is
-  // the better one isn't a call this module should make silently, so the row is
-  // reported for a human instead.
-  if (newPlatform !== row.platform && takenSlots.has(slotKey(row.artist_id, newPlatform))) {
-    return {
-      ...base,
-      status: "skipped",
-      reason: "platform-collision",
-      newPlatform,
-      destination: result.destination,
-      finalStatus: result.finalStatus,
-    };
-  }
-
   // Same canonicalization the save paths and 2d apply, so a resolved link is
   // stored in exactly the form it would have had if it were entered directly.
+  //
+  // Computed BEFORE the collision check below, even though a colliding row is
+  // never written: a collision report is only actionable if it shows both
+  // candidate URLs in their final form, so a reviewer can compare like with
+  // like instead of a canonical URL against a raw shortener.
   const newUrl = resolveProfileLinkUrl(
     newPlatform,
     canonicalizeResidentAdvisorUrl(result.url),
@@ -304,6 +322,30 @@ async function decideRow(
       ...base,
       status: "skipped",
       reason: "unchanged",
+      destination: result.destination,
+      finalStatus: result.finalStatus,
+    };
+  }
+
+  // artist_links carries UNIQUE (artist_id, platform), so moving a row to a
+  // platform the artist already has would violate it. Which of the two links is
+  // the better one isn't a call this module should make silently, so the row is
+  // reported for a human instead — with the incumbent's id and URL, since
+  // "these two links compete for one slot" is useless without both of them.
+  const incumbent =
+    newPlatform !== row.platform ? takenSlots.get(slotKey(row.artist_id, newPlatform)) : undefined;
+  if (incumbent) {
+    return {
+      ...base,
+      status: "skipped",
+      // Plain equality rather than a fuzzy match: both URLs have been through
+      // resolveProfileLinkUrl, so equal ones are genuinely identical, and
+      // erring toward "needs a human" is the safe direction to be wrong in.
+      reason: incumbent.url === newUrl ? "duplicate-of-existing" : "platform-collision",
+      newPlatform,
+      newUrl,
+      conflictLinkId: incumbent.id,
+      conflictUrl: incumbent.url,
       destination: result.destination,
       finalStatus: result.finalStatus,
     };
@@ -367,17 +409,23 @@ async function fetchPlatformKeys(client: SupabaseClient): Promise<Set<string>> {
   return new Set((data as { key: string }[]).map((p) => p.key));
 }
 
-async function fetchTakenSlots(client: SupabaseClient, artistIds: string[]): Promise<Set<string>> {
-  const slots = new Set<string>();
+/** Every (artist_id, platform) slot these artists occupy, mapped to the link
+ *  sitting in it. The occupant's id and URL are carried so a collision can be
+ *  reported with both competing links rather than just the fact of the clash. */
+async function fetchTakenSlots(
+  client: SupabaseClient,
+  artistIds: string[]
+): Promise<Map<string, SlotOccupant>> {
+  const slots = new Map<string, SlotOccupant>();
   for (let i = 0; i < artistIds.length; i += 200) {
     const batch = artistIds.slice(i, i + 200);
     const { data, error } = await client
       .from("artist_links")
-      .select("artist_id, platform")
+      .select("id, artist_id, platform, url")
       .in("artist_id", batch);
     if (error) throw new Error(`Could not read existing platforms: ${error.message}`);
-    for (const r of data as { artist_id: string; platform: string }[]) {
-      slots.add(slotKey(r.artist_id, r.platform));
+    for (const r of data as SlotRow[]) {
+      slots.set(slotKey(r.artist_id, r.platform), { id: r.id, url: r.url });
     }
   }
   return slots;
