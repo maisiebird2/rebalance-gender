@@ -76,6 +76,14 @@ for the inventory of which script writes what.
 
 ## Working agreements
 
-- Branch before editing; never commit directly to `main`.
+- Branch before editing; never commit directly to `main`. When a task will run
+  alongside other open sessions, give it its own checkout rather than sharing
+  the primary one: `scripts/new-worktree.sh <branch-name>`.
 - Use inclusive language everywhere — chat, code, comments, commit messages,
   PR text and docs.
+
+Both rules about branches are enforced, not just documented — a `PreToolUse`
+guard blocks edits while `main` is checked out, and a `pre-commit` hook rejects
+commits on `main`. New clones need `scripts/git-hooks/install.sh` once. See
+[documentation/BRANCH-SAFETY.md](documentation/BRANCH-SAFETY.md) for why the
+guards exist and how to override them deliberately.

@@ -68,7 +68,13 @@ supabase/.temp
 *.tsbuildinfo
 next-env.d.ts
 
-# claude local state — settings, agents, and the worktrees it creates
-# (those are checkouts of this same repo, so committing them would nest
-# a git repository inside itself)
-.claude/
+# claude local state — agents, and the worktrees it creates (those are
+# checkouts of this same repo, so committing them would nest a git repository
+# inside itself). Ignore the contents rather than the directory, so the one
+# file we do want tracked can be excepted below.
+.claude/*
+
+# ...that exception being the branch-safety hook wiring. It has to be tracked:
+# a guard that disappears on a fresh clone is not a guard. The scripts it runs
+# live in scripts/git-hooks/. See documentation/BRANCH-SAFETY.md.
+!.claude/settings.json
