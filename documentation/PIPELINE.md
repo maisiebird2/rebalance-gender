@@ -1625,6 +1625,21 @@ in the automated pipeline:
   bios never need this pass. Safe to re-run, but no longer part of
   the pipeline.
 
+- **`migrate-linktree-to-links.ts`** — one-time migration of the
+  retired `artists.linktree_url` column. Nothing writes to that column
+  any more; this drains what is left in it by staging each value into
+  `artist_harvested_links` (`source_platform = 'linktree'`, `source_url`
+  = the stored value) and then clearing the column. The links reach
+  `artist_links` the normal way, via 2d — the script does **not** write
+  `artist_links` itself, so 2d owns the dedup, the shortener
+  resolution and the `artist_links_url` conflict flagging as it does
+  for every harvested link. Values it cannot classify (unparseable,
+  `mailto:`, a policy-skipped host) are left in the column and listed
+  at the end for manual review. Idempotent; `--limit=N` and `DRY_RUN=1`
+  supported. Ran clean against production on 2026-08-16 (159 staged, 24
+  already staged, 0 unusable), so the column now holds nothing and is
+  dropped by `supabase_migration_drop_artists_linktree_url.sql`.
+
 - **Python candidate pipeline** (`resolve_candidates.py`,
   `review_candidates.py`, `load_links.py`, `recommend.py`, and the
   `recommender/` package) — the earlier standalone implementation of
@@ -2337,8 +2352,11 @@ SoundCloud and Spotify.
 (Note: Linktree URLs used to also live in a separate
 `artists.linktree_url` column; that's been retired in favor of
 `artist_links` only — see `scripts/migrate-linktree-to-links.ts` for
-the one-time migration. This harvester should read its seed URLs from
-`artist_links` (platform = `linktree`), not from `artists`.)
+the one-time migration, which stages the column's values into
+`artist_harvested_links` (`source_platform = 'linktree'`) and lets 2d
+promote them, rather than writing `artist_links` directly. This
+harvester should read its seed URLs from `artist_links`
+(platform = `linktree`), not from `artists`.)
 
 ### Move `artist_enrichment.raw_data` into `api_response_cache` — ✅ DONE (2026-07-10)
 

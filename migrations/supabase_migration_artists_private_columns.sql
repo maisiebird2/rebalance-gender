@@ -27,9 +27,15 @@
 --   PUBLIC (granted below): everything the site renders or filters on.
 --   booking_info / management_info / contact_info stay public on
 --   purpose — the artist page displays them (decision 2026-07-29).
---   linktree_url is legacy but harmless. name_search must stay granted:
---   directory search filters on it (a role needs SELECT on a column to
---   use it in a WHERE clause, even when the column isn't returned).
+--   name_search must stay granted: directory search filters on it (a
+--   role needs SELECT on a column to use it in a WHERE clause, even
+--   when the column isn't returned).
+--
+--   linktree_url used to be granted here as "legacy but harmless". It
+--   was dropped from artists by
+--   supabase_migration_drop_artists_linktree_url.sql and removed from
+--   the list below in the same change — leaving it would make this
+--   file fail with "column linktree_url does not exist".
 --
 --   PRIVATE (not granted): admin/submission metadata and anything the
 --   public UI never shows.
@@ -90,7 +96,6 @@ GRANT SELECT (
   "booking_info",
   "management_info",
   "contact_info",
-  "linktree_url",
   "deleted",
   "created_at",
   "updated_at"
