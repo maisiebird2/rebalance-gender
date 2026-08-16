@@ -1,0 +1,50 @@
+#!/bin/sh
+#
+# Refuse commits made directly on `main`.
+#
+# This is the last line of defence against the failure this repo kept hitting:
+# several Claude sessions (or a session and a human) share one checkout, one
+# session runs `git checkout`, and the next commit from another session lands
+# on whatever branch happens to be current. See documentation/BRANCH-SAFETY.md.
+#
+# Git keeps hooks in the *common* git directory, so installing this once covers
+# the primary checkout and every worktree.
+#
+# Installed by scripts/git-hooks/install.sh — edit this file, not the copy in
+# .git/hooks (which is a symlink back to here).
+#
+# Escape hatch, for the rare deliberate commit straight to main:
+#
+#     ALLOW_MAIN_COMMIT=1 git commit -m "..."
+
+branch=$(git symbolic-ref --quiet --short HEAD) || exit 0  # detached HEAD: not our problem
+
+if [ "$branch" != "main" ]; then
+    exit 0
+fi
+
+if [ -n "${ALLOW_MAIN_COMMIT:-}" ]; then
+    echo "pre-commit: committing to main (ALLOW_MAIN_COMMIT is set)." >&2
+    exit 0
+fi
+
+cat >&2 <<'MSG'
+
+  ✗ Refusing to commit: you are on `main`.
+
+    Work belongs on a branch. To move what you have staged:
+
+        git switch -c my-branch-name
+        git commit
+
+    Or, for a task that runs alongside others, give it its own checkout:
+
+        scripts/new-worktree.sh my-branch-name
+
+    To override this once (deliberate commits to main only):
+
+        ALLOW_MAIN_COMMIT=1 git commit ...
+
+MSG
+
+exit 1
