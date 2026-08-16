@@ -113,13 +113,15 @@ function fakeClient(db: FakeDb) {
         return { data: db.platforms.map((key) => ({ key })), error: null };
       }
 
-      // The (artist_id, platform) slot lookup.
-      if (this.cols === "artist_id, platform") {
+      // The (artist_id, platform) slot lookup. Distinguished from the candidate
+      // scan by its column list, so this double breaks loudly if the module's
+      // query changes shape rather than quietly serving the wrong rows.
+      if (this.cols === "id, artist_id, platform, url") {
         const ids = this.ins.find(([c]) => c === "artist_id")?.[1] as string[];
         return {
           data: db.links
             .filter((r) => ids.includes(r.artist_id))
-            .map((r) => ({ artist_id: r.artist_id, platform: r.platform })),
+            .map((r) => ({ id: r.id, artist_id: r.artist_id, platform: r.platform, url: r.url })),
           error: null,
         };
       }
@@ -381,6 +383,90 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
     expect(updates).toHaveLength(0);
     expect(report.skipped[0]).toMatchObject({ reason: "platform-collision", newPlatform: "youtube" });
+  });
+
+  it("reports both competing links on a collision", async () => {
+    // "These two links want one slot" is not actionable without both of them,
+    // so the outcome carries the incumbent's id and URL, and the proposed URL
+    // in its final canonical form — like compared with like.
+    mockNetwork({ "https://goo.gl/ugfBAL": { location: "https://www.youtube.com/channel/UC_dO" } });
+    const { client } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, platform: "other", url: "https://goo.gl/ugfBAL" }),
+        link({ id: 2, platform: "youtube", url: "https://www.youtube.com/channel/EXISTING" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
+    expect(report.skipped[0]).toMatchObject({
+      reason: "platform-collision",
+      url: "https://goo.gl/ugfBAL", // what the row holds now
+      newUrl: "https://www.youtube.com/channel/UC_dO", // what it would become
+      conflictLinkId: 2,
+      conflictUrl: "https://www.youtube.com/channel/EXISTING", // what blocks it
+    });
+  });
+
+  it("separates an exact duplicate from a genuine collision", async () => {
+    // A shortened row resolving to precisely what the artist's existing link
+    // holds is redundant, not contested. Mechanical cleanup versus a judgement
+    // call, so they must not share a reason code.
+    mockNetwork({
+      "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" },
+      "https://bit.ly/rival": { location: "https://soundcloud.com/someone-else" },
+    });
+    const { client } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, artist_id: "a", platform: "other", url: "https://bit.ly/dupe" }),
+        link({ id: 2, artist_id: "a", platform: "soundcloud", url: "https://soundcloud.com/lolsnake" }),
+        link({ id: 3, artist_id: "b", platform: "other", url: "https://bit.ly/rival" }),
+        link({ id: 4, artist_id: "b", platform: "soundcloud", url: "https://soundcloud.com/incumbent" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
+    const byId = new Map(report.skipped.map((o) => [o.id, o]));
+    expect(byId.get(1)).toMatchObject({
+      reason: "duplicate-of-existing",
+      conflictLinkId: 2,
+      conflictUrl: "https://soundcloud.com/lolsnake",
+      newUrl: "https://soundcloud.com/lolsnake",
+    });
+    expect(byId.get(3)).toMatchObject({
+      reason: "platform-collision",
+      conflictUrl: "https://soundcloud.com/incumbent",
+      newUrl: "https://soundcloud.com/someone-else",
+    });
+  });
+
+  it("does not free an artist's own slot after a URL-only change", async () => {
+    // Row 1 stays on soundcloud and only its URL changes, so it still occupies
+    // that slot. Row 2 resolving to soundcloud must therefore still collide —
+    // releasing the slot unconditionally would let it through and then fail on
+    // the unique constraint at the database.
+    mockNetwork({
+      "https://on.soundcloud.com/aaa": { location: "https://soundcloud.com/first" },
+      "https://bit.ly/two": { location: "https://soundcloud.com/second" },
+    });
+    const { client, updates } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, platform: "soundcloud", url: "https://on.soundcloud.com/aaa" }),
+        link({ id: 2, platform: "other", url: "https://bit.ly/two" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(1);
+    expect(report.skipped[0]).toMatchObject({
+      id: 2,
+      reason: "platform-collision",
+      conflictLinkId: 1,
+      conflictUrl: "https://soundcloud.com/first", // the just-written value
+    });
   });
 
   it("does not collide with a slot the same run just vacated", async () => {
