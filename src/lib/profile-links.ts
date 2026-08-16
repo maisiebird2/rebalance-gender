@@ -22,6 +22,13 @@
 // (checking resolvability is still an open TODO).
 // ============================================================
 
+// The ONLY import in this module, and deliberately the only one: everything
+// above the "Share/shortener resolution" section near the bottom is pure
+// string work with no dependencies, which is what makes it safe for
+// ProfileLinkField.tsx to import into the client. Nothing reachable from the
+// sync exports touches this.
+import { resolveRedirect } from "./resolve-url-redirects";
+
 export interface NormalizeResult {
   /** Final value to use. Equal to the trimmed input if the platform
    *  isn't templated, or nothing needed to change. */
@@ -687,19 +694,38 @@ export function resolveProfileLinkUrl(
 }
 
 // ============================================================
-// Mobile share-link resolution (async, server-side only)
+// Share/shortener resolution (async, server-side only)
 //
 // SoundCloud's mobile "share" sheet hands out links like
 // https://on.soundcloud.com/8KP9u6WaRSeo1ycHww — the path is an opaque
-// ID, not a handle, and the real profile URL is only knowable by
-// following the redirect. That's a network round-trip, so unlike the
-// rest of this module it can't be done synchronously in the client
-// field's blur handler. It runs on the server save paths instead,
-// BEFORE the synchronous normalize/extract step.
+// ID, and the real profile URL is only knowable by following the
+// redirect. Shorteners (bit.ly, soundcloud.app.goo.gl, …) are the same
+// problem. That's a network round-trip, so unlike the rest of this
+// module it can't be done synchronously in the client field's blur
+// handler.
+//
+// The redirect-following itself now lives in resolve-url-redirects.ts,
+// which owns the host list and the destination-validation rules for
+// every caller. What remains here is the thin adaptor that fits it to
+// this module's contract: return a URL, always, even on failure.
+//
+// NOTE ON CALLERS. The save paths no longer use this — they store the
+// synchronously-canonicalized URL and resolve after the response via
+// scheduleLinkResolution, so a submission never waits on a redirect.
+// The one remaining caller is duplicate detection in
+// submission-helpers.ts, which genuinely cannot defer: it has to know
+// where a submitted link really points BEFORE deciding whether the
+// artist already exists. Hence the short timeout below — a slow
+// shortener must not stall a submission.
 // ============================================================
 
-/** Hosts used by SoundCloud's mobile share sheet. They 30x-redirect to the
- *  canonical https://soundcloud.com/<artist>... URL. */
+/** Hosts used by SoundCloud's mobile share sheet.
+ *
+ *  Narrowed in scope: this no longer drives resolution (resolve-url-redirects.ts
+ *  owns the host list now). It survives only for isSoundcloudShareLink below,
+ *  which is a SYNC guard — it stops normalizeProfileLink turning an unresolved
+ *  share link's opaque id into a bogus https://soundcloud.com/<id>. That guard
+ *  runs on the client, so it must stay dependency-free. */
 const SOUNDCLOUD_SHARE_HOSTS = new Set(["on.soundcloud.com"]);
 
 /** How long to wait on the redirect-follow before giving up and keeping the
@@ -729,66 +755,43 @@ export function isSoundcloudShareLink(input: string): boolean {
  * client/sync context.
  *
  * Behavior:
- *   - Non-share input is returned unchanged with NO network call.
- *   - On success, returns the redirect's final URL with its query string
- *     stripped (normalizeProfileLink canonicalizes the path afterwards).
- *   - On ANY failure — network error, timeout, non-2xx, or a redirect that
- *     doesn't land on soundcloud.com — returns the ORIGINAL input unchanged,
- *     so the caller stores the share link as-is rather than losing it.
+ *   - Input whose host isn't resolvable is returned unchanged, with NO
+ *     network call.
+ *   - On success, returns the resolved URL with its query string stripped
+ *     (normalizeProfileLink canonicalizes the path afterwards).
+ *   - On ANY failure — network error, timeout, dead destination, or a
+ *     redirect that didn't land where that host promised — returns the
+ *     ORIGINAL input unchanged, so the caller keeps the link rather than
+ *     losing it.
+ *
+ * Coverage widened when this moved onto the shared resolver: it used to know
+ * only on.soundcloud.com, so a submitted soundcloud.app.goo.gl or bit.ly link
+ * went unresolved and duplicate detection compared a shortener against
+ * canonical URLs — never matching, and letting a duplicate artist through.
  */
 export async function resolveShareUrl(rawInput: string): Promise<string> {
   const trimmed = rawInput.trim();
   if (!trimmed) return trimmed;
 
-  const host = hostnameOf(trimmed);
-  if (host === null || !SOUNDCLOUD_SHARE_HOSTS.has(host)) return trimmed;
-
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SHARE_RESOLVE_TIMEOUT_MS);
-  try {
-    // `redirect: "follow"` + response.url gives the final destination after the
-    // share host's hops. HEAD is cheap; some hosts reject it, so fall back to
-    // GET. We only read the resolved URL, never the body.
-    let res = await fetch(withScheme, {
-      method: "HEAD",
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    if (!res.ok || !res.url) {
-      res = await fetch(withScheme, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-      });
-    }
-
-    const resolvedHost = res.url ? hostnameOf(res.url) : null;
-    // Only trust a redirect that actually landed on a soundcloud.com profile
-    // (and not back on a share host). Anything else → keep the original.
-    if (
-      !res.ok ||
-      resolvedHost === null ||
-      !resolvedHost.endsWith("soundcloud.com") ||
-      SOUNDCLOUD_SHARE_HOSTS.has(resolvedHost)
-    ) {
-      return trimmed;
-    }
-    return res.url.split("?")[0];
-  } catch {
-    return trimmed;
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await resolveRedirect(trimmed, { timeoutMs: SHARE_RESOLVE_TIMEOUT_MS });
+  // resolveRedirect already guarantees the original on failure, so this is
+  // just the query-strip that this function's callers expect.
+  return result.resolved ? result.url.split("?")[0] : trimmed;
 }
 
 /**
- * Async sibling of resolveProfileLinkUrl for server-side save paths. Runs the
- * network resolve step FIRST (expanding SoundCloud mobile share links), then
- * applies the same synchronous normalization. If the resolve step fails the
- * original input flows through unchanged (and normalizeProfileLink leaves an
- * unresolved on.soundcloud.com link alone). Only SoundCloud incurs a possible
- * network call; every other platform is a plain sync passthrough.
+ * Async sibling of resolveProfileLinkUrl. Runs the network resolve step FIRST,
+ * then applies the same synchronous normalization. If the resolve step fails,
+ * the original input flows through unchanged (and normalizeProfileLink leaves
+ * an unresolved on.soundcloud.com link alone rather than mangling its opaque
+ * id into a handle).
+ *
+ * Only a URL whose host is actually resolvable incurs a network call; anything
+ * else — a bare handle, an ordinary profile URL — is a plain sync passthrough.
+ *
+ * The save paths deliberately do NOT use this any more; see the section header
+ * above. Duplicate detection does, because it has to resolve before it can
+ * decide.
  */
 export async function resolveProfileLinkUrlAsync(
   platformKey: string,
@@ -797,6 +800,11 @@ export async function resolveProfileLinkUrlAsync(
 ): Promise<string> {
   const trimmed = rawInput.trim();
   if (!trimmed) return trimmed;
-  const expanded = platformKey === "soundcloud" ? await resolveShareUrl(trimmed) : trimmed;
+  // Gated on the HOST rather than on platformKey === "soundcloud", as it was
+  // when on.soundcloud.com was the only host anyone could resolve. A submitted
+  // bit.ly is worth resolving whichever platform field it was typed into, and
+  // resolveShareUrl no-ops without a network call when the host isn't one we
+  // can follow.
+  const expanded = await resolveShareUrl(trimmed);
   return resolveProfileLinkUrl(platformKey, expanded, fallbackClean);
 }

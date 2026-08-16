@@ -3,7 +3,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 import { isAdminUser } from "@/lib/admin-auth";
 import { getPlatforms } from "@/lib/platforms";
-import { resolveProfileLinkUrlAsync } from "@/lib/profile-links";
+import { resolveProfileLinkUrl } from "@/lib/profile-links";
+import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import {
   checkBotProtection,
   getEmailStatus,
@@ -245,30 +246,34 @@ export async function POST(request: NextRequest) {
     const platforms = await getPlatforms(supabase);
     const validKeys = new Set(platforms.map((p) => p.key));
 
-    const rows = await Promise.all(
-      (Object.keys(body.links) as LinkPlatform[])
-        .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
-        .map(async (platform) => {
-          const original_url = body.links![platform]!.trim();
-          return {
-            artist_id: artistId,
-            platform,
-            original_url,
-            // Bare handles for templated platforms (soundcloud, instagram,
-            // bandcamp, resident_advisor) get built into a full URL here too —
-            // this is a safety net in case the client-side normalization in
-            // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
-            // without a blur event). SoundCloud mobile share links
-            // (on.soundcloud.com/...) are expanded via a redirect-follow here
-            // too. Everything else falls back to generic trimming/query-
-            // stripping (cleanGenericUrl, the default fallback cleaner).
-            url: await resolveProfileLinkUrlAsync(platform, original_url),
-          };
-        })
-    );
+    const rows = (Object.keys(body.links) as LinkPlatform[])
+      .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
+      .map((platform) => {
+        const original_url = body.links![platform]!.trim();
+        return {
+          artist_id: artistId,
+          platform,
+          original_url,
+          // Bare handles for templated platforms (soundcloud, instagram,
+          // bandcamp, resident_advisor) get built into a full URL here too —
+          // this is a safety net in case the client-side normalization in
+          // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
+          // without a blur event). Everything else falls back to generic
+          // trimming/query-stripping (cleanGenericUrl, the default fallback
+          // cleaner).
+          //
+          // Purely synchronous now: shortener and share links
+          // (on.soundcloud.com/..., bit.ly/..., soundcloud.app.goo.gl/...)
+          // used to be expanded by a redirect-follow right here, which cost
+          // the submitter a network round-trip per link. That moved to
+          // after() below.
+          url: resolveProfileLinkUrl(platform, original_url),
+        };
+      });
 
     if (rows.length > 0) {
       await supabase.from("artist_links").insert(rows);
+      scheduleLinkResolution(supabase, artistId);
     }
   }
 

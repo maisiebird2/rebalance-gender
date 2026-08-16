@@ -587,6 +587,27 @@ describe("normalizeProfileLink — SoundCloud share links (sync guard)", () => {
   });
 });
 
+// resolveShareUrl now delegates to resolve-url-redirects.ts, which follows
+// redirects MANUALLY (reading the Location header) rather than letting fetch
+// follow them and reading response.url. The behavioural contract below is
+// unchanged — same inputs, same outputs — but the network has to be faked at
+// the new level. These two helpers mirror the ones in
+// resolve-url-redirects.test.ts.
+function mockRedirectTo(location: string) {
+  const spy = vi.spyOn(global, "fetch");
+  spy.mockResolvedValueOnce({
+    status: 302,
+    headers: { get: (k: string) => (k.toLowerCase() === "location" ? location : null) },
+    body: null,
+  } as unknown as Response);
+  spy.mockResolvedValueOnce({
+    status: 200,
+    headers: { get: () => null },
+    body: null,
+  } as unknown as Response);
+  return spy;
+}
+
 describe("resolveShareUrl", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -600,10 +621,7 @@ describe("resolveShareUrl", () => {
   });
 
   it("expands a share link to the redirect's canonical URL, dropping query params", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      url: "https://soundcloud.com/real-artist?ref=share",
-    } as unknown as Response);
+    mockRedirectTo("https://soundcloud.com/real-artist?ref=share");
     const out = await resolveShareUrl("https://on.soundcloud.com/8KP9u6WaRSeo1ycHww");
     expect(out).toBe("https://soundcloud.com/real-artist");
   });
@@ -615,12 +633,19 @@ describe("resolveShareUrl", () => {
   });
 
   it("returns the original share link if the redirect lands off soundcloud.com", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      url: "https://login.example.com/blocked",
-    } as unknown as Response);
+    mockRedirectTo("https://login.example.com/blocked");
     const share = "https://on.soundcloud.com/8KP9u6WaRSeo1ycHww";
     expect(await resolveShareUrl(share)).toBe(share);
+  });
+
+  it("now also expands shortener hosts, not just on.soundcloud.com", async () => {
+    // The reason this matters: duplicate detection compares a submitted link
+    // against stored canonical URLs. While only on.soundcloud.com resolved, a
+    // submitted soundcloud.app.goo.gl never matched anything, and a duplicate
+    // artist could be created for someone already in the directory.
+    mockRedirectTo("https://soundcloud.com/kling_und_klang");
+    const out = await resolveShareUrl("https://soundcloud.app.goo.gl/TTQjJ");
+    expect(out).toBe("https://soundcloud.com/kling_und_klang");
   });
 });
 
@@ -630,10 +655,7 @@ describe("resolveProfileLinkUrlAsync", () => {
   });
 
   it("expands then canonicalizes a SoundCloud share link", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      url: "https://soundcloud.com/real-artist?si=abc",
-    } as unknown as Response);
+    mockRedirectTo("https://soundcloud.com/real-artist?si=abc");
     const url = await resolveProfileLinkUrlAsync(
       "soundcloud",
       "https://on.soundcloud.com/8KP9u6WaRSeo1ycHww",
@@ -651,10 +673,20 @@ describe("resolveProfileLinkUrlAsync", () => {
     expect(url).toBe(share);
   });
 
-  it("does not fetch for non-soundcloud platforms", async () => {
+  it("does not fetch for input whose host isn't resolvable", async () => {
+    // Previously gated on platformKey === "soundcloud"; now gated on the host,
+    // so a bare handle or an ordinary profile URL still costs nothing.
     const fetchSpy = vi.spyOn(global, "fetch");
     const url = await resolveProfileLinkUrlAsync("instagram", "techno_blondy", (_p, u) => u);
     expect(url).toBe("https://www.instagram.com/techno_blondy");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("resolves a shortener typed into a non-SoundCloud field", async () => {
+    // The old platformKey gate meant a bit.ly pasted into, say, the Instagram
+    // field was never resolved at all.
+    mockRedirectTo("https://www.instagram.com/someartist");
+    const url = await resolveProfileLinkUrlAsync("instagram", "https://bit.ly/xyz", (_p, u) => u);
+    expect(url).toBe("https://www.instagram.com/someartist");
   });
 });

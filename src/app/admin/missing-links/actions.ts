@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { deriveHandle, resolveProfileLinkUrlAsync } from "@/lib/profile-links";
+import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 
 export interface ActionResult {
@@ -21,9 +22,12 @@ async function requireUser(): Promise<boolean> {
 /**
  * Saves a single platform link for an artist, from the "Missing links"
  * admin page. Applies the same normalization as the edit form
- * (resolveProfileLinkUrlAsync → deriveHandle), replaces any
+ * (resolveProfileLinkUrl → deriveHandle), replaces any
  * existing row for (artist, platform) so it's safe to retry, and kicks
  * off image enrichment when the platform can provide a profile image.
+ *
+ * A shortener or share link is followed to its real destination after the
+ * response, not before it — see scheduleLinkResolution.
  */
 export async function saveArtistPlatformLink(
   artistId: string,
@@ -38,7 +42,7 @@ export async function saveArtistPlatformLink(
   const admin = getSupabaseAdminClient();
 
   const original_url = rawUrl.trim();
-  const url = await resolveProfileLinkUrlAsync(platform, original_url);
+  const url = resolveProfileLinkUrl(platform, original_url);
 
   // Replace-then-insert keeps this idempotent (double-click, stale tab).
   await admin
@@ -56,6 +60,8 @@ export async function saveArtistPlatformLink(
     not_found: false,
   });
   if (error) return { error: `Link save error: ${error.message}` };
+
+  scheduleLinkResolution(admin, artistId);
 
   // New image-capable link → try to backfill a profile image from just
   // this platform (not a no-op re-check of every platform — this is
