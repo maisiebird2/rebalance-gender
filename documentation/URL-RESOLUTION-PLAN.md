@@ -4,8 +4,8 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **step 1 of 7 done** — Module 1 is implemented and tested; nothing
-calls it yet, so behaviour is unchanged. Branch `resolve-url-redirects`,
+Status: **steps 1–2 of 7 done** — both modules are implemented and tested;
+nothing calls them yet, so behaviour is unchanged. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -223,20 +223,24 @@ Two behaviours worth recording, both discovered while writing the tests:
 
 Server-only. Knows the `artist_links` row shape and the preserve convention.
 
+**Implemented**, with 25 tests in `src/lib/resolve-artist-links.test.ts`.
+
 ```ts
 export async function resolveArtistLinks(
   client: SupabaseClient,
   scope: { artistId: string } | { ids: number[] } | { all: true },
-  opts?: { dryRun?: boolean; onProgress?: (r: RowOutcome) => void }
-): Promise<{ updated: RowOutcome[]; skipped: RowOutcome[] }>;
+  opts?: {
+    dryRun?: boolean; host?: string; limit?: number; delayMs?: number;
+    resolve?: ResolveOptions; onProgress?: (r: RowOutcome) => void;
+  }
+): Promise<{ updated: RowOutcome[]; skipped: RowOutcome[]; examined: number }>;
 ```
 
 Per row:
 
 1. Skip unless `isResolvableHost(url)`.
 2. `resolveRedirect(url)`; skip on failure or when `finalStatus` is 4xx/5xx.
-3. Reclassify via `classifyPlatformUrl` (Tier B only — Tier A keeps its known
-   platform).
+3. Reclassify via `classifyPlatformUrl` — **both tiers**; see below.
 4. Canonicalize via `resolveProfileLinkUrl`, and recompute `handle` with
    `deriveHandle` — the handle is derived from the *resolved* URL, so a
    deferred resolve must redo it.
@@ -245,12 +249,72 @@ Per row:
    never clobbered and re-runs stay idempotent (same rule as
    `resolve-residentadvisor-urls.mjs`).
 
-**Unique-constraint hazard, handle explicitly.** `artist_links` carries
-`UNIQUE (artist_id, platform)`. A Tier B resolve can change the platform —
+Reads are paged and pre-filtered in SQL with a loose `url ILIKE %host%` per
+known host (built from `resolvableHosts()`), so the `{ all: true }` scan
+touches ~57 rows rather than pulling all 200k. Survivors are re-tested with
+`isResolvableHost`, which matches exactly — that's what keeps
+`maps.app.goo.gl` untouched while `soundcloud.app.goo.gl` resolves.
+
+### Reclassification policy — corrected by the first dry run
+
+The plan originally said "Tier B only — Tier A keeps its known platform". **That
+was wrong**, and the live dry run showed it immediately:
+
+```
+UPDATE  #179196  other -> other
+          https://soundcloud.app.goo.gl/TTQjJ
+        -> https://soundcloud.com/kling_und_klang   handle=null
+```
+
+The reasoning confused "we knew what the destination would be" with "the stored
+platform is right". A `soundcloud.app.goo.gl` row sits under `other` *precisely
+because* classification ran on the shortener host before anything could resolve
+it. Keeping that platform leaves an obvious SoundCloud profile filed as `other`
+with a null handle. 11 of 31 proposed updates were affected.
+
+So **both tiers reclassify**, with one guard: `"other"` is the classifier's
+fallback, not a finding, so it never overrides what's already stored. Without
+that guard a `bit.ly` filed under `homepage` resolving to a personal site would
+be *downgraded* to `other`, losing real information — and `homepage`, `djanes`,
+`1001tracklists` and `hoer` are all platform keys outside the shared domain
+table, so this is not hypothetical.
+
+**Unique-constraint hazard, handled explicitly.** `artist_links` carries
+`UNIQUE (artist_id, platform)`. A resolve can change the platform —
 `goo.gl [as other]` → `youtube` — onto a slot the artist already occupies.
-That's a constraint violation, not a merge decision the script should make
-silently. Such rows are skipped and reported to a datetime-stamped CSV,
-mirroring 2d's existing "not found" collision convention.
+That's a constraint violation, not a merge decision the module should make
+silently, so such rows are skipped and reported. Fixing the reclassification
+policy above raised the count from 2 to 5, since three newly-identified
+SoundCloud rows turned out to belong to artists who already have a SoundCloud
+link. Slots claimed *during* a run are tracked too, so two rows in one batch
+can't both take the same platform.
+
+### First live dry run — 2026-08-11
+
+Read-only, over all of `artist_links`. **57 examined, 28 would update, 29
+skipped.**
+
+| Skip reason | Rows |
+|---|---:|
+| `validation-failed` | 10 |
+| `dead-destination` | 9 |
+| `platform-collision` | 5 |
+| `no-redirect` | 4 |
+| `network-error` | 1 |
+
+| Platform move | Rows |
+|---|---:|
+| `soundcloud` → `soundcloud` | 9 |
+| `other` → `other` | 8 |
+| `facebook` → `facebook` | 6 |
+| `other` → `youtube` | 2 |
+| `other` → `instagram` / `spotify` / `facebook` | 3 |
+
+The 19 `validation-failed` + `dead-destination` skips are the design working:
+every one of those would have been a live row overwritten with a Branch deep
+link, a TikTok homepage, or a 404. The 8 `other` → `other` rows are genuinely
+generic — Google Docs/Forms, Dropbox, Mixmag, Jotform — so they keep their
+platform and just get a durable URL in place of a shortener.
 
 ---
 
@@ -366,10 +430,13 @@ the corrected URL. No bios, images, or genres are touched.
    against the live network as well as the mocked tests: all ten probe cases
    behaved exactly as the grounding section predicts, including both
    validation rejections and the dead `soundcloud.app.goo.gl` destination.
-2. Module 2 + tests. ← next
+2. ~~Module 2 + tests.~~ **Done.** A dry run over live data was used as the
+   verification, and it corrected the reclassification policy (above).
 3. Backfill script; `--dry-run` over live data and read the report. **Stop and
    review the numbers here** — this is the checkpoint before anything mutates
-   `artist_links`.
+   `artist_links`. The dry-run numbers above are what the script should
+   reproduce; it is now mostly argument parsing and reporting around
+   `resolveArtistLinks`. ← next
 4. Rewire 2d. `DRY_RUN=1`, compare against the dry-run report.
 5. Rewire the four form paths to `after()`; leave submission-helpers inline.
 6. Run the backfill for real.

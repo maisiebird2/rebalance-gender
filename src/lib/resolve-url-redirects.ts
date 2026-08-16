@@ -242,6 +242,18 @@ export function isResolvableHost(input: string): boolean {
   return host !== null && RESOLVABLE_HOSTS.has(host);
 }
 
+/** Every host this module knows how to resolve.
+ *
+ *  Exists so a caller scanning a large table can pre-filter in SQL instead of
+ *  pulling every row and testing it in JS — artist_links holds 200k rows and
+ *  fewer than a hundred of them are resolvable. A `url ILIKE %host%` filter
+ *  built from this list is deliberately loose (it also matches
+ *  maps.app.goo.gl); callers re-test survivors with isResolvableHost, which
+ *  matches exactly. */
+export function resolvableHosts(): string[] {
+  return [...RESOLVABLE_HOSTS.keys()];
+}
+
 /** Which tier a URL's host belongs to, or null if it isn't resolvable. */
 export function hostTier(input: string): HostTier | null {
   const host = bareHost(input);
