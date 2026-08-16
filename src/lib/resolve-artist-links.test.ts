@@ -38,6 +38,7 @@ interface FakeDb {
   links: FakeRow[];
   platforms: string[];
   updateError?: string;
+  deleteError?: string;
 }
 
 interface RecordedUpdate {
@@ -47,11 +48,12 @@ interface RecordedUpdate {
 
 function fakeClient(db: FakeDb) {
   const updates: RecordedUpdate[] = [];
+  const deletes: number[] = [];
 
   class Query {
     table: string;
     cols = "";
-    op: "select" | "update" = "select";
+    op: "select" | "update" | "delete" = "select";
     patch: Record<string, unknown> = {};
     orHosts: string[] = [];
     eqs: Array<[string, unknown]> = [];
@@ -69,6 +71,10 @@ function fakeClient(db: FakeDb) {
     update(patch: Record<string, unknown>) {
       this.op = "update";
       this.patch = patch;
+      return this;
+    }
+    delete() {
+      this.op = "delete";
       return this;
     }
     not() {
@@ -100,6 +106,14 @@ function fakeClient(db: FakeDb) {
     }
 
     private run() {
+      if (this.op === "delete") {
+        if (db.deleteError) return { data: null, error: { message: db.deleteError } };
+        const id = this.eqs.find(([c]) => c === "id")?.[1] as number;
+        deletes.push(id);
+        db.links = db.links.filter((r) => r.id !== id);
+        return { data: null, error: null };
+      }
+
       if (this.op === "update") {
         if (db.updateError) return { data: null, error: { message: db.updateError } };
         const id = this.eqs.find(([c]) => c === "id")?.[1] as number;
@@ -141,7 +155,7 @@ function fakeClient(db: FakeDb) {
   }
 
   const client = { from: (table: string) => new Query(table) } as unknown as SupabaseClient;
-  return { client, updates };
+  return { client, updates, deletes };
 }
 
 const ALL_PLATFORMS = [
@@ -438,6 +452,104 @@ describe("resolveArtistLinks — tier B reclassification", () => {
       reason: "platform-collision",
       conflictUrl: "https://soundcloud.com/incumbent",
       newUrl: "https://soundcloud.com/someone-else",
+    });
+  });
+
+  it("deletes a redundant duplicate only when asked", async () => {
+    const dupeDb = (): FakeDb => ({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, platform: "other", url: "https://bit.ly/dupe" }),
+        link({ id: 2, platform: "soundcloud", url: "https://soundcloud.com/lolsnake" }),
+      ],
+    });
+
+    // Default: left alone, exactly as before the flag existed.
+    mockNetwork({ "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" } });
+    const off = fakeClient(dupeDb());
+    const withoutFlag = await resolveArtistLinks(off.client, { all: true }, NO_DELAY);
+    expect(withoutFlag.deleted).toHaveLength(0);
+    expect(withoutFlag.skipped[0]).toMatchObject({ reason: "duplicate-of-existing" });
+    expect(off.updates).toHaveLength(0);
+
+    // Opted in: the row goes.
+    vi.restoreAllMocks();
+    mockNetwork({ "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" } });
+    const on = fakeClient(dupeDb());
+    const report = await resolveArtistLinks(on.client, { all: true }, {
+      ...NO_DELAY,
+      deleteDuplicates: true,
+    });
+    expect(report.deleted).toHaveLength(1);
+    expect(report.deleted[0]).toMatchObject({
+      id: 1,
+      status: "deleted",
+      reason: "duplicate-of-existing",
+      conflictLinkId: 2,
+    });
+    expect(report.skipped).toHaveLength(0);
+    expect(on.deletes).toEqual([1]);
+  });
+
+  it("never deletes a genuine collision, even with the flag on", async () => {
+    // Two DIFFERENT links competing for one slot is a person's call. The flag
+    // must not quietly resolve it by throwing one away.
+    mockNetwork({ "https://bit.ly/rival": { location: "https://soundcloud.com/someone-else" } });
+    const { client, deletes } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, platform: "other", url: "https://bit.ly/rival" }),
+        link({ id: 2, platform: "soundcloud", url: "https://soundcloud.com/incumbent" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, {
+      ...NO_DELAY,
+      deleteDuplicates: true,
+    });
+    expect(deletes).toHaveLength(0);
+    expect(report.deleted).toHaveLength(0);
+    expect(report.skipped[0]).toMatchObject({ reason: "platform-collision" });
+  });
+
+  it("reports a deletion in a dry run without performing it", async () => {
+    mockNetwork({ "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" } });
+    const { client, deletes } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      links: [
+        link({ id: 1, platform: "other", url: "https://bit.ly/dupe" }),
+        link({ id: 2, platform: "soundcloud", url: "https://soundcloud.com/lolsnake" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, {
+      ...NO_DELAY,
+      deleteDuplicates: true,
+      dryRun: true,
+    });
+    expect(report.deleted).toHaveLength(1);
+    expect(deletes).toHaveLength(0);
+  });
+
+  it("records a failed deletion instead of losing it", async () => {
+    mockNetwork({ "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" } });
+    const { client } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      deleteError: "permission denied",
+      links: [
+        link({ id: 1, platform: "other", url: "https://bit.ly/dupe" }),
+        link({ id: 2, platform: "soundcloud", url: "https://soundcloud.com/lolsnake" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, {
+      ...NO_DELAY,
+      deleteDuplicates: true,
+    });
+    expect(report.deleted).toHaveLength(0);
+    expect(report.skipped[0]).toMatchObject({
+      reason: "delete-failed",
+      error: "permission denied",
     });
   });
 

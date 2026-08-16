@@ -37,9 +37,14 @@
 //     homepage; both are worse than the link we started with, so they are
 //     reported and left alone.
 //   - Merge two links. If resolving a row would move it onto a
-//     (artist_id, platform) pair the artist already has, that's a
-//     unique-constraint collision AND a judgement call about which link
-//     wins. Reported for a human, never guessed at.
+//     (artist_id, platform) pair the artist already has AND the two
+//     point somewhere different, that's a unique-constraint collision
+//     AND a judgement call about which link wins. Reported for a human,
+//     never guessed at.
+//   - Delete anything, unless --delete-duplicates says otherwise. Even
+//     then it removes only rows that resolve to EXACTLY the URL the
+//     artist already holds under the right platform — never a
+//     collision, where the two links genuinely differ.
 //   - Clobber an existing original_url. The pre-resolution URL is saved
 //     there only when the column is empty, so re-runs are idempotent and
 //     a truer original is never lost.
@@ -56,6 +61,7 @@
 //
 //   npm run resolve-link-redirects -- --dry-run         # report only, no writes
 //   npm run resolve-link-redirects                      # rewrite live rows
+//   npm run resolve-link-redirects -- --delete-duplicates  # also drop redundant copies
 //   npm run resolve-link-redirects -- --host=goo.gl     # one host only
 //   npm run resolve-link-redirects -- --artist=<uuid>   # one artist
 //   npm run resolve-link-redirects -- --ids=12,34       # specific artist_links rows
@@ -92,6 +98,10 @@ const DEBUG = args.includes("--debug");
 // Both spellings: --dry-run reads better here, DRY_RUN=1 is the convention
 // every other script in this folder uses.
 const DRY_RUN = args.includes("--dry-run") || process.env.DRY_RUN === "1";
+// Removes rows that resolve to exactly what the artist already holds under the
+// right platform. Opt-in because everything else here rewrites rather than
+// removes, and that difference should be visible in the command you typed.
+const DELETE_DUPLICATES = args.includes("--delete-duplicates");
 
 const valueArg = (name) => {
   const found = args.find((a) => a.startsWith(`--${name}=`));
@@ -216,7 +226,11 @@ async function writeReportCsv(outcomes) {
       [
         // In a dry run nothing was written, so say so rather than claiming
         // rows were updated.
-        o.status === "updated" && DRY_RUN ? "would-update" : o.status,
+        DRY_RUN && o.status === "updated"
+          ? "would-update"
+          : DRY_RUN && o.status === "deleted"
+            ? "would-delete"
+            : o.status,
         o.reason ?? "",
         nameById.get(o.artistId) ?? "",
         `${SITE_URL}/artist/${o.artistId}/edit`,
@@ -277,12 +291,18 @@ async function main() {
     host: HOST ?? undefined,
     limit: LIMIT ?? undefined,
     delayMs: DELAY_MS,
+    deleteDuplicates: DELETE_DUPLICATES,
     onProgress: (o) => {
       outcomes.push(o);
       if (o.status === "updated") {
         console.log(`${DRY_RUN ? "would update" : "updated"} #${o.id}  ${o.platform} -> ${o.newPlatform}`);
         console.log(`    ${o.url}`);
         console.log(` -> ${o.newUrl}${o.newHandle ? `   handle=${o.newHandle}` : ""}`);
+      } else if (o.status === "deleted") {
+        // Always logged, never hidden behind --debug: a deletion is the one
+        // thing here that removes data, so it should be visible by default.
+        console.log(`${DRY_RUN ? "would delete" : "deleted"} #${o.id}  ${o.platform}  ${o.url}`);
+        console.log(`    redundant: #${o.conflictLinkId} already holds ${o.conflictUrl}`);
       } else if (DEBUG) {
         console.log(`skipped #${o.id}  ${o.reason}  ${o.url}`);
         if (o.destination) console.log(`    saw ${o.destination} [${o.finalStatus ?? "?"}]`);
@@ -299,6 +319,9 @@ async function main() {
   console.log("\n" + "-".repeat(60));
   console.log(`${label("Rows examined (resolvable host)")}${report.examined}`);
   console.log(`${label(DRY_RUN ? "Would rewrite" : "Rewritten")}${report.updated.length}`);
+  if (DELETE_DUPLICATES) {
+    console.log(`${label(DRY_RUN ? "Would delete as redundant" : "Deleted as redundant")}${report.deleted.length}`);
+  }
   console.log(`${label("Left alone")}${report.skipped.length}`);
 
   if (report.skipped.length > 0) {
@@ -328,7 +351,8 @@ async function main() {
   if (duplicates.length > 0) {
     console.log(
       `\n${duplicates.length} row(s) resolve to a URL the artist already has under the right ` +
-        `platform — redundant copies, safe to delete once you've eyeballed them in the CSV.`
+        `platform — redundant copies. Check them in the CSV, then re-run with ` +
+        `--delete-duplicates to remove them.`
     );
   }
 
