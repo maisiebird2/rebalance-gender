@@ -4,13 +4,19 @@ One shared library for "this URL's true target is only knowable over the
 network", called from three places: the form save paths, the harvested-link
 promoter (2d), and a new backfill over `artist_links`.
 
-Status: **steps 1–6 of 7 done.** The backfill has now been **run for real
-against production** — 28 rows in `artist_links` rewritten on 2026-08-16, with
-idempotency and every row verified afterwards (see "The backfill run" below).
+Status: **all 7 steps done.** The backfill has been **run for real against
+production** — 28 rows in `artist_links` rewritten and 3 redundant rows removed
+on 2026-08-16, with idempotency and every row verified afterwards (see "The
+backfill run" below), and the work is documented in `PIPELINE.md`.
+
 `artist_harvested_links` is still untouched: 2d has only ever been dry-run, and
 running it is a separate decision from this work — see the open questions, since
-that run also reported a very large unpromoted backlog. Only step 7, the
-`PIPELINE.md` write-up, remains. Branch `resolve-url-redirects`,
+that run also reported a very large unpromoted backlog.
+
+This document is the **history**: why each decision was made, what the live
+probing found, and which of the original assumptions turned out to be wrong.
+`PIPELINE.md` is the operational reference — go there for the host table and
+how to run things. Branch `resolve-url-redirects`,
 rebased onto `origin/main` at `3f9f11b` after the repo reorganisation (PR #86)
 moved this document from `scripts/` to `documentation/`.
 
@@ -575,8 +581,14 @@ the corrected URL. No bios, images, or genres are touched.
    boundary is the real risk here), pages render 200 at runtime, 397 tests,
    tsc and eslint clean.
 6. ~~Run the backfill for real.~~ **Done — 2026-08-16.** See below.
-7. Document in `PIPELINE.md` — the tier table is the part future-me will look
-   for.
+7. ~~Document in `PIPELINE.md` — the tier table is the part future-me will look
+   for.~~ **Done.** A "URL resolution — shortened and share links" section at
+   the end of Phase 2, carrying the full tier table (including the Tier C
+   never-resolve list and why each is excluded), the three triggers, the
+   backfill's flags, and the rules that apply everywhere. Cross-referenced from
+   2d, from the website entry-point section, and from the utility-script list.
+   This plan stays as the *history* — why each decision was made, and what the
+   dry runs found; `PIPELINE.md` is the operational reference.
 
 Steps 1–2 are pure addition and can land without behaviour change. Every step
 after 3 is independently revertible.

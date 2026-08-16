@@ -41,7 +41,7 @@ flowchart TD
         P2A["2a · SoundCloud sync<br/>sync-soundcloud.mjs<br/>bio + image + staged links"]
         P2B["2b · Bandcamp sync<br/>sync-bandcamp.mjs<br/>discography + bio + image<br/>+ staged links + genres"]
         P2C["2c · Direct-link harvesters<br/>sync-discogs.mjs · sync-linktree.mjs<br/>links + bio + image"]
-        P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs"]
+        P2D["2d · Promote staged links<br/>integrate-harvested-links.mjs<br/>resolves shorteners before promoting"]
         P2A -->|"stage links"| P2D
         P2B -->|"stage links"| P2D
         P2C -->|"stage links"| P2D
@@ -681,6 +681,15 @@ the live `artist_links` table. One surviving link per
 already exists, the script flags any discrepancy for review but
 does not overwrite.
 
+Before any of that, staged URLs whose real target is only knowable
+over the network — `on.soundcloud.com` share links, `bit.ly`,
+`soundcloud.app.goo.gl` and friends — are followed to their
+destination and rewritten, so a shortener is never promoted as if it
+were a profile URL. That step is shared with the website save paths
+and a backfill script; see **URL resolution** below for the host
+table and the rules. `raw_url` keeps the link exactly as scraped;
+only `parsed_url` carries the destination.
+
 Staged rows whose `parsed_platform` isn't a key in the `platforms`
 table are skipped (left in staging, reported in the run summary)
 until the key is added via the admin settings page — then a re-run
@@ -705,6 +714,142 @@ npm run integrate-harvested-links -- --approved   # directory artists only
 (The former 2e/2f one-off cleanup passes — `fix-http-https-mismatches.mjs`
 and `clean-bandcamp-urls.mjs` — have been retired from the pipeline; see
 "Legacy scripts".)
+
+---
+
+## URL resolution — shortened and share links
+
+Some links can't be canonicalized by string manipulation at all: their
+path is an opaque id and the only way to learn where they point is to
+follow the redirect. SoundCloud's mobile share sheet hands out
+`on.soundcloud.com/8KP9u6WaRSeo1ycHww`; a Linktree page lists
+`soundcloud.app.goo.gl/N1oiE`; a bio carries a `bit.ly`.
+
+This is **one shared implementation with three triggers**, deliberately:
+the codebase previously had two divergent copies that disagreed on
+timeout, on whether the query string survived, and on whether the
+destination was checked at all. Between them they covered two hosts,
+while a census of all live and staged links found fourteen.
+
+| | Where | When |
+|---|---|---|
+| **Website saves** | `scheduleLinkResolution` → `after()` | After the response, per artist |
+| **Pipeline 2d** | `integrate-harvested-links.mjs` | Before promoting staged rows |
+| **Backfill** | `resolve-link-redirects.mjs` | On demand, over `artist_links` |
+
+The code lives in `src/`, not `scripts/lib/`, because the website needs
+it too:
+
+- **`src/lib/resolve-url-redirects.ts`** — the network core and the host
+  table. Answers only "where does this point"; it never canonicalizes,
+  which stays with `classify-platform-url.ts` and `profile-links.ts`.
+  Never throws: every failure returns the original URL, so a caller can
+  always store the result unguarded.
+- **`src/lib/resolve-artist-links.ts`** — row policy for `artist_links`.
+  Resolve, reclassify, canonicalize, recompute the handle, preserve the
+  pre-resolution URL in `original_url` (only when empty, so re-runs are
+  idempotent).
+- **`src/lib/schedule-link-resolution.ts`** — the `after()` wrapper.
+  Separate module so `scripts/` can import the policy without dragging
+  in `next/server`.
+
+### The host table
+
+Hosts are tiered, and the tier decides how much a redirect is trusted.
+**This distinction is the whole design**, so change it carefully: every
+host below was probed live, and "follow the redirect, keep what comes
+back" turned out to be wrong for more than half of them.
+
+**Tier A — resolve, then require a believable destination.** The target
+platform is known up front, so anything else is treated as a failure and
+the original link is kept.
+
+| Host | Must land on |
+|---|---|
+| `on.soundcloud.com` | `soundcloud.com` |
+| `soundcloud.app.goo.gl` | `soundcloud.com` |
+| `fb.me` | `facebook.com` |
+| `spotify.link` | `open.spotify.com` |
+| `vm.tiktok.com` | `tiktok.com/@handle` |
+
+`spotify.link` and `vm.tiktok.com` currently **always** fail that check —
+the first bounces to a Branch deep link (`spotify.app.link/…`), the
+second to the bot-blocked TikTok homepage (`tiktok.com/?_r=1`). Both are
+worse than the link we started with. They stay listed on purpose: the
+validation is what makes them safe to attempt, and if either service
+starts answering bots properly their rows resolve with no code change.
+
+**Tier B — generic shorteners.** The destination is unknowable by
+nature, so whatever comes back is reclassified by domain:
+`bit.ly`, `goo.gl`, `tinyurl.com`, `shorturl.at`, `cutt.ly`, `ow.ly`,
+`rb.gy`, `buff.ly`.
+
+**Tier C — deliberately never resolved.** Listed in code as
+`NOT_RESOLVED_HOSTS` with a reason each, so nobody re-adds them thinking
+they were an oversight:
+
+- `lnk.to`, `ffm.to`, `smarturl.it`, `hyperurl.co` — music smart-links.
+  They answer 200 at their own URL and fan out to many stores via JS;
+  there is no single real target.
+- `youtu.be` — deterministic, so no network call is warranted, and these
+  are *video* links rather than channels.
+- `maps.app.goo.gl` — a venue pin, not an artist link. This is why host
+  matching is **exact**: it must not be confused with
+  `soundcloud.app.goo.gl` or with `goo.gl`.
+
+### Rules that apply everywhere
+
+- **A dead destination is not an improvement.** A shortener can resolve
+  perfectly to a profile that 404s; those rows are reported and left
+  alone rather than overwritten.
+- **`"other"` never overrides a stored platform.** It is the
+  classifier's fallback ("no rule matched"), not a finding — treating it
+  as one would downgrade the keys that live outside the shared domain
+  table (`homepage`, `djanes`, `1001tracklists`, `hoer`).
+- **Resolution reclassifies.** A `soundcloud.app.goo.gl` row is filed
+  under `other` *because* classification ran on the shortener's own
+  hostname; resolution is the moment that becomes knowable, so platform
+  and handle are corrected too, not just the URL.
+- **Nothing merges two links.** If a resolved row would land on an
+  `(artist_id, platform)` pair the artist already holds, that is
+  reported, never guessed at — see `--delete-duplicates` below for the
+  one exception.
+
+### `resolve-link-redirects.mjs` — the backfill
+
+Walks `artist_links`, resolves what it can, and writes a CSV of every
+row it examined to the output folder (see `OUTPUT-FILE-LOCATION.md`).
+
+```bash
+npm run resolve-link-redirects -- --dry-run            # report only
+npm run resolve-link-redirects                         # rewrite live rows
+npm run resolve-link-redirects -- --delete-duplicates  # also drop redundant copies
+npm run resolve-link-redirects -- --host=goo.gl        # one host only
+npm run resolve-link-redirects -- --artist=<uuid>      # one artist
+npm run resolve-link-redirects -- --ids=12,34          # specific rows
+```
+
+**There is no queue table**, and that is the point: the set of rows
+needing resolution is exactly "rows whose host is in the tier table",
+which is derivable from the URL itself. This scan *is* the queue and
+this script *is* the drain. So a website save whose `after()` callback
+never ran — cold start, deploy mid-request — leaves a row the next run
+picks up, with no bookkeeping to fall out of sync; and adding a host to
+the tier table re-enqueues all of history for free.
+
+`--delete-duplicates` removes only rows whose resolved URL is *exactly*
+what the artist already holds under the right platform (an unresolved
+shortener under `other`, duplicating a link already shown on the public
+page). It never touches a genuine collision, where the two links differ
+and a person has to choose. Off by default here and in
+`resolveArtistLinks`, so the website save paths never delete anything.
+
+A run that resolves nothing is the steady state, not a failure: rows
+that can't be resolved (dead destinations, validation failures,
+smart-links) are reported on **every** future run by design.
+
+Ran against production 2026-08-16: 28 rows rewritten, 3 redundant rows
+removed, 24 left alone. Full history in `URL-RESOLUTION-PLAN.md`.
 
 ---
 
@@ -1514,6 +1659,17 @@ Not part of the pipeline; run manually when debugging.
   ```bash
   npm run update-artist-count
   ```
+
+- **`resolve-link-redirects.mjs`** — follows shortened / share URLs in
+  `artist_links` to their real destination and rewrites the rows. Safe
+  to re-run (a resolved URL is never itself resolvable), writes a CSV of
+  every row examined, and doubles as the drain for the website's
+  `after()` resolution. Documented in full under **URL resolution** in
+  Phase 2.
+
+  ```bash
+  npm run resolve-link-redirects -- --dry-run
+  ```
 - **`backfill-resolved-soundcloud-sync.mjs`** — one-off migration
   helper, written 2026-07-09 when the old 2a (`enrich-soundcloud.mjs`)
   + 2b (`harvest-soundcloud-links-and-bio.mjs`) pair merged into
@@ -1684,6 +1840,22 @@ wholesale (delete + insert), plus links and core fields, and
 auto-runs image enrichment when new image-capable links are added.
 `artist_aliases` (alternate names) exists only in this flow — no
 pipeline script or submit form touches it.
+
+### Link resolution on save
+
+All four paths that write `artist_links` — `/api/submit`, the edit
+form, applying a revision, and the admin missing-links tool — store the
+URL canonicalized by string rules only, then schedule the network step
+to run *after* the response via `scheduleLinkResolution`. A shortener or
+share link therefore tidies itself a beat later; the page rendered
+immediately after a save still shows the unresolved URL, which is
+accepted rather than worked around. See **URL resolution** in Phase 2.
+
+Duplicate detection (`src/lib/submission-helpers.ts`) is the one caller
+that still resolves *inline*, because it has to know where a submitted
+link really points before it can decide whether the artist already
+exists. It keeps a short timeout so a slow shortener can't stall a
+submission.
 
 ### Reference and reputation tables
 
