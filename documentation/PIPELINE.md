@@ -1761,6 +1761,32 @@ Not part of the pipeline; run manually when debugging.
   node scripts/backfill-resolved-soundcloud-enrich.mjs --after=<artist_id>  # resume after this artist_id (printed on a --limit run)
   ```
 
+- **`export-discogs-label.mjs`** — a label's Discogs discography as a
+  CSV, for prospecting a roster before anything reaches the database.
+  Database-free: it reads only the Discogs API and writes one row per
+  (release, artist) pair — `artist_name`, `artist_url`,
+  `release_title`, `release_url`, `catalog_number`, `year` — into the
+  output folder, so deduping on `artist_url` gives the label's roster.
+
+  The label listing (`GET /labels/{id}/releases`) carries a display
+  string for the artist and no id, so the artist URLs cost one
+  `GET /releases/{id}` per release (~1.1s each under the same
+  throttle `sync-discogs.mjs` uses). `--fast` skips that pass and
+  leaves `artist_url` blank. A release credited to "Various" is
+  expanded to its tracklist's artists from the same payload, since the
+  compilation row itself names no one; `--no-expand-various` keeps it.
+
+  Note that the label listing is what discogs.com's label page shows,
+  which is broader than "released by this label" — mix CDs that merely
+  credit the label come along too. `--labels-only` keeps just the
+  releases whose own label credits name this label.
+
+  ```bash
+  node scripts/export-discogs-label.mjs https://www.discogs.com/label/843-Hardgroove
+  node scripts/export-discogs-label.mjs 843 --labels-only
+  node scripts/export-discogs-label.mjs 843 --limit=10 --out=hardgroove.csv
+  ```
+
 ---
 
 ## Shared libraries (`scripts/lib/`)

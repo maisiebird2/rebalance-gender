@@ -53,6 +53,7 @@
     "export-pending-hoer-artists": "tsx scripts/export-pending-hoer-artists.mjs",
     "export-hoer-sc-followees": "tsx scripts/export-hoer-sc-followees.mjs",
     "export-lastfm-links": "tsx scripts/export-lastfm-links.mjs",
+    "export-discogs-label": "node scripts/export-discogs-label.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
