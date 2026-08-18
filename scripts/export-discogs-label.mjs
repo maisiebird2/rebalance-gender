@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ============================================================
 // export-discogs-label.mjs — one label's Discogs discography as a CSV,
-// with the artist behind every release.
+// with the artist behind every release and whether we already hold them.
 //
 // Reads the official Discogs API and writes one row per
 // (release, artist) pair:
@@ -15,18 +15,35 @@
 //   catalog_number   — catno as the label listing gives it
 //   year             — release year, blank when Discogs has none (it
 //                      stores "unknown" as 0)
+//   db_artist_name   — our artists.name for the artist this row was
+//   db_artist_id     — matched to, and its UUID. BLANK when nothing
+//                      matched — see below.
+//   db_match         — which step matched: 'link', 'name', or one of
+//                      'link_ambiguous' / 'name_ambiguous'
 //
 // A release with several credited artists produces several rows, which
 // is what makes the sheet useful as an artist list: dedupe on
-// artist_url and you have the label's roster.
+// artist_url and you have the label's roster, with the artists we don't
+// have yet showing as blank db_ columns.
+//
+// The two matching steps live in scripts/lib/discogs-artist-match.mjs:
+// first the artist's Discogs URL against the platform='discogs' rows in
+// artist_links (compared by numeric artist id, since the stored URLs
+// aren't normalized), then — only for what that missed — the Discogs
+// name normalized exactly the way the artists.name_search generated
+// column normalizes ours. Where more than one live artist answers,
+// db_artist_name and db_artist_id stay BLANK and db_match records the
+// ambiguity; the run prints those so a human can settle them. Pass
+// --no-db to skip matching entirely and leave all three columns blank.
 //
 // Two API calls per release-list page, then ONE call per release. The
 // label listing (GET /labels/{id}/releases) carries only a display
 // string for the artist ("Ben Sims & Vincent D*") and no artist id, so
-// the artist URLs have to come from the release resource itself. At the
-// authenticated rate limit that is ~1.1s per release; a 140-release
-// label takes about three minutes. --fast skips that pass when the
-// artist names alone will do.
+// the artist URLs — and with them step 1 of the matching — have to come
+// from the release resource itself. At the authenticated rate limit
+// that is ~1.1s per release; a 140-release label takes about three
+// minutes. --fast skips that pass when the artist names alone will do
+// (matching then falls back to step 2 for everyone).
 //
 // Compilations: a release credited to "Various" names no one, so by
 // default the tracklist's per-track artists are emitted in its place
@@ -49,23 +66,23 @@
 //   node scripts/export-discogs-label.mjs 843 --labels-only
 //   node scripts/export-discogs-label.mjs 843 --limit=10 --out=hardgroove.csv
 //   node scripts/export-discogs-label.mjs 843 --fast     # no artist URLs
+//   node scripts/export-discogs-label.mjs 843 --no-db    # no DB matching
 //
 // The CSV lands in the shared output folder (<repo>/../output files) —
-// see documentation/OUTPUT-FILE-LOCATION.md. This script never touches
-// the database.
+// see documentation/OUTPUT-FILE-LOCATION.md. This script only ever
+// READS the database.
 //
-// Requires .env.local: DISCOGS_TOKEN.
+// Requires .env.local: DISCOGS_TOKEN, plus NEXT_PUBLIC_SUPABASE_URL and
+// SUPABASE_SECRET_KEY unless --no-db.
 // ============================================================
 
 // FIRST import: registers the HTTP/1.1-only dispatcher process-wide
 // before anything else can fetch — see that module for why.
 import "./lib/http-dispatcher.mjs";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
+import { matchDiscogsArtists } from "./lib/discogs-artist-match.mjs";
 import { outputPath } from "./lib/output-path.mjs";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ------------------------------------------------------------
 // CLI args
@@ -78,6 +95,7 @@ function argValue(name, fallback = null) {
 const FAST = args.includes("--fast");
 const LABELS_ONLY = args.includes("--labels-only");
 const EXPAND_VARIOUS = !args.includes("--no-expand-various");
+const MATCH_DB = !args.includes("--no-db");
 const limitArg = argValue("limit");
 const LIMIT = limitArg ? parseInt(limitArg, 10) : null;
 const OUT_ARG = argValue("out");
@@ -91,34 +109,13 @@ function usage(message) {
   console.error("  --fast                skip the per-release call: no artist URLs, one row per release");
   console.error("  --labels-only         drop releases whose own label credits don't name this label");
   console.error("  --no-expand-various   keep 'Various' instead of listing the tracklist's artists");
+  console.error("  --no-db               skip the database matching; db_ columns stay blank");
   process.exit(1);
 }
 
 if (!TARGET) usage("Missing the label to export.");
 if (FAST && LABELS_ONLY) usage("--fast and --labels-only conflict: the label check needs the per-release call.");
 
-// ------------------------------------------------------------
-// Load .env.local (same shape the other scripts use)
-// ------------------------------------------------------------
-function loadEnvLocal() {
-  const envPath = path.join(__dirname, "..", ".env.local");
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, "utf-8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
 loadEnvLocal();
 
 const DISCOGS_TOKEN = process.env.DISCOGS_TOKEN;
@@ -190,6 +187,10 @@ function labelIdFromArg(raw) {
 const VARIOUS_ID = 194; // Discogs' catch-all "Various" artist
 
 const artistUrl = (id) => (id ? `https://www.discogs.com/artist/${id}` : "");
+
+/** Stable identifier for one Discogs artist across the releases it appears on. */
+const artistKey = (artist) =>
+  artist.id ? `id:${artist.id}` : `name:${artist.name.toLowerCase()}`;
 
 /** Public page for a release, from the detail payload or its id. */
 function releaseUrl(detail, listing) {
@@ -299,8 +300,8 @@ async function main() {
   console.log(`Releases listed: ${listings.length}${LIMIT ? ` (taking ${selected.length})` : ""}`);
 
   // ── 2. One call per release, for the artist ids ────────────
-  const rows = [];
-  const artistsSeen = new Set();
+  const entries = []; // { listing, detail, artists }
+  const distinctArtists = new Map(); // key -> { key, name, discogsId }
   let failed = 0;
   let dropped = 0;
 
@@ -326,10 +327,31 @@ async function main() {
       continue;
     }
 
+    const artists = artistsForRelease(listing, detail);
+    for (const artist of artists) {
+      const key = artistKey(artist);
+      if (!distinctArtists.has(key)) {
+        distinctArtists.set(key, { key, name: artist.name, discogsId: artist.id });
+      }
+    }
+    entries.push({ listing, detail, artists });
+  }
+
+  // ── 3. Match the artists against the database ──────────────
+  let matches = new Map();
+  if (MATCH_DB && distinctArtists.size) {
+    console.log(`\nMatching ${distinctArtists.size} artists against the database...`);
+    const fetchAll = makeFetchAll(createSupabase());
+    matches = await matchDiscogsArtists({ fetchAll, artists: [...distinctArtists.values()] });
+  }
+
+  // ── 4. Write the CSV ───────────────────────────────────────
+  const rows = [];
+  for (const { listing, detail, artists } of entries) {
     const url = releaseUrl(detail, listing);
     const year = listing.year || detail?.year || "";
-    for (const artist of artistsForRelease(listing, detail)) {
-      artistsSeen.add(artist.id ? `id:${artist.id}` : `name:${artist.name.toLowerCase()}`);
+    for (const artist of artists) {
+      const match = matches.get(artistKey(artist));
       rows.push([
         artist.name,
         artistUrl(artist.id),
@@ -337,11 +359,13 @@ async function main() {
         url,
         listing.catno ?? "",
         year,
+        match?.name ?? "",
+        match?.id ?? "",
+        match?.method ?? "",
       ]);
     }
   }
 
-  // ── 3. Write the CSV ───────────────────────────────────────
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
   const out = OUT_ARG ?? `discogs-label-${slugify(labelName)}-${stamp}.csv`;
   const header = [
@@ -351,17 +375,44 @@ async function main() {
     "release_url",
     "catalog_number",
     "year",
+    "db_artist_name",
+    "db_artist_id",
+    "db_match",
   ];
   const csv =
     [header.join(",")].concat(rows.map((r) => r.map(csvCell).join(","))).join("\n") + "\n";
   const abs = outputPath(out);
   fs.writeFileSync(abs, csv);
 
+  // ── 5. What the run found ──────────────────────────────────
   console.log(`\nRows: ${rows.length}`);
-  console.log(`Distinct artists: ${artistsSeen.size}`);
+  console.log(`Distinct artists: ${distinctArtists.size}`);
   if (dropped) console.log(`Dropped (label not credited on the release): ${dropped}`);
   if (failed) console.log(`Releases whose detail call failed (name only, no URL): ${failed}`);
   if (FAST) console.log("--fast: artist_url is blank for every row.");
+
+  if (MATCH_DB) {
+    const tally = (method) =>
+      [...distinctArtists.keys()].filter((k) => (matches.get(k)?.method ?? null) === method).length;
+    console.log(`\nIn the database:`);
+    console.log(`  matched on their Discogs link: ${tally("link")}`);
+    console.log(`  matched on name only:          ${tally("name")}`);
+    console.log(`  ambiguous (left blank):        ${tally("link_ambiguous") + tally("name_ambiguous")}`);
+    console.log(`  not found:                     ${tally(null)}`);
+
+    const ambiguous = [...distinctArtists.values()].filter((a) =>
+      (matches.get(a.key)?.method ?? "").endsWith("_ambiguous")
+    );
+    for (const artist of ambiguous) {
+      const candidates = matches.get(artist.key).candidates;
+      console.log(
+        `  ? ${artist.name} — ${candidates.length} live artists: ${candidates
+          .map((c) => `${c.name} (${c.id})`)
+          .join(", ")}`
+      );
+    }
+  }
+
   console.log(`\nWrote ${abs}`);
 }
 
