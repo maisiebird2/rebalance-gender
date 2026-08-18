@@ -1761,6 +1761,57 @@ Not part of the pipeline; run manually when debugging.
   node scripts/backfill-resolved-soundcloud-enrich.mjs --after=<artist_id>  # resume after this artist_id (printed on a --limit run)
   ```
 
+- **`export-discogs-label.mjs`** — a label's Discogs discography as a
+  CSV, for prospecting a roster against what we already hold. Read-only
+  against the database. Writes one row per (release, artist) pair —
+  `artist_name`, `artist_url`, `release_title`, `release_url`,
+  `catalog_number`, `year`, then `db_artist_name`, `db_artist_id`,
+  `db_match` — into the output folder, so deduping on `artist_url` gives
+  the label's roster with the artists we don't have yet showing as blank
+  `db_` columns.
+
+  The matching is two steps, in `scripts/lib/discogs-artist-match.mjs`:
+
+  1. **link** — the artist's Discogs URL against the `platform='discogs'`
+     rows in `artist_links`, compared on the numeric artist id parsed out
+     of both sides. The stored URLs aren't normalized (`/artist/21748`,
+     `/artist/5119514-Amelie-Lens`, `/fr/artist/10587874-Audrey-Danza`),
+     and ~1,700 of them aren't artist URLs at all, so a string compare
+     would be wrong in both directions. `not_found` rows are skipped —
+     those record "there is no Discogs page for this artist".
+  2. **name** — for whatever step 1 missed, the Discogs name normalized
+     through `normalizeName()` (`scripts/lib/hoer-resolve.mjs`) against
+     `artists.name_search`. That function mirrors the generated column's
+     expression character-for-character, so this is equality on the DB's
+     own key, not a fuzzy match.
+
+  Where more than one live artist answers, `db_artist_name` and
+  `db_artist_id` stay **blank**, `db_match` records `link_ambiguous` /
+  `name_ambiguous`, and the run prints the candidates — ~5,000
+  `name_search` keys are shared by more than one live artist, so picking
+  one would silently credit the wrong person. Soft-deleted artists are
+  invisible to both steps. `--no-db` skips matching entirely.
+
+  The label listing carries only a display string for the artist and no
+  id, so the artist URLs — and with them step 1 — cost one
+  `GET /releases/{id}` per release (~1.1s each under the same throttle
+  `sync-discogs.mjs` uses). `--fast` skips that pass, leaving
+  `artist_url` blank and every artist to step 2. A release credited to
+  "Various" is expanded to its tracklist's artists from the same
+  payload, since the compilation row itself names no one;
+  `--no-expand-various` keeps it.
+
+  Note that the label listing is what discogs.com's label page shows,
+  which is broader than "released by this label" — mix CDs that merely
+  credit the label come along too. `--labels-only` keeps just the
+  releases whose own label credits name this label.
+
+  ```bash
+  node scripts/export-discogs-label.mjs https://www.discogs.com/label/843-Hardgroove
+  node scripts/export-discogs-label.mjs 843 --labels-only
+  node scripts/export-discogs-label.mjs 843 --limit=10 --out=hardgroove.csv
+  ```
+
 ---
 
 ## Shared libraries (`scripts/lib/`)
@@ -1785,6 +1836,14 @@ Not part of the pipeline; run manually when debugging.
 - **`scoring.py`** — signal loading, Supabase client, pair
   enumeration, and Jaccard scoring for the Python scoring pipeline
   (see `SCORING.md`).
+- **`discogs-artist-match.mjs`** — matches Discogs artists against the
+  `artists` table in two steps: their Discogs URL against
+  `artist_links` (by numeric artist id, since the stored URLs aren't
+  normalized), then the Discogs name against `artists.name_search` via
+  `normalizeName()`. Several live artists answering is reported as an
+  ambiguity with its candidates, never resolved by picking one. Used by
+  `export-discogs-label.mjs`; unit-tested in
+  `discogs-artist-match.test.mjs`.
 
 ---
 
