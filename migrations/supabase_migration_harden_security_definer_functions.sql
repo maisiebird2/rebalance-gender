@@ -26,10 +26,20 @@
 --   nearest 100 for public display (see supabase_migration_site_stats.sql),
 --   while exact_int sits beside it holding the precise figure.
 --
---   Note this migration does NOT change who can read site_stats. If the exact
---   count is meant to stay private, exact_int needs a column grant of its own
---   — the artists table pattern, see supabase_migration_artists_private_
---   columns.sql. Flagged, not assumed.
+--   This migration does NOT change who can read site_stats, and deliberately
+--   so — exact_int stays readable by anon. Decided 2026-08-01: the exact
+--   directory count is not a secret, so the rounding is presentational, not
+--   protective. Recorded here because the gap between a floored value_int and
+--   an exact_int sitting beside it otherwise reads as an oversight, and the
+--   next person to notice it should know the question was asked and answered.
+--
+--   The DoS half of this finding is what the revoke below actually addresses,
+--   and it stands regardless: the objection to an anonymous caller is the
+--   repeated full-table scan, not what the resulting number reveals.
+--
+--   If the call is ever revisited, exact_int needs a column grant of its own —
+--   the artists table pattern, see supabase_migration_artists_private_
+--   columns.sql.
 --
 -- ── 2. upsert_submitter_email(text) had no pinned search_path ───────────────
 --
