@@ -2,9 +2,19 @@
 
 import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist, checkDuplicateTarget } from "./actions";
-import type { ArtistWithRelations, LinkPlatform, ArtistStatus, ArtistAlias, ArtistLabel, Platform } from "@/lib/types";
+import type {
+  ArtistWithRelations,
+  LinkPlatform,
+  ArtistStatus,
+  ArtistAlias,
+  OrganisationFormRow,
+  OrganisationSummary,
+  Platform,
+} from "@/lib/types";
 import TextList from "@/components/form/TextList";
 import GenreList from "@/components/form/GenreList";
+import OrganisationList from "@/components/form/OrganisationList";
+import { initialOrganisationRows } from "@/lib/organisations";
 import LocationList, { type LocationRow } from "@/components/form/LocationList";
 import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
 import Field from "@/components/form/Field";
@@ -15,6 +25,7 @@ import { STATUSES, statusLabel } from "@/lib/artist-status";
 interface Props {
   artist: ArtistWithRelations;
   genreOptions: string[];
+  organisationOptions: OrganisationSummary[];
   /** The full type vocabulary (producer / DJ / vocalist) for the checkboxes. */
   typeOptions: { name: string; label: string }[];
   /** The artist's current MANUAL type slugs, to prefill the checkboxes. */
@@ -31,7 +42,10 @@ type DupCheck =
   | { state: "ok"; id: string; name: string }
   | { state: "error"; message: string };
 
-export default function EditForm({ artist, genreOptions, typeOptions, initialTypes, platforms, duplicateOfName }: Props) {
+export default function EditForm({
+  artist,
+  genreOptions,
+  organisationOptions, typeOptions, initialTypes, platforms, duplicateOfName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -44,8 +58,8 @@ export default function EditForm({ artist, genreOptions, typeOptions, initialTyp
   const [aliasNames, setAliasNames] = useState<string[]>(
     artist.aliases?.length > 0 ? artist.aliases.map((a: ArtistAlias) => a.name) : [""]
   );
-  const [labelList, setLabelList] = useState<string[]>(
-    artist.label_list?.length > 0 ? artist.label_list.map((l: ArtistLabel) => l.name) : [""]
+  const [labelList, setLabelList] = useState<OrganisationFormRow[]>(
+    initialOrganisationRows(artist.organisations, artist.label_list)
   );
   const [genres, setGenres] = useState<string[]>(
     artist.genres?.map((g) => g.name).length > 0 ? artist.genres.map((g) => g.name) : [""]
@@ -140,7 +154,10 @@ export default function EditForm({ artist, genreOptions, typeOptions, initialTyp
     formData.set("genres", JSON.stringify(genres.filter(Boolean)));
     formData.set("types", JSON.stringify(types));
     formData.set("locations", JSON.stringify(locations.filter((l) => l.city || l.country)));
-    formData.set("label_list", JSON.stringify(labelList.filter(Boolean)));
+    formData.set(
+      "organisations",
+      JSON.stringify(labelList.filter((row) => row.name.trim() !== "")),
+    );
     formData.set("aliases", JSON.stringify(aliasNames.filter(Boolean)));
     // Always sent, even when the field is hidden: saveArtist ignores it for
     // any status other than 'duplicate' and clears the stored value.
@@ -196,7 +213,11 @@ export default function EditForm({ artist, genreOptions, typeOptions, initialTyp
       <input type="hidden" name="genres" value={JSON.stringify(genres.filter(Boolean))} />
       <input type="hidden" name="types" value={JSON.stringify(types)} />
       <input type="hidden" name="locations" value={JSON.stringify(locations.filter((l) => l.city || l.country))} />
-      <input type="hidden" name="label_list" value={JSON.stringify(labelList.filter(Boolean))} />
+      <input
+        type="hidden"
+        name="organisations"
+        value={JSON.stringify(labelList.filter((row) => row.name.trim() !== ""))}
+      />
       <input type="hidden" name="aliases" value={JSON.stringify(aliasNames.filter(Boolean))} />
 
       {serverError && (
@@ -322,8 +343,8 @@ export default function EditForm({ artist, genreOptions, typeOptions, initialTyp
       {/* ── Labels / crews ─────────────────────────────────────── */}
       <fieldset className="space-y-3">
         <legend className="text-base font-semibold">Labels / crews</legend>
-        <TextList itemNoun="label" values={labelList} onChange={setLabelList}
-          placeholder="e.g. Ostgut Ton" />
+        <OrganisationList values={labelList} onChange={setLabelList}
+          options={organisationOptions} />
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}

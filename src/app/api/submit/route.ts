@@ -13,6 +13,11 @@ import {
 } from "@/lib/submission-helpers";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { LinkPlatform } from "@/lib/types";
+import {
+  resolveOrganisationInputs,
+  attachOrganisations,
+  promoteArtistLabelsToOrganisations,
+} from "@/lib/organisation-writes";
 
 interface LocationInput {
   city?: string;
@@ -23,6 +28,13 @@ interface SubmitBody {
   name: string;
   pronouns?: string;
   genres?: string[];
+  /**
+   * Labels / crews / clubs as the form now posts them: an `id` when the
+   * typed text matched an approved organisation, just a `name` when it
+   * didn't. `labels` (plain strings) is still accepted for any client
+   * that hasn't been updated.
+   */
+  organisations?: { id?: string | null; name: string }[];
   locations?: LocationInput[];
   labels?: string[];
   aliases?: string[];
@@ -210,12 +222,36 @@ export async function POST(request: NextRequest) {
     await supabase.from("artist_genres").insert({ artist_id: artistId, genre_id: genreId });
   }
 
-  // ── 8. Labels ───────────────────────────────────────────────────────────────
-  const labelNames = (body.labels ?? []).map((l) => l.trim()).filter(Boolean);
+  // ── 8. Labels / organisations ───────────────────────────────────────────────
+  //
+  // A submitter may ATTACH this artist to an organisation that already
+  // exists and is approved, but typing a new name does NOT create one:
+  // `organisations` is a shared namespace with its own public page, and
+  // this request may well be from an unverified email (the artist row
+  // above is 'unverified' in that case). See src/lib/organisation-writes.ts.
+  //
+  // So resolved ids become associations now — the two-sided RLS policy
+  // keeps them invisible until the artist is approved anyway — and
+  // everything else stays flat text in artist_labels until an admin
+  // approves the artist, at which point it is promoted.
+  const inputs = body.organisations ?? (body.labels ?? []).map((name) => ({ name }));
+  const { ids: organisationIds, names: labelNames } = await resolveOrganisationInputs(
+    supabase,
+    inputs,
+  );
+
+  await attachOrganisations(supabase, artistId, organisationIds);
+
   if (labelNames.length > 0) {
     await supabase.from("artist_labels").insert(
       labelNames.map((n) => ({ artist_id: artistId, name: n }))
     );
+  }
+
+  // An admin submission goes straight in as 'approved', so it skips the
+  // moderation step that would otherwise do the promotion. Do it here.
+  if (initialStatus === "approved" && labelNames.length > 0) {
+    await promoteArtistLabelsToOrganisations(supabase, artistId);
   }
 
   // ── 8b. Aliases ─────────────────────────────────────────────────────────────

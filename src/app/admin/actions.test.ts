@@ -70,11 +70,13 @@ import {
  */
 function chain(result: { data?: unknown; error?: unknown }) {
   const builder: any = {};
-  for (const method of ["select", "eq", "order", "limit", "update", "delete"]) {
+  for (const method of ["select", "eq", "in", "is", "order", "limit", "update", "delete"]) {
     builder[method] = vi.fn(() => builder);
   }
   builder.maybeSingle = vi.fn(() => Promise.resolve(result));
-  builder.insert = vi.fn(() => Promise.resolve(result));
+  builder.single = vi.fn(() => Promise.resolve(result));
+  builder.insert = vi.fn(() => builder);
+  builder.upsert = vi.fn(() => Promise.resolve(result));
   builder.then = (onResolve: any, onReject: any) =>
     Promise.resolve(result).then(onResolve, onReject);
   return builder;
@@ -146,9 +148,15 @@ function formData(fields: Record<string, string>) {
   return fd;
 }
 
+// Named chains are returned in order; anything after them gets an empty
+// result. Several actions now do incidental reads a test isn't asserting on
+// — approving an artist promotes their artist_labels rows into
+// organisations, for instance — and those must not fall off the end of the
+// queue and return undefined.
 function mockAdminFrom(...chains: ReturnType<typeof chain>[]) {
   const fromMock = vi.fn();
   for (const c of chains) fromMock.mockReturnValueOnce(c);
+  fromMock.mockReturnValue(chain({ data: [], error: null }));
   (getSupabaseAdminClient as any).mockReturnValue({ from: fromMock });
   return fromMock;
 }

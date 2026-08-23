@@ -6,7 +6,7 @@ import { getArtistById } from "@/lib/queries";
 import { getPlatforms } from "@/lib/platforms";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import RevisionForm from "@/components/RevisionForm";
-import { getGenrePickerOptions } from "@/lib/queries";
+import { getGenrePickerOptions, getOrganisationPickerOptions } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +27,11 @@ export default async function RevisePage({ params }: PageProps) {
   const { id } = await params;
   const admin = getSupabaseAdminClient();
 
-  const [artist, platforms, genreOptions] = await Promise.all([
+  const [artist, platforms, genreOptions, organisationOptions] = await Promise.all([
     getArtistById(id),
     getPlatforms(admin),
     getGenrePickerOptions(),
+    getOrganisationPickerOptions(),
   ]);
 
   if (!artist || artist.directory_status !== "approved") notFound();
@@ -50,7 +51,12 @@ export default async function RevisePage({ params }: PageProps) {
         Spotted something wrong or out of date? Update the fields below and
         we&apos;ll review your suggested changes.
       </p>
-      <RevisionForm artist={artist} genreOptions={genreOptions} platforms={platforms} />
+      <RevisionForm
+        artist={artist}
+        genreOptions={genreOptions}
+        organisationOptions={organisationOptions}
+        platforms={platforms}
+      />
     </div>
   );
 }

@@ -17,6 +17,13 @@ import {
 import { parseArtistIdInput } from "@/lib/duplicate-of";
 import type { DuplicateTargetResult } from "@/lib/duplicate-of";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
+import {
+  DEFAULT_ROLE,
+  attachOrganisations,
+  promoteArtistLabelsToOrganisations,
+  resolveOrganisationInputs,
+  type OrganisationInput,
+} from "@/lib/organisation-writes";
 
 interface LinkInput {
   platform: LinkPlatform;
@@ -112,7 +119,7 @@ export async function saveArtist(
   const directoryStatus = formData.get("directory_status") as ArtistStatus;
   const duplicateOfRaw = ((formData.get("duplicate_of") ?? "") as string).trim();
   const locationsRaw = (formData.get("locations") ?? "[]") as string;
-  const labelListRaw = (formData.get("label_list") ?? "[]") as string;
+  const organisationsRaw = (formData.get("organisations") ?? "[]") as string;
   const aliasesRaw = (formData.get("aliases") ?? "[]") as string;
   const genresRaw = (formData.get("genres") ?? "[]") as string;
   const typesRaw = (formData.get("types") ?? "[]") as string;
@@ -147,11 +154,12 @@ export async function saveArtist(
     return { error: "Invalid links data" };
   }
 
-  let labelNames: string[] = [];
+  let organisationInputs: OrganisationInput[] = [];
   try {
-    labelNames = (JSON.parse(labelListRaw || "[]") as string[]).filter(Boolean);
+    organisationInputs = (JSON.parse(organisationsRaw || "[]") as OrganisationInput[])
+      .filter((row) => (row?.name ?? "").trim() !== "");
   } catch {
-    return { error: "Invalid labels data" };
+    return { error: "Invalid organisations data" };
   }
 
   let aliasNameList: string[] = [];
@@ -224,14 +232,41 @@ export async function saveArtist(
 
   if (artistErr) return { error: `Artist save error: ${artistErr.message}` };
 
-  // ── 5. Replace labels ─────────────────────────────────────────
+  // ── 5. Replace labels / organisations ─────────────────────────
+  //
+  // The form owns the complete `associated` set, so both sides are
+  // replaced: rows that resolved to an approved organisation become
+  // associations, and anything else stays flat text in artist_labels.
+  // Only the 'associated' role is touched — head / resident / A&R are set
+  // on /admin/organisations and must survive an edit here.
+  //
+  // An admin typing a name that isn't an organisation yet gets it created
+  // by the promote call below, because saving from this form is an admin
+  // looking at the row. It is created PENDING, like every other route into
+  // organisations: approving an ARTIST is not the same judgement as
+  // deciding a label is correctly named, typed and located.
+  const { ids: organisationIds, names: labelNames } = await resolveOrganisationInputs(
+    admin,
+    organisationInputs,
+  );
+
   await admin.from("artist_labels").delete().eq("artist_id", artistId);
+  await admin
+    .from("artist_organisations")
+    .delete()
+    .eq("artist_id", artistId)
+    .eq("role_key", DEFAULT_ROLE);
 
   if (labelNames.length > 0) {
     const { error: labErr } = await admin.from("artist_labels").insert(
       labelNames.map((name) => ({ artist_id: artistId, name }))
     );
     if (labErr) return { error: `Labels save error: ${labErr.message}` };
+  }
+
+  await attachOrganisations(admin, artistId, organisationIds);
+  if (labelNames.length > 0) {
+    await promoteArtistLabelsToOrganisations(admin, artistId);
   }
 
   // ── 6. Replace aliases ────────────────────────────────────────

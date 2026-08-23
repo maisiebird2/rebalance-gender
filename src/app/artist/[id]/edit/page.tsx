@@ -7,7 +7,7 @@ import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { getPlatforms } from "@/lib/platforms";
 import EditForm from "./EditForm";
-import { getGenrePickerOptions } from "@/lib/queries";
+import { getGenrePickerOptions, getOrganisationPickerOptions } from "@/lib/queries";
 
 import type {
   ArtistWithRelations,
@@ -20,6 +20,7 @@ import type {
   ArtistAlias,
   ArtistLink,
   ArtistEnrichment,
+  OrganisationRole,
 } from "@/lib/types";
 
 // Always fetch fresh data for admin pages
@@ -50,6 +51,10 @@ const ARTIST_ADMIN_SELECT = `
   artist_type_assignments(source, artist_types(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
+  artist_organisations(
+    role:organisation_roles(key, label, sort_order),
+    organisation:organisations(id, name, status)
+  ),
   aliases:artist_aliases(*),
   links:artist_links(*),
   enrichment:artist_enrichment(*)
@@ -61,6 +66,10 @@ type RawArtistRow = Artist & {
   artist_type_assignments: { source: string; artist_types: ArtistType | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
+  artist_organisations: {
+    role: OrganisationRole | null;
+    organisation: { id: string; name: string; status: string } | null;
+  }[];
   aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
@@ -70,7 +79,16 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
   const genres = (row.artist_genres ?? [])
     .map((ag) => ag.genres)
     .filter((g): g is Genre => Boolean(g));
-  return { ...row, genres } as unknown as ArtistWithRelations;
+  // Unlike the public read path this keeps organisations of EVERY status:
+  // the edit form is admin-only, and an admin editing an artist should see
+  // the pending organisation they are already attached to rather than have
+  // it silently reappear as an unresolved name.
+  const organisations = (row.artist_organisations ?? []).flatMap((ao) =>
+    ao.role && ao.organisation
+      ? [{ organisation: { id: ao.organisation.id, name: ao.organisation.name }, role: ao.role }]
+      : []
+  );
+  return { ...row, genres, organisations } as unknown as ArtistWithRelations;
 }
 
 export default async function ArtistEditPage({ params, searchParams }: PageProps) {
@@ -92,7 +110,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
 
   // ── Load artist (all statuses), selected genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, genreOptions, platforms, { data: typeRows }] =
+  const [{ data, error }, genreOptions, organisationOptions, platforms, { data: typeRows }] =
     await Promise.all([
       admin
         .from("artists")
@@ -100,6 +118,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         .eq("id", id)
         .maybeSingle(),
       getGenrePickerOptions(),
+      getOrganisationPickerOptions(),
       getPlatforms(admin),
       admin.from("artist_types").select("name, label, sort_order").order("sort_order"),
     ]);
@@ -162,6 +181,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
       <EditForm
         artist={artist}
         genreOptions={genreOptions}
+        organisationOptions={organisationOptions}
         typeOptions={typeOptions}
         initialTypes={initialTypes}
         platforms={platforms}

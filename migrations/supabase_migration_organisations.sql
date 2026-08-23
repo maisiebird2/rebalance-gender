@@ -69,9 +69,21 @@
 --   anon/authenticated. Public-facing queries must list columns
 --   explicitly; service-role queries can keep using *.
 --
---   No anon INSERT anywhere here — public submissions create
---   organisations server-side with the service key, as 'pending'
---   (mirrors supabase_migration_artists_revoke_anon_insert.sql).
+--   No anon INSERT anywhere here (mirrors
+--   supabase_migration_artists_revoke_anon_insert.sql).
+--
+--   NOTE, corrected 2026-08-23: this file originally said public
+--   submissions would create organisations server-side with the service
+--   key, as 'pending'. Phase 5 decided against it. A submitter may
+--   ATTACH an artist to an organisation that already exists and is
+--   approved, but a name they type does NOT become a row — it stays in
+--   artist_labels until an ADMIN approves the artist, and is promoted
+--   then. The reasoning: /api/submit writes the artist as 'unverified'
+--   when the email is unconfirmed, so creating organisations there would
+--   let anyone past Turnstile insert into a shared, cross-artist
+--   namespace where whoever types a name first owns its canonical
+--   spelling — and rejected submissions would leave rows behind that
+--   nothing links back to. See src/lib/organisation-writes.ts.
 
 BEGIN;
 

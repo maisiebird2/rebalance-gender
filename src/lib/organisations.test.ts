@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { groupByRole, roleHeading } from "./organisations";
+import {
+  groupByRole,
+  roleHeading,
+  normalisedNameKey,
+  initialOrganisationRows,
+} from "./organisations";
 import type { OrganisationRole } from "./types";
 
 const role = (key: string, sort_order: number, label = key): OrganisationRole => ({
@@ -61,5 +66,66 @@ describe("roleHeading", () => {
       expect(roleHeading(role("a_r", 90, "A&R"), direction)).toBe("A&R");
       expect(roleHeading(role("tour_manager", 130, "tour manager"), direction)).toBe("Tour manager");
     }
+  });
+});
+
+describe("normalisedNameKey", () => {
+  it("collapses case, spaces and punctuation", () => {
+    for (const name of ["Ostgut Ton", "ostgut ton", "Ostgut-Ton", "OSTGUT  TON!"]) {
+      expect(normalisedNameKey(name)).toBe("ostgutton");
+    }
+  });
+  it("strips diacritics the way Postgres unaccent does", () => {
+    expect(normalisedNameKey("Öştgut Ton")).toBe("ostgutton");
+    expect(normalisedNameKey("Brutaż")).toBe("brutaz");
+  });
+  it("keeps digits", () => {
+    expect(normalisedNameKey("3MOON Records")).toBe("3moonrecords");
+  });
+  it("is empty for punctuation-only input", () => {
+    expect(normalisedNameKey("???")).toBe("");
+    expect(normalisedNameKey("")).toBe("");
+  });
+});
+
+describe("initialOrganisationRows", () => {
+  const entry = (id: string, name: string, r = ASSOCIATED) => ({
+    organisation: { id, name },
+    role: r,
+  });
+
+  it("carries an attached organisation's id", () => {
+    expect(initialOrganisationRows([entry("o1", "Ostgut Ton")], [])).toEqual([
+      { id: "o1", name: "Ostgut Ton" },
+    ]);
+  });
+
+  it("includes flat labels that have no organisation yet", () => {
+    expect(initialOrganisationRows([], [{ name: "Trip Records" }])).toEqual([
+      { id: null, name: "Trip Records" },
+    ]);
+  });
+
+  it("shows a name present in both sources once, with its id", () => {
+    // The normal mid-migration state: the organisation exists, and the
+    // artist_labels row is still there for the dual-read fallback.
+    const rows = initialOrganisationRows(
+      [entry("o1", "Ostgut Ton")],
+      [{ name: "ostgut-ton" }],
+    );
+    expect(rows).toEqual([{ id: "o1", name: "Ostgut Ton" }]);
+  });
+
+  it("ignores roles this field doesn't manage", () => {
+    const rows = initialOrganisationRows(
+      [entry("o1", "PAN", { key: "head", label: "head", sort_order: 20 })],
+      [],
+    );
+    expect(rows).toEqual([{ id: null, name: "" }]);
+  });
+
+  it("always returns at least one empty row to type into", () => {
+    expect(initialOrganisationRows([], [])).toEqual([{ id: null, name: "" }]);
+    expect(initialOrganisationRows(undefined, undefined)).toEqual([{ id: null, name: "" }]);
   });
 });

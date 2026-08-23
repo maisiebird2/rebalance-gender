@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { getSupabaseClient, getSupabaseAdminClient } from "./supabase";
 import { pickArtistImage } from "./artist-images";
+import { normalisedNameKey } from "./organisations";
 import type {
   ArtistPage,
   ArtistWithRelations,
@@ -80,16 +81,9 @@ export const PAGE_SIZE = 24;
  * whose name_search is "amo"; if this only stripped spaces, the period in the
  * query would never match the punctuation-free stored key.
  */
-function normalizeSearch(s: string): string {
-  // NFD decomposes e.g. "é" into "e" + combining acute; the first regex
-  // strips all combining diacritical marks (U+0300-U+036F), then the second
-  // removes anything that isn't a lowercase letter or digit.
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
+// The directory search key. Shared with the organisation duplicate check
+// and the admin list filter so the two can never drift apart.
+const normalizeSearch = normalisedNameKey;
 
 // Shared select string: pulls the artist plus all joined relations
 // (pronoun, genres via the artist_genres junction table, locations,
@@ -789,3 +783,39 @@ export async function getOrganisationById(
     artists,
   };
 }
+
+/**
+ * Approved organisations for the submit / revise / edit pickers.
+ *
+ * Only approved, non-merged rows: a pending organisation is one nobody has
+ * looked at yet, and offering stranger-supplied text back to the next
+ * submitter as a suggestion is exactly what the moderation queue exists to
+ * prevent. A submitter whose organisation isn't listed types the name, and it
+ * becomes an organisation when an admin approves the artist.
+ *
+ * Small enough to hand to the form as a prop (55 approved at the time of
+ * writing, ~240 once the backfill queue is worked through), which is how the
+ * genre picker does it too — so there is no autocomplete endpoint to build,
+ * rate-limit or protect.
+ */
+async function computeOrganisationPickerOptions(): Promise<OrganisationSummary[]> {
+  const { data, error } = await getSupabaseClient()
+    .from("organisations")
+    .select("id, name")
+    .eq("status", "approved")
+    .is("duplicate_of", null)
+    .order("name")
+    .limit(1000);
+
+  if (error) {
+    console.error("getOrganisationPickerOptions error:", error);
+    return [];
+  }
+  return (data ?? []) as OrganisationSummary[];
+}
+
+export const getOrganisationPickerOptions = unstable_cache(
+  computeOrganisationPickerOptions,
+  ["organisation-picker-options"],
+  { revalidate: 600, tags: ["organisations"] },
+);

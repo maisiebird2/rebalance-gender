@@ -2,7 +2,13 @@
 
 import { useState, useRef, FormEvent } from "react";
 import { Turnstile } from "@marsidev/react-turnstile";
-import type { LinkPlatform, Platform, ArtistWithRelations } from "@/lib/types";
+import type {
+  ArtistWithRelations,
+  LinkPlatform,
+  OrganisationFormRow,
+  OrganisationSummary,
+  Platform,
+} from "@/lib/types";
 import TextList from "./form/TextList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
@@ -10,16 +16,19 @@ import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
 import Field from "./form/Field";
 import TextArea from "./form/TextArea";
 import { mergeGenreOptions } from "@/lib/genre-options";
+import OrganisationList from "./form/OrganisationList";
+import { initialOrganisationRows } from "@/lib/organisations";
 
 interface Props {
   artist: ArtistWithRelations;
   genreOptions: string[];
+  organisationOptions: OrganisationSummary[];
   platforms: Platform[];
 }
 
 type Status = "idle" | "submitting" | "success" | "needsVerification" | "error";
 
-export default function RevisionForm({ artist, genreOptions, platforms }: Props) {
+export default function RevisionForm({ artist, genreOptions, organisationOptions, platforms }: Props) {
   // Pre-populate with existing artist data
   const [genres, setGenres] = useState<string[]>(
     artist.genres?.length ? artist.genres.map((g) => g.name) : [""]
@@ -29,8 +38,8 @@ export default function RevisionForm({ artist, genreOptions, platforms }: Props)
       ? artist.locations.map((l) => ({ city: l.city ?? "", country: l.country ?? "" }))
       : [{ city: "", country: "" }]
   );
-  const [labelList, setLabelList] = useState<string[]>(
-    artist.label_list?.length ? artist.label_list.map((l) => l.name) : [""]
+  const [labelList, setLabelList] = useState<OrganisationFormRow[]>(
+    initialOrganisationRows(artist.organisations, artist.label_list)
   );
   const [aliasNames, setAliasNames] = useState<string[]>(
     artist.aliases?.length ? artist.aliases.map((a) => a.name) : [""]
@@ -75,7 +84,9 @@ export default function RevisionForm({ artist, genreOptions, platforms }: Props)
       locations: locations.filter((l) => l.city || l.country).length
         ? locations.filter((l) => l.city || l.country)
         : undefined,
-      labels: labelList.filter(Boolean).length ? labelList.filter(Boolean) : undefined,
+      organisations: labelList.some((row) => row.name.trim() !== "")
+        ? labelList.filter((row) => row.name.trim() !== "")
+        : undefined,
       aliases: aliasNames.filter(Boolean).length ? aliasNames.filter(Boolean) : undefined,
       links: Object.keys(links).length ? links : undefined,
     };
@@ -165,8 +176,8 @@ export default function RevisionForm({ artist, genreOptions, platforms }: Props)
 
       <GenreList label="Genres" values={genres} onChange={setGenres} options={mergedGenreOptions} />
 
-      <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
-        placeholder="e.g. Ostgut Ton" />
+      <OrganisationList label="Labels / crews" values={labelList} onChange={setLabelList}
+        options={organisationOptions} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
