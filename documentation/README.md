@@ -33,6 +33,12 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) | Recommendation engine improvements |
 | [RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md](RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md) | Abandoned July sidebar work — **and the unrepaired `artist_similarity_scores` wipe that left recommendations dark in production** |
 
+## Loose ends
+
+| Doc | What it covers |
+|---|---|
+| [MISCELLANEOUS-TASKS.md](MISCELLANEOUS-TASKS.md) | Small jobs with no home of their own — currently the unprotected-uncommitted-work gap in the branch guards |
+
 ## Proposals (not accepted — decisions still open)
 
 | Doc | What it covers |
