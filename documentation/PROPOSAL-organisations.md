@@ -1,10 +1,17 @@
 # Proposal — organisations (record labels, clubs, events) as real entries
 
-> **Status: plan, not yet built.** Written 2026-08-12 from a design
-> discussion. The four shape decisions in [Decisions taken](#decisions-taken)
-> are settled; nothing below has been implemented. Read
-> [Where things stand](#where-things-stand) first — the existing data is small
-> and clean, which is what makes this worth doing now rather than later.
+> **Status: phases 1–3 built 2026-08-23; the migration has not been applied
+> to production yet.** Written 2026-08-12 from a design discussion; the four
+> shape decisions in [Decisions taken](#decisions-taken) are settled. The
+> schema, the backfill and the admin panel now exist in the repo — see
+> [How to run it](#how-to-run-it). Phases 4–6 (read path, public pages,
+> forms, cleanup) are still plan.
+>
+> The counts in [Where things stand](#where-things-stand) are as measured on
+> 2026-08-12 and the data has grown since; a dry run on 2026-08-23 reported
+> **478** `artist_labels` rows, **115** names from the legacy column, **238**
+> distinct organisations and **25** `label_etc` artists. Re-run the dry run
+> for current numbers rather than trusting either set.
 
 ---
 
@@ -251,14 +258,93 @@ drop `artist_labels`, drop `artists.labels`, remove the fallback branch.
 
 | Phase | Ships independently? | Notes |
 |---|---|---|
-| 1 Schema + roles + grants | yes | nothing reads it yet |
-| 2 Backfill | yes | dry-run → review CSV → apply |
-| 3 Admin CRUD + merge + roles panel | yes | types/links/locations get filled in by hand here |
+| 1 Schema + roles + grants | **built** | nothing reads it yet |
+| 2 Backfill | **built** | dry-run → review CSV → apply |
+| 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
 | 4 Read path + organisation pages | yes | dual-read means no coupling to phase 2 finishing |
 | 5 Forms | yes | needs approved organisations to exist |
 | 6 Cleanup | after a release of soak | |
 
-Phases 1–3 are the agreed first pass.
+Phases 1–3 were the agreed first pass and are the ones now in the repo.
+
+---
+
+## How to run it
+
+### 1. Apply the schema
+
+Paste [`supabase_migration_organisations.sql`](../migrations/supabase_migration_organisations.sql)
+into the Supabase SQL editor. It is one transaction and safe to re-run.
+
+It creates all seven tables, seeds both vocabularies, and sets up RLS,
+column grants and the write revokes in the same file — §3's "same
+migration, not a follow-up". Verified against a local PostgreSQL 17.6
+(matching production): `notes` and `select *` are denied to `anon`,
+`name_search` stays filterable, pending organisations are invisible, the
+`artist_organisations` policy hides a row unless *both* sides are approved,
+and a role in use cannot be deleted.
+
+### 2. Backfill
+
+```
+npm run migrate-labels-to-organisations             # dry run
+npm run migrate-labels-to-organisations -- --apply
+```
+
+The dry run works before the migration has been applied — it reports the
+missing table and carries on against an empty target, which is how you find
+out how many organisations you are about to create. `--apply` refuses in
+that state.
+
+Three CSVs land in the output folder either way:
+
+| File | What it is |
+|---|---|
+| `organisations-plan-<stamp>.csv` | one row per organisation: the canonical name, every surface form that collapsed into it, and the artists attached |
+| `organisations-ambiguity-<stamp>.csv` | everything a human has to decide, highest-signal reasons first |
+| `organisations-label-etc-<stamp>.csv` | pass 2's actions on the `label_etc` artists |
+
+The ambiguity reasons, in the order they are reported:
+
+- `pronouns_in_label` — every word is a pronoun; somebody typed the wrong
+  field. The `she/they` row the proposal predicted, plus a `she/her`.
+- `matches_pronoun_row` — matches a row in the `pronouns` table but doesn't
+  read as pronouns. This points the *other* way: production has a pronouns
+  row reading `BØX collectif`, which is an organisation name typed into the
+  pronouns field.
+- `separator_in_name` — a slash or spaced `&`/`+`/`x` that might be two
+  organisations in one field. Not split automatically; `R&S Records` is one
+  name and guessing is worse than asking.
+- `name_collides_with_artist` — an **approved** artist has the same
+  normalised name. Both rows are usually correct (the person and the thing
+  they run) and the reviewer needs to see them side by side.
+- `near_duplicate` — trigram-similar keys that didn't collapse, e.g.
+  `BØX Collectif` / `BØX Collective`.
+- `multiple_surface_forms` — the canonical pick discarded a spelling
+  somebody typed; shows what was dropped.
+- `name_matches_unreviewed_artist` — matches an `sc_followee` / `obscure`
+  import rather than a listed artist. Usually the organisation is already in
+  `artists` under the wrong kind of row. This is the bulk of the report
+  (121 of 133 on 2026-08-23) and is why it sorts last.
+
+`--skip-label-etc` runs pass 1 alone. Pass 2 soft-deletes the artist rows
+it migrates (`deleted = true`), which is reversible; `artist_labels` and
+`artists.labels` are never touched.
+
+### 3. Review in the admin panel
+
+`/admin/organisations` — status tabs, name search, per-row approve /
+reject / delete, and a **bulk approve** scoped to whatever the filter is
+currently showing, so ~238 pending rows get reviewed in batches instead of
+one click at a time.
+
+`/admin/organisations/<id>` — name, status, types, locations, links
+(reusing `ProfileLinksFieldset` and `LocationList` unchanged), run-by text,
+description, private notes; the per-role artist list; and the merge action.
+
+`/admin/settings` gains **Organisation roles** and **Organisation types**
+panels: add, rename in place (the key stays, so existing rows follow), and
+delete guarded by a live usage count.
 
 ---
 
@@ -287,4 +373,18 @@ Phases 1–3 are the agreed first pass.
   organisations look emptier than they are.
 - Is `description` worth having at all in the first pass, given `notes`
   already covers the admin-facing need and nobody has asked for public
-  organisation blurbs?
+  organisation blurbs? **Built as specified** — the column exists, is
+  publicly granted, and has a field on the admin form. Nothing renders it
+  yet, so dropping it in phase 4 is still cheap if it stays empty.
+
+Two more that phases 1–3 answered by building:
+
+- **Do organisation types need an admin panel?** Yes — §1 justifies the
+  lookup table by "you can add *distributor* from the admin panel without a
+  code change", which only holds if the panel exists. Roles and types share
+  one component and one set of actions.
+- **What does merge do with the loser's types, locations and links?**
+  Nothing. Only the artist associations move; the winner has its own
+  curated set and silently mixing two link lists produces a row nobody
+  chose. The loser stays readable at its admin URL so anything worth
+  keeping can be copied across first.

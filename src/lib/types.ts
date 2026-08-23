@@ -282,3 +282,121 @@ export interface ArtistPage {
   /** Whether at least one more page of results exists after this one */
   hasMore: boolean;
 }
+
+// ── Organisations (record labels, clubs, events) ─────────────────────────────
+//
+// Phase 1–3 of documentation/PROPOSAL-organisations.md. The replacement for
+// the flat `artist_labels(artist_id, name)` strings: each organisation is its
+// own row with links, types, a location and typed relationships to the artists
+// in the directory. artist_labels / ArtistLabel are still read during the
+// transition (dual-read) and go away in the cleanup phase.
+
+export type OrganisationStatus = "pending" | "approved" | "rejected" | "deleted";
+
+/**
+ * A kind of organisation — 'record label', 'club', 'radio'. MANY-TO-MANY with
+ * organisations (via organisation_type_links): Tresor is a club and a label,
+ * Boiler Room a show and a promoter.
+ *
+ * A table rather than a Postgres enum, for the same reason `platforms` is one:
+ * "distributor" can be added without a code change. `key` is the slugify()
+ * form of `label`.
+ */
+export interface OrganisationType {
+  key: string;
+  label: string;
+  sort_order: number;
+}
+
+/**
+ * A role an artist holds at an organisation — 'associated', 'head', 'founder',
+ * 'resident'. Editable vocabulary, seeded by
+ * supabase_migration_organisations.sql and maintained from /admin/settings.
+ *
+ * 'associated' is the default and is exactly what the old flat label text
+ * meant, so it is what the backfill assigns to every migrated row.
+ */
+export interface OrganisationRole {
+  key: string;
+  label: string;
+  sort_order: number;
+}
+
+export interface OrganisationLocation {
+  id: number;
+  organisation_id: string;
+  city: string | null;
+  country: string | null;
+}
+
+export interface OrganisationLink {
+  id: number;
+  organisation_id: string;
+  platform: LinkPlatform;
+  handle: string | null;
+  url: string | null;
+  original_url: string | null;
+  not_found: boolean;
+}
+
+/**
+ * The typed relationship between an artist and an organisation. `role_key` is
+ * part of the primary key, so one artist can hold several roles at the same
+ * organisation (owner AND resident) without duplicate-row hacks.
+ *
+ * One table serves both directions: the artist page reads it as "associated
+ * with", the organisation page as "run by".
+ */
+export interface ArtistOrganisation {
+  artist_id: string;
+  organisation_id: string;
+  role_key: string;
+  created_at: string;
+}
+
+export interface Organisation {
+  id: string;
+  name: string;
+  status: OrganisationStatus;
+  /**
+   * The organisation this row duplicates, set by the admin merge action which
+   * also repoints the artist_organisations rows. Free-text entry keeps
+   * producing "Ostgut Ton" / "ostgut-ton" pairs; this is where the loser goes.
+   * Mirrors artists.duplicate_of.
+   */
+  duplicate_of: string | null;
+  /** Short public blurb. Optional and usually empty. */
+  description: string | null;
+  /**
+   * Free text for the people who run it and are NOT in the directory (labels
+   * run by men, etc.). People who ARE get an artist_organisations row with an
+   * owner/founder/head role instead.
+   */
+  run_by_text: string | null;
+  /**
+   * PRIVATE column (admin-only). anon/authenticated have no SELECT grant on
+   * it — see the column-grant block in supabase_migration_organisations.sql —
+   * so it is absent from rows loaded through the public client. Present only
+   * on rows loaded through the service-role client (admin panel).
+   */
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** An organisation plus its joined relations, as the admin panel loads it. */
+export interface OrganisationWithRelations extends Organisation {
+  types: OrganisationType[];
+  locations: OrganisationLocation[];
+  links: OrganisationLink[];
+  /** Directory artists attached to this organisation, with the role each holds. */
+  artists: OrganisationArtist[];
+}
+
+/** One artist's association with an organisation, flattened for display. */
+export interface OrganisationArtist {
+  artist_id: string;
+  artist_name: string;
+  artist_status: ArtistStatus;
+  role_key: string;
+}

@@ -7,6 +7,7 @@ import { blockEmail, unblockEmail } from "../actions";
 import GenreModerationPanel from "../GenreModerationPanel";
 import GenreTagRulesPanel, { type GenreTagRule } from "../GenreTagRulesPanel";
 import AddPlatformForm from "../AddPlatformForm";
+import OrganisationVocabularyPanel, { type VocabularyEntry } from "../OrganisationVocabularyPanel";
 import type { SubmitterEmail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +63,56 @@ async function fetchAllGenreTagRules(
   return all;
 }
 
+// The organisation role and type vocabularies, each with the number of rows
+// pointing at it — the panel needs the count to explain why a delete is
+// blocked before the ON DELETE RESTRICT foreign key refuses it.
+//
+// Both tables are seeded by supabase_migration_organisations.sql, so an
+// empty result means either the migration hasn't been run yet (42P01, the
+// table doesn't exist — render empty rather than crashing the whole
+// settings page, as the genre tag rules loader does) or the rows were
+// deleted.
+async function fetchOrganisationVocabulary(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+  table: "organisation_roles" | "organisation_types",
+  usageTable: "artist_organisations" | "organisation_type_links",
+  usageColumn: "role_key" | "type_key",
+): Promise<VocabularyEntry[]> {
+  const { data, error } = await admin
+    .from(table)
+    .select("key, label, sort_order")
+    .order("sort_order")
+    .order("label");
+  if (error) {
+    if (error.code === "42P01") return [];
+    throw error;
+  }
+
+  // One exact count per entry rather than fetching the association rows
+  // and tallying them here: PostgREST caps a select at ~1000 rows, so a
+  // tally would silently undercount once the associations pass that —
+  // and undercounting is the dangerous direction, since it would offer a
+  // Delete button for a vocabulary entry that is actually in use. Both
+  // usage columns are indexed, and there are only ~20 entries.
+  const entries = data ?? [];
+  const counts = await Promise.all(
+    entries.map(async (entry) => {
+      const { count } = await admin
+        .from(usageTable)
+        .select("*", { count: "exact", head: true })
+        .eq(usageColumn, entry.key as string);
+      return count ?? 0;
+    }),
+  );
+
+  return entries.map((entry, i) => ({
+    key: entry.key as string,
+    label: entry.label as string,
+    sort_order: entry.sort_order as number,
+    usage: counts[i],
+  }));
+}
+
 export default async function AdminSettingsPage() {
   // ── Auth guard (admins only) ──────────────────────────────────
   const { user, isAdmin } = await getViewer();
@@ -73,11 +124,15 @@ export default async function AdminSettingsPage() {
   const [
     genres,
     tagRules,
+    organisationRoles,
+    organisationTypes,
     { data: platformRows },
     { data: emailRows },
   ] = await Promise.all([
     fetchAllGenres(admin),
     fetchAllGenreTagRules(admin),
+    fetchOrganisationVocabulary(admin, "organisation_roles", "artist_organisations", "role_key"),
+    fetchOrganisationVocabulary(admin, "organisation_types", "organisation_type_links", "type_key"),
     admin.from("platforms").select("key, label").order("sort_order").order("label"),
     admin.from("submitter_emails").select("*")
       .order("first_seen_at", { ascending: false }).limit(100),
@@ -113,6 +168,35 @@ export default async function AdminSettingsPage() {
               tags. Applied by the harvest scripts on their next run.
             </p>
             <GenreTagRulesPanel rules={tagRules} />
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+            <h2 className="mb-3 text-lg font-semibold">Organisation roles</h2>
+            <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
+              What an artist <em>is</em> at a label, club or event — head,
+              resident, A&amp;R. Renaming edits the display name only, so
+              existing associations follow along; a role in use can&apos;t be
+              deleted.
+            </p>
+            <OrganisationVocabularyPanel
+              kind="role"
+              entries={organisationRoles}
+              placeholder="e.g. tour manager"
+            />
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+            <h2 className="mb-3 text-lg font-semibold">Organisation types</h2>
+            <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
+              What the organisation <em>is</em> — record label, club, radio.
+              Organisations can hold several at once: Tresor is a club and a
+              label.
+            </p>
+            <OrganisationVocabularyPanel
+              kind="type"
+              entries={organisationTypes}
+              placeholder="e.g. distributor"
+            />
           </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
