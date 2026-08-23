@@ -109,6 +109,9 @@ export default async function AdminPage() {
           <Link href="/admin/missing-links" className="text-sm text-violet-600 hover:underline dark:text-violet-400">
             Missing links →
           </Link>
+          <Link href="/admin/organisations" className="text-sm text-violet-600 hover:underline dark:text-violet-400">
+            Organisations →
+          </Link>
           <Link href="/admin/reports" className="text-sm text-violet-600 hover:underline dark:text-violet-400">
             Reports →
           </Link>

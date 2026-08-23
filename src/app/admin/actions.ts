@@ -508,3 +508,141 @@ export async function saveSiteContent(
   revalidatePath("/admin/about");
   return { success: true };
 }
+
+// ── Organisation vocabularies (roles and types) ──────────────────────
+//
+// organisation_roles says what an artist IS at an organisation ('head',
+// 'resident', 'A&R'); organisation_types says what the organisation IS
+// ('record label', 'club'). Both are lookup tables rather than Postgres
+// enums for the same reason `platforms` is one — "distributor" can be
+// added here without a code change — and both are seeded by
+// supabase_migration_organisations.sql, so an empty table means rows
+// were deleted, not that setup is pending.
+//
+// These go beyond addPlatform() in two ways, because role wording needs
+// correcting more often than platform wording does:
+//
+//   rename  edits `label` in place and leaves `key` alone, so every row
+//           already pointing at the key follows along ("A&R" typed as
+//           "AR" is a one-field fix, not a migration).
+//   delete  refuses when the vocabulary entry is in use. The FK is ON
+//           DELETE RESTRICT so the database would refuse anyway; this
+//           counts the blockers first and says how many there are,
+//           instead of surfacing a raw Postgres error.
+
+const ORGANISATION_VOCABULARIES = {
+  role: {
+    table: "organisation_roles",
+    usageTable: "artist_organisations",
+    usageColumn: "role_key",
+    noun: "role",
+  },
+  type: {
+    table: "organisation_types",
+    usageTable: "organisation_type_links",
+    usageColumn: "type_key",
+    noun: "type",
+  },
+} as const;
+
+export type OrganisationVocabulary = keyof typeof ORGANISATION_VOCABULARIES;
+
+function organisationVocabularyPaths() {
+  revalidatePath("/admin/settings");
+  revalidatePath("/admin/organisations");
+}
+
+export async function addOrganisationVocabularyEntry(
+  kind: OrganisationVocabulary,
+  formData: FormData,
+): Promise<{ error: string } | { success: true }> {
+  await requireAdmin();
+
+  const spec = ORGANISATION_VOCABULARIES[kind];
+  if (!spec) return { error: "Invalid vocabulary" };
+
+  const label = ((formData.get("label") ?? "") as string).trim();
+  if (!label) return { error: `${spec.noun[0].toUpperCase()}${spec.noun.slice(1)} name is required` };
+
+  // Same slugify() the platform keys use, so keys read alike across the
+  // lookup tables.
+  const key = slugify(label);
+  if (!key) return { error: "Couldn't derive a key from that name — try adding a letter or number" };
+
+  const admin = getSupabaseAdminClient();
+
+  const { data: existing } = await admin
+    .from(spec.table)
+    .select("key")
+    .eq("key", key)
+    .maybeSingle();
+  if (existing) return { error: `"${label}" already exists` };
+
+  const { data: maxRow } = await admin
+    .from(spec.table)
+    .select("sort_order")
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { error } = await admin
+    .from(spec.table)
+    .insert({ key, label, sort_order: (maxRow?.sort_order ?? 0) + 10 });
+  if (error) return { error: error.message };
+
+  organisationVocabularyPaths();
+  return { success: true };
+}
+
+export async function renameOrganisationVocabularyEntry(
+  kind: OrganisationVocabulary,
+  key: string,
+  label: string,
+): Promise<{ error: string } | { success: true }> {
+  await requireAdmin();
+
+  const spec = ORGANISATION_VOCABULARIES[kind];
+  if (!spec) return { error: "Invalid vocabulary" };
+
+  const trimmed = label.trim();
+  if (!trimmed) return { error: "Name can't be empty" };
+
+  // Only `label` moves. Renaming the key would orphan every row using it,
+  // which is exactly what this is here to avoid.
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin.from(spec.table).update({ label: trimmed }).eq("key", key);
+  if (error) return { error: error.message };
+
+  organisationVocabularyPaths();
+  return { success: true };
+}
+
+export async function deleteOrganisationVocabularyEntry(
+  kind: OrganisationVocabulary,
+  key: string,
+): Promise<{ error: string } | { success: true }> {
+  await requireAdmin();
+
+  const spec = ORGANISATION_VOCABULARIES[kind];
+  if (!spec) return { error: "Invalid vocabulary" };
+
+  const admin = getSupabaseAdminClient();
+
+  const { count, error: countErr } = await admin
+    .from(spec.usageTable)
+    .select("*", { count: "exact", head: true })
+    .eq(spec.usageColumn, key);
+  if (countErr) return { error: countErr.message };
+
+  if ((count ?? 0) > 0) {
+    return {
+      error: `Still in use by ${count} association${count === 1 ? "" : "s"} — reassign those first.`,
+    };
+  }
+
+  const { error } = await admin.from(spec.table).delete().eq("key", key);
+  if (error) return { error: error.message };
+
+  organisationVocabularyPaths();
+  return { success: true };
+}
