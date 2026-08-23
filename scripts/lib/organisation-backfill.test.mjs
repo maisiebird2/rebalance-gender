@@ -9,6 +9,7 @@ import {
   findNearDuplicates,
   findArtistNameCollisions,
   buildAmbiguityReport,
+  isHandledByLabelEtcPass,
 } from "./organisation-backfill.mjs";
 
 const entry = (artistId, rawName, source = "artist_labels") => ({ artistId, rawName, source });
@@ -232,6 +233,15 @@ describe("buildAmbiguityReport", () => {
       "pronouns_in_label",
       "name_matches_unreviewed_artist",
     ]);
+  });
+
+  it("stays quiet about artists already marked label_etc", () => {
+    // Setting an artist to 'label_etc' IS the resolution of a
+    // name_matches_unreviewed_artist row — pass 2 takes it from there —
+    // so re-reporting it would hand the reviewer back their own work.
+    expect(isHandledByLabelEtcPass("label_etc")).toBe(true);
+    expect(isHandledByLabelEtcPass("sc_followee")).toBe(false);
+    expect(isHandledByLabelEtcPass("approved")).toBe(false);
   });
 
   it("distinguishes a directory artist from an unreviewed import", () => {

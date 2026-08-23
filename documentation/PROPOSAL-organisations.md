@@ -322,10 +322,22 @@ The ambiguity reasons, in the order they are reported:
   `BØX Collectif` / `BØX Collective`.
 - `multiple_surface_forms` — the canonical pick discarded a spelling
   somebody typed; shows what was dropped.
-- `name_matches_unreviewed_artist` — matches an `sc_followee` / `obscure`
-  import rather than a listed artist. Usually the organisation is already in
-  `artists` under the wrong kind of row. This is the bulk of the report
-  (121 of 133 on 2026-08-23) and is why it sorts last.
+- `name_matches_unreviewed_artist` — matches an `sc_followee` / `obscure` /
+  `not_eligible` import rather than a listed artist. Usually the
+  organisation is already in `artists` under the wrong kind of row, and the
+  fix is to set that artist to `label_etc`, which hands it to pass 2.
+
+**Nothing in this report is acted on automatically.** Every group becomes a
+pending organisation regardless; the CSV is a worklist, not an input.
+
+An artist already at `directory_status = 'label_etc'` is deliberately
+**excluded** from the collision check, because pass 2 owns it and it has its
+own CSV. The count is printed instead, so the exclusion is visible rather
+than silent. This matters more than it sounds: setting `label_etc` *is* the
+resolution of a `name_matches_unreviewed_artist` row, so counting those rows
+as collisions meant a reviewer working through the report got their own
+resolved rows handed straight back on the next run — 123 of them, on the run
+that caught this. The report only converges because they are excluded.
 
 `--skip-label-etc` runs pass 1 alone. Pass 2 soft-deletes the artist rows
 it migrates (`deleted = true`), which is reversible; `artist_labels` and
