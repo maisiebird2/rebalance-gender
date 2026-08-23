@@ -261,7 +261,7 @@ drop `artist_labels`, drop `artists.labels`, remove the fallback branch.
 | 1 Schema + roles + grants | **built** | nothing reads it yet |
 | 2 Backfill | **built** | dry-run → review CSV → apply |
 | 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
-| 4 Read path + organisation pages | yes | dual-read means no coupling to phase 2 finishing |
+| 4 Read path + organisation pages | **built** | dual-read means no coupling to phase 2 finishing |
 | 5 Forms | yes | needs approved organisations to exist |
 | 6 Cleanup | after a release of soak | |
 
@@ -358,6 +358,31 @@ description, private notes; the per-role artist list; and the merge action.
 panels: add, rename in place (the key stays, so existing rows follow), and
 delete guarded by a live usage count.
 
+### 4. What the public site does now
+
+**Artist page** — `Associated with:` becomes one line per role, ordered by
+the role vocabulary's `sort_order`, with organisation names linking to
+`/organisation/<id>`. It **dual-reads**: an artist with no approved
+organisation falls back to the old flat `artist_labels` text, so the line
+never disappears mid-migration. `normalizeArtist()` filters on
+`status = 'approved'`, which is what makes a pending organisation count as
+absent for admins too, not just for anonymous visitors.
+
+**`/organisation/[id]`** — name, types, location, links, run-by text and the
+role-inverted artist list. Noindexed. Renders nothing for a section it has
+no data for, so a bare organisation is just a name rather than a page of
+empty headings.
+
+Two things worth knowing about the read path:
+
+- The nested `organisations(...)` select **must name its columns**. `notes`
+  has no grant for the public roles, so `select=*` on that table is rejected
+  with a 42501 — through an embed as much as directly. Verified against
+  production with the publishable key.
+- `roleHeading()` takes a direction. `associated` reads "Associated with" on
+  an artist page and "Associated" on an organisation page; the same string
+  in both places reads backwards in one of them.
+
 ---
 
 ## Worth knowing
@@ -377,12 +402,20 @@ delete guarded by a live usage count.
 
 ## Open questions
 
-- Should `/organisation/[id]` pages be indexed (sitemap, OG images) from day
-  one, or noindexed until types and links are filled in? Thin pages at launch
-  argue for the latter.
-- Does the public organisation page list *all* associated artists, or only
-  approved ones? Only approved is the safe default, but it will make some
-  organisations look emptier than they are.
+Answered when phase 4 was built (2026-08-23):
+
+- ~~Should `/organisation/[id]` pages be indexed?~~ **Noindexed** via
+  `robots: { index: false, follow: false }` in the route's metadata. Most of
+  the ~240 backfilled organisations carry a name and nothing else, and
+  indexing a few hundred near-empty pages is quick to do and slow to undo.
+  Simpler than the question assumed: this app has no sitemap at all, so the
+  metadata block is the whole of it. Lift it once the entries are filled in.
+- ~~All associated artists, or only approved ones?~~ **Only approved**, and
+  by construction rather than by a filter: `getOrganisationById` goes
+  through the public client, so the two-sided RLS policy on
+  `artist_organisations` does it. The consequence is real and accepted — 8
+  of the first 55 approved organisations currently show no artists at all,
+  because theirs are still in review.
 - Is `description` worth having at all in the first pass, given `notes`
   already covers the admin-facing need and nobody has asked for public
   organisation blurbs? **Built as specified** — the column exists, is
