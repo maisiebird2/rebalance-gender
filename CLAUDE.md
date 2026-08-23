@@ -81,9 +81,22 @@ for the inventory of which script writes what.
   the primary one: `scripts/new-worktree.sh <branch-name>`.
 - Use inclusive language everywhere — chat, code, comments, commit messages,
   PR text and docs.
+- Write British English in prose — `organisation`, `normalised`, `behaviour`,
+  `catalogue`, `grey`, `licence`. This covers every `.md` file, the prose in
+  code comments, and commit and PR text. It is the majority spelling
+  internationally and already the voice of most docs here.
 
 Both rules about branches are enforced, not just documented — a `PreToolUse`
 guard blocks edits while `main` is checked out, and a `pre-commit` hook rejects
 commits on `main`. New clones need `scripts/git-hooks/install.sh` once. See
 [documentation/BRANCH-SAFETY.md](documentation/BRANCH-SAFETY.md) for why the
 guards exist and how to override them deliberately.
+
+**The spelling rule excludes code identifiers.** `normalizeName`, `normalizeProfileLink` and
+the rest of that family are American, as are Tailwind's `gray` / `center` and
+the DOM's `stopColor`. Match the surrounding code when you add to a family;
+don't rename one for spelling alone.
+
+The existing docs are mixed — `PIPELINE.md`, `PROPOSAL-platform-links.md` and
+`PROPOSAL-provenance-purge.md` lean American. Fix the spellings in the parts
+you edit anyway; no sweep is planned.
