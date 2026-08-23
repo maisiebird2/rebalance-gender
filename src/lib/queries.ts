@@ -16,6 +16,15 @@ import type {
   ArtistEnrichment,
   ArtistImage,
   BandcampAlbum,
+  ArtistOrganisationEntry,
+  OrganisationArtistEntry,
+  OrganisationLink,
+  OrganisationLocation,
+  OrganisationPage,
+  OrganisationRole,
+  OrganisationType,
+  OrganisationStatus,
+  OrganisationSummary,
 } from "./types";
 
 // Raw shape of a row returned by ARTIST_SELECT below, before genres are
@@ -27,11 +36,36 @@ type RawArtistRow = Artist & {
   artist_type_assignments: { artist_types: ArtistType | null }[];
   locations: ArtistLocation[];
   label_list: ArtistLabel[];
+  // One row per (artist × organisation × role). `organisation` is null
+  // only when RLS hid it, which the public client can't see anyway.
+  artist_organisations: {
+    role: OrganisationRole | null;
+    organisation: (OrganisationSummary & { status: OrganisationStatus }) | null;
+  }[];
   aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
   images: ArtistImage[];
   bandcamp_albums?: BandcampAlbum[];
+};
+
+// Raw shape of a row returned by ORGANISATION_SELECT, before the nested
+// junction rows are flattened.
+type RawOrganisationRow = {
+  id: string;
+  name: string;
+  status: OrganisationStatus;
+  duplicate_of: string | null;
+  run_by_text: string | null;
+  created_at: string;
+  updated_at: string;
+  types: { type: OrganisationType | null }[];
+  locations: OrganisationLocation[];
+  links: OrganisationLink[];
+  artist_organisations: {
+    role: OrganisationRole | null;
+    artist: { id: string; name: string } | null;
+  }[];
 };
 
 export const PAGE_SIZE = 24;
@@ -69,11 +103,14 @@ function normalizeSearch(s: string): string {
 // submitted_by_email, submitted_at, reviewed_at, gender_mb) are only
 // readable through the service-role client, which uses its own select
 // strings (e.g. ARTIST_ADMIN_SELECT on the edit page).
+//
+// The nested organisations(...) select names its columns for exactly the
+// same reason: organisations.notes is admin-only, so `*` on that table is
+// rejected for the public roles too.
 const ARTIST_SELECT = `
   id,
   name,
   pronoun_id,
-  labels,
   directory_status,
   duplicate_of,
   profile_image_url,
@@ -90,6 +127,10 @@ const ARTIST_SELECT = `
   artist_type_assignments(artist_types(*)),
   locations:artist_locations(*),
   label_list:artist_labels(*),
+  artist_organisations(
+    role:organisation_roles(key, label, sort_order),
+    organisation:organisations(id, name, status)
+  ),
   aliases:artist_aliases(*),
   links:artist_links(*),
   enrichment:artist_enrichment(*),
@@ -137,10 +178,33 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
     (a, b) => a.sort_order - b.sort_order
   );
 
+  // One row per (organisation × role). The two-sided RLS policy already
+  // limits the PUBLIC client to associations where both the artist and
+  // the organisation are approved, but the admin client bypasses RLS —
+  // so filter on status here as well. That makes an unapproved
+  // organisation read as absent for every viewer, which is precisely
+  // what the artist page's dual-read fallback depends on: an artist
+  // whose only organisation is still pending keeps showing the old flat
+  // label text instead of losing the line entirely.
+  //
+  // CARD_SELECT doesn't join this at all (the grid never renders it), so
+  // the field is simply absent there and the ?? [] covers it.
+  const organisations: ArtistOrganisationEntry[] = (row.artist_organisations ?? [])
+    .flatMap((ao) =>
+      ao.role && ao.organisation?.status === "approved"
+        ? [{
+            organisation: { id: ao.organisation.id, name: ao.organisation.name },
+            role: ao.role,
+          }]
+        : []
+    )
+    .sort((a, b) => a.organisation.name.localeCompare(b.organisation.name));
+
   return {
     ...row,
     genres,
     types,
+    organisations,
     images: row.images ?? [],
     displayImageUrl: pickArtistImage(row.id, row.images),
   };
@@ -646,4 +710,82 @@ export async function getCountryOptions(): Promise<string[]> {
       .filter((c): c is string => Boolean(c))
   );
   return Array.from(countries).sort((a, b) => a.localeCompare(b));
+}
+
+// ── Organisations ────────────────────────────────────────────────────────────
+
+// Columns are listed explicitly for the same reason ARTIST_SELECT lists
+// them: organisations.notes has no grant for the public roles, so `*` is
+// rejected outright. `description` is deliberately not requested — the
+// column exists but nothing renders it yet (phase 4 decision).
+const ORGANISATION_SELECT = `
+  id,
+  name,
+  status,
+  duplicate_of,
+  run_by_text,
+  created_at,
+  updated_at,
+  types:organisation_type_links(type:organisation_types(key, label, sort_order)),
+  locations:organisation_locations(id, organisation_id, city, country),
+  links:organisation_links(id, organisation_id, platform, handle, url, original_url, not_found),
+  artist_organisations(
+    role:organisation_roles(key, label, sort_order),
+    artist:artists(id, name)
+  )
+`;
+
+/**
+ * Fetch one approved organisation with everything the public page renders.
+ *
+ * Always the PUBLIC client, never the admin one — unlike artists, there is
+ * no admin preview of an unapproved organisation, and going through the
+ * public client is what makes the two-sided RLS policy do the filtering:
+ * the artist list can only ever contain approved artists, and an
+ * unapproved organisation is invisible outright. `status = 'approved'` is
+ * still stated here so the intent is readable without knowing the policy.
+ *
+ * Returns null when the id doesn't exist, isn't approved, or has been
+ * merged into another organisation — a merged row keeps its associations
+ * pointing at the winner, so rendering it would show an empty page.
+ */
+export async function getOrganisationById(
+  id: string,
+): Promise<OrganisationPage | null> {
+  const { data, error } = await getSupabaseClient()
+    .from("organisations")
+    .select(ORGANISATION_SELECT)
+    .eq("id", id)
+    .eq("status", "approved")
+    .is("duplicate_of", null)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const row = data as unknown as RawOrganisationRow;
+
+  const types = (row.types ?? [])
+    .map((t) => t.type)
+    .filter((t): t is OrganisationType => t !== null)
+    .sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
+
+  // One entry per (artist × role), sorted by artist name so each role's
+  // line reads alphabetically. RLS has already dropped any artist that
+  // isn't approved, so no status filter is needed here.
+  const artists: OrganisationArtistEntry[] = (row.artist_organisations ?? [])
+    .flatMap((ao) =>
+      ao.role && ao.artist ? [{ artist: ao.artist, role: ao.role }] : [],
+    )
+    .sort((a, b) => a.artist.name.localeCompare(b.artist.name));
+
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    run_by_text: row.run_by_text,
+    types,
+    locations: row.locations ?? [],
+    links: row.links ?? [],
+    artists,
+  };
 }

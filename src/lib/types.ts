@@ -197,7 +197,15 @@ export interface Artist {
   id: string;
   name: string;
   pronoun_id: number | null;
-  labels: string | null;
+  /**
+   * DEPRECATED legacy column: a comma-separated label string that predates
+   * artist_labels and is superseded by organisations. Nothing renders it and
+   * ARTIST_SELECT no longer requests it, so it is absent from rows loaded
+   * through queries.ts — hence optional. The backfill still reads it directly
+   * (service role) to recover the 115 names only this column carries. Dropped
+   * in the organisations cleanup phase.
+   */
+  labels?: string | null;
   /**
    * PRIVATE column (admin-only internal notes). anon/authenticated have no
    * SELECT grant on it — see supabase_migration_artists_private_columns.sql —
@@ -249,7 +257,20 @@ export interface ArtistWithRelations extends Artist {
    */
   types: ArtistType[];
   locations: ArtistLocation[];
+  /**
+   * The legacy flat label strings. Still read during the organisations
+   * transition: the artist page renders `organisations` when there are any
+   * and falls back to this otherwise, so no artist loses the line while the
+   * backfilled organisations are still being approved. Goes away with
+   * artist_labels in the cleanup phase.
+   */
   label_list: ArtistLabel[];
+  /**
+   * Approved organisations this artist is attached to, one entry per role,
+   * sorted by organisation name. Group with groupByRole() from
+   * lib/organisations.ts to render. Empty on grid rows (CARD_SELECT).
+   */
+  organisations: ArtistOrganisationEntry[];
   aliases: ArtistAlias[];
   links: ArtistLink[];
   enrichment: ArtistEnrichment[];
@@ -399,4 +420,48 @@ export interface OrganisationArtist {
   artist_name: string;
   artist_status: ArtistStatus;
   role_key: string;
+}
+
+/** Just enough of an organisation to render a link to it. */
+export interface OrganisationSummary {
+  id: string;
+  name: string;
+}
+
+/**
+ * One organisation an artist is attached to, with the role held there.
+ *
+ * An artist can appear several times over with different roles — that is
+ * the point of role_key being part of the primary key — so this is a flat
+ * list that the pages group with groupByRole() in lib/organisations.ts.
+ */
+export interface ArtistOrganisationEntry {
+  organisation: OrganisationSummary;
+  role: OrganisationRole;
+}
+
+/** The inverse: one artist attached to an organisation, with their role. */
+export interface OrganisationArtistEntry {
+  artist: { id: string; name: string };
+  role: OrganisationRole;
+}
+
+/**
+ * Everything the public /organisation/[id] page renders.
+ *
+ * `notes` is absent by construction — the public roles hold no SELECT grant
+ * on that column, so it cannot be requested, let alone rendered.
+ * `description` is likewise not fetched: the column exists but nothing
+ * displays it yet.
+ */
+export interface OrganisationPage {
+  id: string;
+  name: string;
+  status: OrganisationStatus;
+  run_by_text: string | null;
+  types: OrganisationType[];
+  locations: OrganisationLocation[];
+  links: OrganisationLink[];
+  /** Approved artists only, one entry per role, sorted by artist name. */
+  artists: OrganisationArtistEntry[];
 }

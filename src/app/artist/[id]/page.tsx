@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArtistById } from "@/lib/queries";
+import { groupByRole, roleHeading } from "@/lib/organisations";
 import {
   getPlatforms,
   platformLabel,
@@ -218,13 +219,40 @@ export default async function ArtistPage({ params }: PageProps) {
             </div>
           )}
 
-          {/* Labels */}
-          {artist.label_list?.length > 0 && (
+          {/* Organisations — labels, clubs, crews and events.
+              DUAL-READ during the organisations migration: render the real
+              organisation rows when the artist has any approved ones, and
+              fall back to the old flat label text otherwise. A pending
+              organisation counts as absent (normalizeArtist filters on
+              status), so an artist whose organisations are still awaiting
+              review keeps the line it has always had rather than losing it
+              mid-migration. The fallback branch goes away with
+              artist_labels in the cleanup phase. */}
+          {artist.organisations.length > 0 ? (
+            <div className="mt-4 flex flex-col gap-1 text-sm text-gray-600 dark:text-gray-400">
+              {groupByRole(artist.organisations, (entry) => entry.role).map(({ role, items }) => (
+                <p key={role.key}>
+                  <span className="font-semibold">{roleHeading(role, "organisations")}: </span>
+                  {items.map((entry, i) => (
+                    <span key={`${entry.organisation.id}-${role.key}`}>
+                      {i > 0 && ", "}
+                      <Link
+                        href={`/organisation/${entry.organisation.id}`}
+                        className="text-violet-600 hover:underline dark:text-violet-400"
+                      >
+                        {entry.organisation.name}
+                      </Link>
+                    </span>
+                  ))}
+                </p>
+              ))}
+            </div>
+          ) : artist.label_list?.length > 0 ? (
             <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
               <span className="font-semibold">Associated with: </span>
               {artist.label_list.map((l) => l.name).join(", ")}
             </p>
-          )}
+          ) : null}
 
           {/* SoundCloud widget */}
           {soundcloudUrl && (

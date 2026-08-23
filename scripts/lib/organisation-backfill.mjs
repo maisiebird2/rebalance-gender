@@ -198,11 +198,31 @@ export function findNearDuplicates(groups, { threshold = 0.6 } = {}) {
 // artistsByKey: Map name_search -> [{ id, name, directory_status }]
 // ------------------------------------------------------------
 // Statuses that mean "a person the directory actually lists". Everything
-// else (sc_followee, obscure, label_etc, ...) is an unreviewed import,
-// and a name match against one of those usually means the organisation
-// itself was imported as an artist rather than that a person and an
-// organisation share a name.
+// else (sc_followee, obscure, ...) is an unreviewed import, and a name
+// match against one of those usually means the organisation itself was
+// imported as an artist rather than that a person and an organisation
+// share a name.
 const DIRECTORY_ARTIST_STATUSES = new Set(["approved", "pending", "unverified"]);
+
+/**
+ * Statuses meaning "already decided to be an organisation, not a person".
+ *
+ * These are NOT collision candidates: pass 2 of the backfill owns them —
+ * it name-matches each to an organisation, ports its links across and
+ * soft-deletes the artist row — and they are listed in their own CSV.
+ *
+ * Reporting them as ambiguities too is what made the review loop never
+ * converge: setting an artist to 'label_etc' IS the resolution of a
+ * name_matches_unreviewed_artist row, so a reviewer who worked through
+ * the report saw the same 123 rows come back on the next run, now
+ * carrying the status they had just set.
+ */
+export const RESOLVED_AS_ORGANISATION_STATUSES = new Set(["label_etc"]);
+
+/** True when pass 2 already owns this artist, so the report should stay quiet. */
+export function isHandledByLabelEtcPass(status) {
+  return RESOLVED_AS_ORGANISATION_STATUSES.has(status);
+}
 
 export function findArtistNameCollisions(groups, artistsByKey) {
   const collisions = [];

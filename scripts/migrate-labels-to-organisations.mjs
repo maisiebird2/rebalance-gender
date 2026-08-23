@@ -60,6 +60,7 @@ import {
   splitLegacyLabels,
   groupOrganisations,
   buildAmbiguityReport,
+  isHandledByLabelEtcPass,
   normalizeName,
 } from "./lib/organisation-backfill.mjs";
 
@@ -176,9 +177,18 @@ async function main() {
 
   // ── The ambiguity report ─────────────────────────────────────────
 
+  // Collision candidates: every live artist EXCEPT the ones already
+  // decided to be organisations. A 'label_etc' artist is pass 2's job and
+  // has its own CSV, so flagging it here as well would keep handing the
+  // reviewer back the rows they just resolved.
   const artistsByKey = new Map();
+  let resolvedAsOrganisation = 0;
   for (const artist of state.artistRows) {
     if (artist.deleted) continue;
+    if (isHandledByLabelEtcPass(artist.directory_status)) {
+      resolvedAsOrganisation++;
+      continue;
+    }
     const key = artistKey(artist);
     if (!key) continue;
     if (!artistsByKey.has(key)) artistsByKey.set(key, []);
@@ -190,6 +200,11 @@ async function main() {
   );
 
   const ambiguity = buildAmbiguityReport(groups, { artistsByKey, knownPronouns });
+  if (resolvedAsOrganisation > 0) {
+    // Said out loud rather than silently dropped: these are excluded from
+    // the report on purpose, and the count is how you see that.
+    log(`  ${resolvedAsOrganisation} artist(s) already marked 'label_etc' — pass 2's job, not flagged here`);
+  }
   const ambiguityFile = writeCSV(
     outputPath(`organisations-ambiguity-${stamp}.csv`),
     ["reason", "organisation", "key", "detail", "artist_count"],
