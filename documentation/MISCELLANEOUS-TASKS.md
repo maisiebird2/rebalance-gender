@@ -110,3 +110,77 @@ The 2026-07-24 incident is recorded from a memory note rather than from a
 post-mortem in this repo; the note captured the two mechanisms and the
 recovery commands above, not the specific files involved. The guard analysis
 in this entry was re-derived from the current hook sources on 2026-08-23.
+
+---
+
+## 2. The documentation index has drifted, and nothing checks it
+
+**Status:** open. Measured 2026-08-23.
+
+### What's missing
+
+`documentation/README.md` is the index every other doc is found through, and
+it is maintained by hand. Two of the 22 files in `documentation/` are absent
+from it:
+
+| Doc | Referenced from |
+|---|---|
+| `BRANCH-SAFETY.md` | `CLAUDE.md`, `scripts/git-hooks/guard-branch.sh`, `scripts/git-hooks/pre-commit`, `scripts/new-worktree.sh`, `.gitignore`, `MISCELLANEOUS-TASKS.md` |
+| `SECURITY-HEADERS.md` | `next.config.mjs`, `src/proxy.ts` |
+
+`BRANCH-SAFETY.md` is the sharper miss. Six files point at it — more inbound
+references than any other doc in the repo — and it is the explanation behind a
+working agreement in `CLAUDE.md` that hard-blocks edits. Someone arriving at
+the index to find out why their edit was refused will not find it there.
+
+`SECURITY-HEADERS.md` is cited only from code, so it is invisible to anyone
+reading documentation on its own.
+
+No entry points the other way: every link in the index resolves to a file that
+exists.
+
+### Why it drifted
+
+Nothing enforces the index. There is no test, and `.github/` is empty, so
+there is no CI to run one from either. A new doc is only indexed if whoever
+wrote it remembered — and the two that slipped are both infrastructure notes
+written alongside code changes, where the index isn't in view.
+
+### What a fix would have to do
+
+Two parts, worth doing together.
+
+**Add the missing rows.** This needs one small decision: neither doc fits the
+existing sections. `Subsystems` is about the data pipeline (genres, matching,
+scoring), and neither of these is data. Options are a new section — *Working
+practice*, or *Infrastructure* — or a looser reading of `Subsystems`. A new
+section is probably right; `BRANCH-SAFETY.md` and `SECURITY-HEADERS.md` are
+both "how a mechanism in this repo works", which is a real category the index
+currently has no home for.
+
+**Make it self-checking.** A vitest case that fails when
+`documentation/*.md` and the links in `documentation/README.md` disagree, in
+both directions:
+
+- every `.md` in `documentation/` except `README.md` is linked from the index;
+- every `.md` the index links to exists.
+
+The project already runs `vitest run` via `npm test`, with 21 test files
+alongside the code they cover, so a `documentation/index.test.mjs` — or a case
+inside an existing suite — needs no new tooling. Note that with no CI, this
+only fires when someone runs `npm test` locally; wiring up a workflow is a
+separate job.
+
+One implementation trap, hit while measuring this: matching link targets with
+a pattern like `\]\(([A-Z0-9_-]+\.md)\)` silently misses
+`PROPOSAL-organisations.md`, because the filenames mix upper and lower case.
+Use `[\w.-]+\.md` and compare against the real directory listing rather than
+assuming a naming shape.
+
+### Worth deciding at the same time
+
+Whether the index should list `.md` files outside `documentation/` — the root
+`README.md` and `CLAUDE.md`, which are the two deliberate exceptions to the
+"all markdown lives in `documentation/`" rule. `CLAUDE.md` is linked once from the
+index preamble in prose; the root `README.md` is not linked at all. Neither
+appears in a table.
