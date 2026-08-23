@@ -124,6 +124,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { outputPath } from "./lib/output-path.mjs";
+import { urlsMatch } from "./lib/link-url-match.mjs";
 import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from "../src/lib/profile-links.js";
 import { cleanLinkUrl } from "../src/lib/platforms.js";
 import { reclassifyResolvedUrl } from "../src/lib/classify-platform-url.js";
@@ -342,63 +343,11 @@ async function writeIsolatingFailures(rows, doWrite, describe) {
 }
 
 // ------------------------------------------------------------
-// Compares a harvested URL against the canonical (already-live, or
-// about-to-be-inserted) URL for a (artist, platform) pair, ignoring
-// formatting differences that don't actually change where the link
-// points:
-//   - http vs https ("http://x.com/a" vs "https://x.com/a")
-//   - a trailing slash on either side ("https://x.com/a" vs
-//     "https://x.com/a/")
-//   - a "www." prefix on either side ("https://instagram.com/a" vs
-//     "https://www.instagram.com/a")
-//   - hostname case ("Instagram.com" vs "instagram.com")
-//   - known tracking/share query params (see TRACKING_PARAMS below),
-//     e.g. Spotify's "?si=...&nd=1" that gets stripped during normal
-//     link cleanup — a harvested URL with these params still counts
-//     as matching a live URL without them.
-// Falls back to a plain string comparison if either value isn't a
-// parseable URL.
+// URL sameness (scheme / www / trailing-slash / tracking-param
+// insensitive) lives in scripts/lib/link-url-match.mjs — imported
+// above as urlsMatch, and shared with the other scripts that have to
+// decide whether two artist_links rows are the same link.
 // ------------------------------------------------------------
-const TRACKING_PARAMS = new Set([
-  "si", // spotify share id
-  "nd", // spotify "new design" flag, seen tacked onto shared links
-  "context", // spotify share context
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_content",
-  "utm_term",
-  "igsh", // instagram share id
-  "igshid", // instagram share id (older format)
-  "fbclid",
-  "gclid",
-  "feature", // youtube share source
-  "pp", // youtube share tracking
-]);
-
-function normalizeForComparison(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    url.protocol = "https:";
-    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
-      url.pathname = url.pathname.slice(0, -1);
-    }
-    for (const param of TRACKING_PARAMS) {
-      url.searchParams.delete(param);
-    }
-    const query = url.searchParams.toString();
-    url.search = query ? `?${query}` : "";
-    return url.toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
-function urlsMatch(a, b) {
-  if (a === b) return true;
-  return normalizeForComparison(a) === normalizeForComparison(b);
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
