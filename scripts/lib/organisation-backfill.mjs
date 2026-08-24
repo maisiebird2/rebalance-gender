@@ -6,10 +6,13 @@
 // tested (organisation-backfill.test.mjs) — the same split
 // hoer-resolve.mjs / hoer-db.mjs uses.
 //
-// The job: 314 artist_labels rows plus 93 comma-separated legacy
-// artists.labels strings name roughly 208 distinct organisations. Group
-// them by normalised name, pick one surface form to be canonical, and
-// flag everything a human should look at before any of it is approved.
+// The job: the artist_labels rows name a few hundred distinct
+// organisations between them. Group them by normalised name, pick one
+// surface form to be canonical, and flag everything a human should look
+// at before any of it is approved.
+//
+// This also read the legacy artists.labels column until that was dropped
+// in phase 6; artist_labels is now the only source.
 // ============================================================
 
 import { normalizeName, nameSimilarity } from "./hoer-resolve.mjs";
@@ -19,25 +22,6 @@ import { normalizeName, nameSimilarity } from "./hoer-resolve.mjs";
 // a group key computed here equals the key Postgres computes for the
 // organisation row it creates.
 export { normalizeName };
-
-// ------------------------------------------------------------
-// Legacy artists.labels is a single text column holding a
-// comma-separated list ("UMAY, BPitch Control"). artist_labels is the
-// row-per-label replacement; both are read, because 93 artists still
-// carry only the old column.
-//
-// Splits on commas and semicolons only. Slashes and ampersands are NOT
-// separators here — "R&S Records" and "Live From Earth / Klub" are
-// single names as often as they are two, so those go to the ambiguity
-// report for a human instead of being guessed at.
-// ------------------------------------------------------------
-export function splitLegacyLabels(value) {
-  if (typeof value !== "string") return [];
-  return value
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
 
 // ------------------------------------------------------------
 // Choose the surface form that becomes organisations.name.
@@ -64,8 +48,8 @@ export function pickCanonicalName(surfaceForms) {
 // ------------------------------------------------------------
 // Group raw (artistId, rawName) pairs by normalised name.
 //
-// entries: [{ artistId, rawName, source }] — source is 'artist_labels'
-//          or 'artists.labels', kept for the audit CSV.
+// entries: [{ artistId, rawName, source }] — source is always
+//          'artist_labels' now, kept for the audit CSV.
 //
 // Returns { groups, unnamed }:
 //   groups   Map key -> { key, canonicalName, surfaceForms, entries }

@@ -1655,6 +1655,33 @@ in the automated pipeline:
 
 ---
 
+## One-off migrations
+
+- **`migrate-labels-to-organisations.mjs`** — the `artist_labels` →
+  `organisations` backfill (phase 2 of
+  `PROPOSAL-organisations.md`). Groups the flat label rows and the
+  comma-split legacy `artists.labels` strings by normalised name, creates
+  one **pending** organisation per group, and attaches each artist as
+  `associated`. A second pass turns the `label_etc` artists into
+  organisations, ports their `artist_links` into `organisation_links` and
+  soft-deletes the artist rows (`--skip-label-etc` runs pass 1 alone).
+
+  Dry-run by default and idempotent, so a second `--apply` after a partial
+  failure finishes rather than doubles. Writes three CSVs to the output
+  folder: the plan, the ambiguity report, and pass 2's actions.
+
+  ```bash
+  npm run migrate-labels-to-organisations             # dry run
+  npm run migrate-labels-to-organisations -- --apply
+  ```
+
+  **Ran against production 2026-08-23** and is not expected to run again.
+  It used to comma-split the legacy `artists.labels` column as a second
+  source; that column was dropped in phase 6 and the script no longer
+  reads it, so `artist_labels` is now its only input.
+
+---
+
 ## Utility / diagnostic scripts
 
 Not part of the pipeline; run manually when debugging.
@@ -1833,6 +1860,13 @@ Not part of the pipeline; run manually when debugging.
   library junk) flagging `genres` rows that probably aren't musical
   genres. Used by `genre-report.mjs` for its `suspected_non_genre`
   column; human-review-only, never auto-cuts.
+- **`organisation-backfill.mjs`** — pure grouping/flagging logic for the
+  one-off `artist_labels` → `organisations` backfill: normalised-name
+  grouping, canonical surface-form choice, and the ambiguity flags
+  (pronouns typed into the label field, unsplit separators, trigram
+  near-duplicates, collisions with artist names). DB-free so it can be
+  unit-tested — `organisation-backfill.test.mjs`; the Supabase half is
+  `scripts/migrate-labels-to-organisations.mjs`.
 - **`scoring.py`** — signal loading, Supabase client, pair
   enumeration, and Jaccard scoring for the Python scoring pipeline
   (see `SCORING.md`).
@@ -1861,7 +1895,12 @@ for one artist.
 /submit form → POST /api/submit
   ├─ artists                (directory_status = 'unverified';
   │                          'pending' if the email is already verified)
-  ├─ artist_labels          (labels from the form)
+  ├─ artist_organisations   (rows where the typed name MATCHED an approved
+  │                          organisation — attached straight away, role
+  │                          'associated'; the two-sided RLS policy keeps
+  │                          them hidden until the artist is approved)
+  ├─ artist_labels          (rows that matched nothing — held as flat text,
+  │                          NOT created as organisations. See below)
   ├─ pronouns               (new values created on demand; artists.pronoun_id)
   ├─ artist_locations       (city/country from the form)
   ├─ artist_links           (platform links from the form)
@@ -1874,10 +1913,33 @@ email link → /api/verify
 
 admin panel → quickApprove (src/app/admin/actions.ts)
   ├─ artists                directory_status = 'approved'
+  ├─ organisations          any artist_labels name with no organisation yet
+  │                         becomes one, status 'pending' — then needs its
+  │                         OWN approval on /admin/organisations
+  ├─ artist_organisations   the artist attached to each, role 'associated'
   └─ auto-runs single-artist image enrichment in the background
      (src/lib/scrape-images.ts — the Phase 5a core)
      [alternatives: 'rejected', 'not_eligible']
 ```
+
+**Why a typed organisation name isn't created at submit time.**
+`organisations` is a shared, cross-artist namespace with its own public
+page, and the artist row above is `unverified` when the email hasn't been
+confirmed — so creating rows there would let anyone past Turnstile write
+to it, where whoever types a name first owns its canonical spelling.
+`name_search` is indexed but not unique, so the only duplicate guard is
+application code. And it would buy nothing: the form's picker offers only
+*approved* organisations, so a pending row is invisible to the next
+submitter until an admin approves it — which is exactly when the approval
+path creates it. A rejected artist therefore leaves no organisation
+behind. The rule and its helpers live in `src/lib/organisation-writes.ts`.
+
+**Deduplication** happens at promotion, via `findOrganisationByName`,
+matching on `name_search` and deliberately **status-blind**: an existing
+pending or rejected row is reused rather than duplicated, so a rejection
+sticks instead of quietly reappearing under a new id. Near-duplicates
+("Ostgut Ton" vs "Ostgut Ton Berlin") are not caught — that is the manual
+merge tool's job.
 
 **Enrichment after approval (by design):** after approval an artist
 has only their form data and (maybe) a profile image. SoundCloud
@@ -1901,8 +1963,18 @@ email link → /api/verify    revision 'unverified' → 'pending'
 
 admin panel → approve/reject
   └─ approved: revision_data applied to artists / artist_links /
-     artist_labels / etc.
+     artist_labels / artist_organisations / etc., then the same
+     label → organisation promotion quickApprove does
 ```
+
+`revision_data` carries `organisations` (`{id?, name}[]`) from the current
+form, and `labels` (plain strings) from any revision written before the
+picker shipped. `approveRevision` applies **both** shapes — a revision
+already in the queue was written by the old form.
+
+Only the `associated` role is replaced when a revision or an edit is
+applied. `head`, `resident`, `A&R` and the rest are set on
+`/admin/organisations` and survive untouched.
 
 An approved revision that adds or changes platform links logically
 re-enters the pipeline the same way a new artist does (the changed
@@ -1910,9 +1982,13 @@ links affect Phases 2, 3, 5, 6, and 7 for that artist).
 
 ### Direct edit (admin / owner)
 
-`/artist/[id]/edit` writes `artist_aliases` and `artist_labels`
-wholesale (delete + insert), plus links and core fields, and
-auto-runs image enrichment when new image-capable links are added.
+`/artist/[id]/edit` writes `artist_aliases`, `artist_labels` and the
+`associated` `artist_organisations` rows wholesale (delete + insert),
+plus links and core fields, and auto-runs image enrichment when new
+image-capable links are added. An admin typing a name that isn't an
+organisation yet gets it created by the same promotion step — as
+`pending`, like every other route in: approving an *artist* is not the
+same judgement as deciding a label is correctly named and located.
 `artist_aliases` (alternate names) exists only in this flow — no
 pipeline script or submit form touches it.
 

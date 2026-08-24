@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  splitLegacyLabels,
   pickCanonicalName,
   groupOrganisations,
   hasSeparator,
@@ -13,24 +12,6 @@ import {
 } from "./organisation-backfill.mjs";
 
 const entry = (artistId, rawName, source = "artist_labels") => ({ artistId, rawName, source });
-
-describe("splitLegacyLabels", () => {
-  it("splits the comma-separated legacy column", () => {
-    expect(splitLegacyLabels("UMAY, BPitch Control")).toEqual(["UMAY", "BPitch Control"]);
-  });
-  it("splits on semicolons too, and trims", () => {
-    expect(splitLegacyLabels(" Tresor ;  Ostgut Ton ")).toEqual(["Tresor", "Ostgut Ton"]);
-  });
-  it("keeps ampersands and slashes intact — those are not separators here", () => {
-    expect(splitLegacyLabels("R&S Records")).toEqual(["R&S Records"]);
-    expect(splitLegacyLabels("Live From Earth / Klub")).toEqual(["Live From Earth / Klub"]);
-  });
-  it("drops empty fragments and non-strings", () => {
-    expect(splitLegacyLabels("Tresor,,")).toEqual(["Tresor"]);
-    expect(splitLegacyLabels(null)).toEqual([]);
-    expect(splitLegacyLabels("")).toEqual([]);
-  });
-});
 
 describe("pickCanonicalName", () => {
   it("takes the most common surface form", () => {

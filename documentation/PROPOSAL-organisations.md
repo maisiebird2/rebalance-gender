@@ -1,17 +1,25 @@
 # Proposal — organisations (record labels, clubs, events) as real entries
 
-> **Status: phases 1–3 built 2026-08-23; the migration has not been applied
-> to production yet.** Written 2026-08-12 from a design discussion; the four
-> shape decisions in [Decisions taken](#decisions-taken) are settled. The
-> schema, the backfill and the admin panel now exist in the repo — see
-> [How to run it](#how-to-run-it). Phases 4–6 (read path, public pages,
-> forms, cleanup) are still plan.
+> **Status: phases 1–5 shipped 2026-08-23 and live in production.** Written
+> 2026-08-12 from a design discussion; the four shape decisions in
+> [Decisions taken](#decisions-taken) are settled.
 >
-> The counts in [Where things stand](#where-things-stand) are as measured on
-> 2026-08-12 and the data has grown since; a dry run on 2026-08-23 reported
-> **478** `artist_labels` rows, **115** names from the legacy column, **238**
-> distinct organisations and **25** `label_etc` artists. Re-run the dry run
-> for current numbers rather than trusting either set.
+> The migration has been applied, the backfill has been run with `--apply`,
+> and the admin panel, public read path and forms are all in `main`. What is
+> left is **review work, not build work**: 217 of the 273 organisations are
+> still `pending` and need types, links and locations filling in by hand.
+>
+> [Phase 6](#8-cleanup) is written and waiting to be applied: one
+> `DROP COLUMN`, with `artist_labels` and the dual-read fallback both
+> deliberately kept. [Known gaps](#known-gaps) lists what the built system
+> does not handle.
+>
+> Numbers as at 2026-08-23, after the backfill: **273** organisations (217
+> pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,
+> **480** `artist_labels` rows still carrying flat text, and **0** remaining
+> live `label_etc` artists — pass 2 converted and soft-deleted all 155 of
+> them. The 2026-08-12 figures in [Where things stand](#where-things-stand)
+> are the original survey and are kept as the before picture.
 
 ---
 
@@ -34,8 +42,8 @@ location, notes, and typed relationships to the artists in the directory.
 |---|---|
 | `artist_labels` (id, artist_id, **name text**) | 314 rows across 245 artists, **208 distinct names** after normalisation. Top: BPitch Control ×39, DNB Girls ×26, Femme Bass Mafia ×10 |
 | `artists.labels` (legacy text column) | 93 rows of comma-separated strings ("UMAY, BPitch Control"). Still listed in `ARTIST_SELECT` but rendered nowhere |
-| Display | [`artist/[id]/page.tsx`](src/app/artist/[id]/page.tsx) — "Associated with: X, Y" as flat text |
-| Write paths | Three, all delete-then-reinsert: [`edit/actions.ts`](src/app/artist/[id]/edit/actions.ts), [`admin/actions.ts`](src/app/admin/actions.ts), [`api/submit/route.ts`](src/app/api/submit/route.ts) |
+| Display | [`artist/[id]/page.tsx`](../src/app/artist/[id]/page.tsx) — "Associated with: X, Y" as flat text |
+| Write paths | Three, all delete-then-reinsert: [`edit/actions.ts`](../src/app/artist/[id]/edit/actions.ts), [`admin/actions.ts`](../src/app/admin/actions.ts), [`api/submit/route.ts`](../src/app/api/submit/route.ts) |
 | Input UI | `TextList` free-text rows in the submit / revise / edit forms |
 | Related | 12 artists sit at `directory_status = 'label_etc'` (Anjunadeep, ARJUNAMUSIC, Mørk…) — organisations that were submitted as artists |
 
@@ -134,13 +142,13 @@ Public SELECT on `organisation_roles` is unrestricted, like `platforms` and
 ### Admin UI for roles
 
 A **"Organisation roles"** section on
-[`/admin/settings`](src/app/admin/settings/page.tsx), directly under "Profile
+[`/admin/settings`](../src/app/admin/settings/page.tsx), directly under "Profile
 link categories" and built as a copy of it:
 
 - `AddOrganisationRoleForm.tsx` — mirrors
-  [`AddPlatformForm.tsx`](src/app/admin/AddPlatformForm.tsx): one text input,
+  [`AddPlatformForm.tsx`](../src/app/admin/AddPlatformForm.tsx): one text input,
   one Add button, inline error/success, form reset on success.
-- `addOrganisationRole()` in [`admin/actions.ts`](src/app/admin/actions.ts) —
+- `addOrganisationRole()` in [`admin/actions.ts`](../src/app/admin/actions.ts) —
   mirrors `addPlatform()`: `requireAdmin()`, reuse the existing `slugify()`
   helper for the key, reject duplicates by key, assign
   `sort_order = max + 10`, `revalidatePath()` the affected routes.
@@ -166,12 +174,12 @@ key. Don't repeat it:
 
 - Revoke table-level SELECT on `organisations` from anon/authenticated,
   re-grant per column, **excluding `notes`** — copy
-  [`supabase_migration_artists_private_columns.sql`](supabase_migration_artists_private_columns.sql).
+  [`supabase_migration_artists_private_columns.sql`](../migrations/supabase_migration_artists_private_columns.sql).
 - RLS: public SELECT only where `status = 'approved'`; join tables visible
   only when both sides are approved (`artist_organisations` needs the
   two-sided check that `artist_labels` does one-sided today).
 - No anon INSERT — mirror
-  [`supabase_migration_artists_revoke_anon_insert.sql`](supabase_migration_artists_revoke_anon_insert.sql).
+  [`supabase_migration_artists_revoke_anon_insert.sql`](../migrations/supabase_migration_artists_revoke_anon_insert.sql).
   Public submissions create organisations server-side with the service key,
   as `pending`.
 - Column-grant caveat: new columns are private by default and must be
@@ -204,9 +212,9 @@ manual job.
 
 ## 5. Read path
 
-- [`types.ts`](src/lib/types.ts): `Organisation`, `OrganisationType`,
+- [`types.ts`](../src/lib/types.ts): `Organisation`, `OrganisationType`,
   `OrganisationRole`, `OrganisationLink`, `ArtistOrganisation`.
-- [`queries.ts`](src/lib/queries.ts): swap `label_list:artist_labels(*)` in
+- [`queries.ts`](../src/lib/queries.ts): swap `label_list:artist_labels(*)` in
   `ARTIST_SELECT` for the nested organisation select; drop the dead `labels`
   column from the select. `CARD_SELECT` is unchanged — the grid doesn't
   render this.
@@ -226,10 +234,10 @@ manual job.
 
 `/admin/organisations` — list + search, create/edit form (name, types,
 locations, links via the existing
-[`ProfileLinksFieldset`](src/components/form/ProfileLinksFieldset.tsx) and
-[`LocationList`](src/components/form/LocationList.tsx), per-artist role
+[`ProfileLinksFieldset`](../src/components/form/ProfileLinksFieldset.tsx) and
+[`LocationList`](../src/components/form/LocationList.tsx), per-artist role
 picker, notes), a moderation queue for `pending` organisations mirroring
-[`GenreModerationPanel`](src/app/admin/GenreModerationPanel.tsx), and a
+[`GenreModerationPanel`](../src/app/admin/GenreModerationPanel.tsx), and a
 **merge** action that repoints `artist_organisations` and sets
 `duplicate_of`.
 
@@ -288,7 +296,7 @@ form, and `labels: string[]` from any revision written before this shipped.
 A revision already in the queue was written by the old form and nobody is
 going to rewrite it.
 
-All of it lives in [`organisation-writes.ts`](src/lib/organisation-writes.ts)
+All of it lives in [`organisation-writes.ts`](../src/lib/organisation-writes.ts)
 — `resolveOrganisationInputs`, `attachOrganisations`,
 `promoteArtistLabelsToOrganisations` — shared by `/api/submit`,
 `approveRevision`, `quickApprove`/`quickApproveArtist` and the admin edit
@@ -296,16 +304,101 @@ form, so the rule is stated once.
 
 ## 8. Cleanup
 
-Drop `artists.labels` (already out of `ARTIST_SELECT` since phase 4) and
-remove the artist page's fallback branch once the dual-read has soaked.
+Originally "drop `artist_labels`, drop `artists.labels`, remove the fallback
+branch". Two of those three no longer apply, so what is left is smaller than
+it looks.
 
-**`artist_labels` does not simply go away, though** — that assumption did not
-survive phase 5. With submitters barred from creating organisations, the
-table stopped being "legacy flat text" and became **the staging area for
-names that haven't been resolved to an organisation yet**: it is where a
-typed name lives between submission and admin approval. Dropping it needs
-either a replacement holder or a different answer to where that text sits, so
-this phase is now a design question rather than three `DROP` statements.
+### What phase 6 actually is: dropping `artists.labels`
+
+The legacy comma-separated column, already out of `ARTIST_SELECT` since
+phase 4 and rendered nowhere. A short tail comes with it:
+
+| Also needs changing | Why |
+|---|---|
+| The `"labels"` entry in [`supabase_migration_artists_private_columns.sql`](../migrations/supabase_migration_artists_private_columns.sql) | That file is re-runnable and lists granted columns explicitly. Leaving a dropped column in it makes the whole migration fail — exactly what the file already documents happening with `linktree_url` |
+| `Artist.labels` in [`types.ts`](../src/lib/types.ts) | Already optional and marked deprecated |
+| [`migrate-labels-to-organisations.mjs`](../scripts/migrate-labels-to-organisations.mjs) | Still selects `labels` and comma-splits it (`splitLegacyLabels`). It would break on its next run, and it is idempotent precisely so it *can* be re-run |
+
+**Nothing is copied out of the column first**, and that is a reversal worth
+recording. An earlier draft of the migration rescued the names living only
+there into `artist_labels`, so the drop would be provably lossless. Measured
+against production it turned out to be unnecessary and actively harmful:
+
+- 93 artists carry a non-empty legacy column, and **7 names live only
+  there**. **Five** are already attached to that same artist as an
+  organisation — the relationship is modelled, the text is redundant.
+- The other two are both "Exhale", whose organisation an admin has since set
+  to `status = 'deleted'`. Copying the name back would undo that decision on
+  the next approval, because promotion reuses an existing row whatever its
+  status.
+- **Three of the seven are not organisations at all** — `she/they` and
+  `she/her` (pronouns typed into the wrong field) and
+  `Blind Harmonies (label owner)`. Both pronoun rows belong to **approved**
+  artists, and `artist_labels` is exactly what the artist page falls back to
+  — so the rescue would have printed a stranger's pronouns as an affiliation
+  on two live public pages that currently show nothing there.
+
+So the column is dropped as-is: what it holds is either already modelled
+properly or already been decided against.
+
+### What is NOT phase 6 any more
+
+**`artist_labels` stays.** That assumption did not survive phase 5. With
+submitters barred from creating organisations, the table stopped being
+"legacy flat text" and became **the staging area for names not yet resolved
+to an organisation** — it is where a typed name lives between submission and
+admin approval. Dropping it needs a replacement holder, which is a design
+question, not a `DROP`.
+
+**The artist page's fallback branch stays too**, and should be re-read rather
+than removed. It is no longer migration scaffolding waiting to be deleted; it
+is the permanent answer to "this artist has a label that is not yet an
+approved organisation", which is a state new submissions keep producing. Only
+its comment needs updating, to stop describing itself as temporary.
+
+---
+
+## Known gaps
+
+Phases 1–5 are shipped and working. These are the things that are *not*
+handled, recorded 2026-08-23 so they are known rather than discovered.
+
+### 1. A newly promoted organisation is indistinguishable from a backfilled one
+
+The one most likely to bite. [`/admin/organisations`](../src/app/admin/organisations/page.tsx)
+selects `id, name, status, duplicate_of` and orders by **name** —
+`created_at` is not even fetched. So an organisation promoted from a
+submission this morning lands alphabetically among the 217 pending backfilled
+rows with nothing to mark it out. `/admin` carries only a nav link, with no
+pending count and no mention in the submissions queue, so nothing signals
+that one arrived. Finding it means already knowing its name.
+
+Cheap to fix: fetch `created_at`, add a newest-first sort, put a pending
+count on `/admin`. Worth doing before the backfill queue is worked through,
+because until then new arrivals are hidden in a crowd of 217.
+
+### 2. Uniqueness is enforced only in application code
+
+`organisations.name_search` is indexed but **not unique**. The entire
+duplicate guarantee is `findOrganisationByName` at promotion time and
+`findByNormalisedName` in the admin create/rename actions. Two promotions
+racing on the same new name would both insert, and the database would not
+stop them.
+
+All 273 organisations currently have distinct `name_search` (checked
+2026-08-23), so a unique index would apply cleanly today. It needs one
+decision first: a merged loser keeps its name, so the index has to allow for
+that — most likely `WHERE duplicate_of IS NULL AND status <> 'deleted'`.
+
+### 3. Near-duplicates are never caught automatically
+
+Matching is exact-normalised only. "Ostgut Ton" and "Ostgut Ton Berlin" are
+two rows and always will be. `scripts/lib/organisation-backfill.mjs` has
+trigram near-duplicate detection (`findNearDuplicates`), but that is a
+one-off script — nothing in the running app does it, and the merge tool is
+manual and needs somebody to spot the pair first. Lifting that function into
+a "possible duplicates" panel on `/admin/organisations` is the obvious fix,
+and the biggest piece of work of the three.
 
 ---
 
@@ -318,9 +411,9 @@ this phase is now a design question rather than three `DROP` statements.
 | 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
 | 4 Read path + organisation pages | **built** | dual-read means no coupling to phase 2 finishing |
 | 5 Forms | **built** | needs approved organisations to exist |
-| 6 Cleanup | after a release of soak | |
+| 6 Cleanup | **built** | only `artists.labels`, dropped as-is — see [Cleanup](#8-cleanup) |
 
-Phases 1–3 were the agreed first pass and are the ones now in the repo.
+Phases 1–3 were the agreed first pass; 4, 5 and 6 followed the same day.
 
 ---
 

@@ -31,6 +31,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [IMAGE-HARVESTING-PLAN.md](IMAGE-HARVESTING-PLAN.md) | Image harvesting — ownership & shared policy |
 | [URL-RESOLUTION-PLAN.md](URL-RESOLUTION-PLAN.md) | URL redirect resolution |
 | [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) | Recommendation engine improvements |
+| [PROPOSAL-organisations.md](PROPOSAL-organisations.md) | Organisations (labels, clubs, events) as real entries — **phases 1–5 shipped**; keeps the `PROPOSAL-` filename because migrations and code comments link to it, and doubles as the reference |
 | [RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md](RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md) | Abandoned July sidebar work — **and the unrepaired `artist_similarity_scores` wipe that left recommendations dark in production** |
 
 ## Loose ends
@@ -43,6 +44,5 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 
 | Doc | What it covers |
 |---|---|
-| [PROPOSAL-organisations.md](PROPOSAL-organisations.md) | Labels, clubs and events as real entries |
 | [PROPOSAL-platform-links.md](PROPOSAL-platform-links.md) | Paste-to-detect platform links |
 | [PROPOSAL-provenance-purge.md](PROPOSAL-provenance-purge.md) | Platform-data provenance & cascading purge |

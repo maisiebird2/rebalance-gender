@@ -37,6 +37,12 @@
 --   the list below in the same change — leaving it would make this
 --   file fail with "column linktree_url does not exist".
 --
+--   labels went the same way, and for the same reason: the legacy
+--   comma-separated label column was superseded by artist_labels and
+--   then by organisations, and was dropped by
+--   supabase_migration_drop_artists_labels.sql. Removed from the list
+--   below in that same commit.
+--
 --   PRIVATE (not granted): admin/submission metadata and anything the
 --   public UI never shows.
 --     - notes               internal admin notes
@@ -87,7 +93,6 @@ GRANT SELECT (
   "name",
   "name_search",
   "pronoun_id",
-  "labels",
   "directory_status",
   "duplicate_of",
   "profile_image_url",

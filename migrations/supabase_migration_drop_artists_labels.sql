@@ -1,0 +1,67 @@
+-- Migration: drop the legacy artists.labels column
+--
+-- Run once in the Supabase SQL editor, AFTER
+-- supabase_migration_organisations.sql and after the backfill
+-- (npm run migrate-labels-to-organisations -- --apply) have run.
+--
+-- Phase 6 of documentation/PROPOSAL-organisations.md, and the whole of
+-- it. Two things the phase originally included are deliberately NOT
+-- here:
+--
+--   artist_labels is NOT dropped. It stopped being legacy flat text
+--   when phase 5 barred submitters from creating organisations, and is
+--   now the staging area for names not yet resolved to an organisation
+--   — where a typed name lives between submission and admin approval.
+--
+--   The artist page's dual-read fallback is NOT removed, for the same
+--   reason. It is no longer migration scaffolding; it is the permanent
+--   answer to "this artist has a label that isn't an approved
+--   organisation yet", which new submissions keep producing.
+--
+-- Why this column goes:
+--
+--   artists.labels is a single text column holding a comma-separated
+--   list ("UMAY, BPitch Control"). It predates artist_labels, which
+--   replaced it with a row per label, and it has been rendered nowhere
+--   for a long time. Phase 4 removed it from ARTIST_SELECT, so nothing
+--   in the app has read it since; after this, nothing reads it at all
+--   (scripts/migrate-labels-to-organisations.mjs stopped in the same
+--   commit).
+--
+-- Why nothing is copied out of it first:
+--
+--   An earlier draft of this migration rescued the names that live
+--   only in this column into artist_labels, so the drop would be
+--   provably lossless. Measured against production on 2026-08-23 that
+--   turned out to be both unnecessary and harmful:
+--
+--     - 7 names live only here. FIVE are already attached to that same
+--       artist as an organisation, so the relationship is preserved and
+--       the text is redundant.
+--     - The other two are both "Exhale", whose organisation an admin
+--       has since set to status='deleted'. Copying the name back would
+--       undo that decision on the next approval, since promotion
+--       reuses an existing row whatever its status.
+--     - Three of the seven are not organisations at all — "she/they"
+--       and "she/her" (pronouns typed into the wrong field) and
+--       "Blind Harmonies (label owner)". Both pronoun rows belong to
+--       APPROVED artists, and artist_labels is what the artist page
+--       falls back to, so copying them would have printed a stranger's
+--       pronouns as an affiliation on two live public pages that
+--       currently show nothing there.
+--
+--   So the column is dropped as-is. What it holds is either already
+--   modelled properly or already been decided against.
+--
+-- Safe to re-run (DROP COLUMN IF EXISTS).
+--
+-- supabase_migration_artists_private_columns.sql had "labels" removed
+-- from its GRANT list in the same commit: that file is re-runnable and
+-- names granted columns explicitly, so leaving it would make the whole
+-- migration fail with "column labels does not exist" — the trap it
+-- already documents hitting with linktree_url.
+--
+-- Dropping a column drops its column-level grants with it, so there is
+-- no REVOKE to do here.
+
+ALTER TABLE "public"."artists" DROP COLUMN IF EXISTS "labels";
