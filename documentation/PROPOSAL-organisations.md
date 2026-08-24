@@ -41,8 +41,8 @@ location, notes, and typed relationships to the artists in the directory.
 |---|---|
 | `artist_labels` (id, artist_id, **name text**) | 314 rows across 245 artists, **208 distinct names** after normalisation. Top: BPitch Control ×39, DNB Girls ×26, Femme Bass Mafia ×10 |
 | `artists.labels` (legacy text column) | 93 rows of comma-separated strings ("UMAY, BPitch Control"). Still listed in `ARTIST_SELECT` but rendered nowhere |
-| Display | [`artist/[id]/page.tsx`](src/app/artist/[id]/page.tsx) — "Associated with: X, Y" as flat text |
-| Write paths | Three, all delete-then-reinsert: [`edit/actions.ts`](src/app/artist/[id]/edit/actions.ts), [`admin/actions.ts`](src/app/admin/actions.ts), [`api/submit/route.ts`](src/app/api/submit/route.ts) |
+| Display | [`artist/[id]/page.tsx`](../src/app/artist/[id]/page.tsx) — "Associated with: X, Y" as flat text |
+| Write paths | Three, all delete-then-reinsert: [`edit/actions.ts`](../src/app/artist/[id]/edit/actions.ts), [`admin/actions.ts`](../src/app/admin/actions.ts), [`api/submit/route.ts`](../src/app/api/submit/route.ts) |
 | Input UI | `TextList` free-text rows in the submit / revise / edit forms |
 | Related | 12 artists sit at `directory_status = 'label_etc'` (Anjunadeep, ARJUNAMUSIC, Mørk…) — organisations that were submitted as artists |
 
@@ -141,13 +141,13 @@ Public SELECT on `organisation_roles` is unrestricted, like `platforms` and
 ### Admin UI for roles
 
 A **"Organisation roles"** section on
-[`/admin/settings`](src/app/admin/settings/page.tsx), directly under "Profile
+[`/admin/settings`](../src/app/admin/settings/page.tsx), directly under "Profile
 link categories" and built as a copy of it:
 
 - `AddOrganisationRoleForm.tsx` — mirrors
-  [`AddPlatformForm.tsx`](src/app/admin/AddPlatformForm.tsx): one text input,
+  [`AddPlatformForm.tsx`](../src/app/admin/AddPlatformForm.tsx): one text input,
   one Add button, inline error/success, form reset on success.
-- `addOrganisationRole()` in [`admin/actions.ts`](src/app/admin/actions.ts) —
+- `addOrganisationRole()` in [`admin/actions.ts`](../src/app/admin/actions.ts) —
   mirrors `addPlatform()`: `requireAdmin()`, reuse the existing `slugify()`
   helper for the key, reject duplicates by key, assign
   `sort_order = max + 10`, `revalidatePath()` the affected routes.
@@ -173,12 +173,12 @@ key. Don't repeat it:
 
 - Revoke table-level SELECT on `organisations` from anon/authenticated,
   re-grant per column, **excluding `notes`** — copy
-  [`supabase_migration_artists_private_columns.sql`](supabase_migration_artists_private_columns.sql).
+  [`supabase_migration_artists_private_columns.sql`](../migrations/supabase_migration_artists_private_columns.sql).
 - RLS: public SELECT only where `status = 'approved'`; join tables visible
   only when both sides are approved (`artist_organisations` needs the
   two-sided check that `artist_labels` does one-sided today).
 - No anon INSERT — mirror
-  [`supabase_migration_artists_revoke_anon_insert.sql`](supabase_migration_artists_revoke_anon_insert.sql).
+  [`supabase_migration_artists_revoke_anon_insert.sql`](../migrations/supabase_migration_artists_revoke_anon_insert.sql).
   Public submissions create organisations server-side with the service key,
   as `pending`.
 - Column-grant caveat: new columns are private by default and must be
@@ -211,9 +211,9 @@ manual job.
 
 ## 5. Read path
 
-- [`types.ts`](src/lib/types.ts): `Organisation`, `OrganisationType`,
+- [`types.ts`](../src/lib/types.ts): `Organisation`, `OrganisationType`,
   `OrganisationRole`, `OrganisationLink`, `ArtistOrganisation`.
-- [`queries.ts`](src/lib/queries.ts): swap `label_list:artist_labels(*)` in
+- [`queries.ts`](../src/lib/queries.ts): swap `label_list:artist_labels(*)` in
   `ARTIST_SELECT` for the nested organisation select; drop the dead `labels`
   column from the select. `CARD_SELECT` is unchanged — the grid doesn't
   render this.
@@ -233,10 +233,10 @@ manual job.
 
 `/admin/organisations` — list + search, create/edit form (name, types,
 locations, links via the existing
-[`ProfileLinksFieldset`](src/components/form/ProfileLinksFieldset.tsx) and
-[`LocationList`](src/components/form/LocationList.tsx), per-artist role
+[`ProfileLinksFieldset`](../src/components/form/ProfileLinksFieldset.tsx) and
+[`LocationList`](../src/components/form/LocationList.tsx), per-artist role
 picker, notes), a moderation queue for `pending` organisations mirroring
-[`GenreModerationPanel`](src/app/admin/GenreModerationPanel.tsx), and a
+[`GenreModerationPanel`](../src/app/admin/GenreModerationPanel.tsx), and a
 **merge** action that repoints `artist_organisations` and sets
 `duplicate_of`.
 
@@ -295,7 +295,7 @@ form, and `labels: string[]` from any revision written before this shipped.
 A revision already in the queue was written by the old form and nobody is
 going to rewrite it.
 
-All of it lives in [`organisation-writes.ts`](src/lib/organisation-writes.ts)
+All of it lives in [`organisation-writes.ts`](../src/lib/organisation-writes.ts)
 — `resolveOrganisationInputs`, `attachOrganisations`,
 `promoteArtistLabelsToOrganisations` — shared by `/api/submit`,
 `approveRevision`, `quickApprove`/`quickApproveArtist` and the admin edit

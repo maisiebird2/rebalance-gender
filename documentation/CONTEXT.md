@@ -61,6 +61,12 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `mb_collaborations` | Artist pairs with MusicBrainz relationship edges |
 | `artist_similarity_scores` | Computed pairwise recommendation scores (source → recommended) |
 | `artist_harvested_links` | Staging table for links harvested from SC bios etc., before integration |
+| `artist_labels` | Flat label/crew strings per artist. Superseded by `organisations` but **not** legacy — now the staging area for names not yet resolved to an organisation |
+| `organisations` | Record labels, clubs, crews, events. `status` (pending/approved/rejected/deleted), `duplicate_of` merge pointer, `name_search` generated key. `notes` is admin-only via column grants |
+| `organisation_types` / `organisation_type_links` | Type vocabulary + many-to-many join — Tresor is a club *and* a label |
+| `organisation_roles` | Role vocabulary: `associated`, `head`, `resident`, `A&R`… Editable from `/admin/settings` |
+| `artist_organisations` | Artist ↔ organisation join, with `role_key` **in the primary key** so one artist can hold several roles at one organisation |
+| `organisation_locations` / `organisation_links` | Mirror `artist_locations` / `artist_links`; links share the same `platforms` lookup |
 
 ### `directory_status` values
 
@@ -71,6 +77,7 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `rejected` | Moderated out |
 | `sc_followee` | Discovered via SoundCloud follow graph; not yet in directory |
 | `search_input` | Name entered in a search that had no directory match; not yet in directory |
+| `label_etc` | An organisation submitted through the artist form. The organisations backfill converted all 155 of these into `organisations` rows and soft-deleted the artist rows, so none are currently live |
 
 ---
 
@@ -82,10 +89,12 @@ src/
     page.tsx                    # Homepage: directory listing with filters
     artist/[id]/page.tsx        # Artist detail page
     artist/[id]/edit/           # Artist edit form (auth-gated)
+    organisation/[id]/page.tsx  # Public organisation page (noindexed for now)
     api/
       submit/route.ts           # POST — public artist submission
     admin/page.tsx              # Moderation queue (auth-gated)
     admin/missing-links/        # Find + fill artists' missing platform links (auth-gated)
+    admin/organisations/        # Organisation list, moderation queue, edit + merge (auth-gated)
     api/admin/platform-search/  # GET — top-3 profile candidates on an external platform
     submit/page.tsx             # Submission form
   components/
@@ -100,6 +109,8 @@ src/
     platforms.ts                # Platform label helpers + search-URL builder
     search-providers.ts         # Server-only per-platform artist search (missing-links)
     profile-links.ts            # Link normalization + handle derivation (shared save paths)
+    organisations.ts            # normalisedNameKey (the name_search key), role grouping, form seeding
+    organisation-writes.ts      # Server-side organisation writes shared by /api/submit and the admin approval paths
     linkify.ts                  # URL linkification for bios
 ```
 

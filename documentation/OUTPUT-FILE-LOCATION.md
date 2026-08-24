@@ -99,6 +99,16 @@ recreate it on the next run.
 | `apply-sc-followee-decisions.mjs` | `outputs/apply-sc-followee-decisions-<stamp>.csv` |
 | `bind-hoer-duplicates.mjs` | `outputs/hoer-dupe-ambiguous-<stamp>.csv`, `outputs/bind-hoer-duplicates-<stamp>.csv` |
 
+### Added since the reorganisation
+
+Scripts written after this document. They resolve through
+`scripts/lib/output-path.mjs` from the start, so there is no "before"
+column to record.
+
+| Script | Writes |
+|---|---|
+| `migrate-labels-to-organisations.mjs` | `organisations-plan-<stamp>.csv`, `organisations-ambiguity-<stamp>.csv`, `organisations-label-etc-<stamp>.csv` — all three on every run, dry or applied |
+
 ### Group D — `.cache/` — **do not move**
 
 | Script | Writes |
