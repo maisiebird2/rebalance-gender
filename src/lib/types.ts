@@ -439,7 +439,7 @@ export interface ArtistOrganisationEntry {
 }
 
 /**
- * One row of the forms' "Labels / crews" field.
+ * One row of the forms' Organisations field.
  *
  * `id` is set when the typed text resolved to an approved organisation and
  * null when it didn't. The server re-checks the id before trusting it, and
