@@ -296,16 +296,86 @@ form, so the rule is stated once.
 
 ## 8. Cleanup
 
-Drop `artists.labels` (already out of `ARTIST_SELECT` since phase 4) and
-remove the artist page's fallback branch once the dual-read has soaked.
+Originally "drop `artist_labels`, drop `artists.labels`, remove the fallback
+branch". Two of those three no longer apply, so what is left is smaller than
+it looks.
 
-**`artist_labels` does not simply go away, though** — that assumption did not
-survive phase 5. With submitters barred from creating organisations, the
-table stopped being "legacy flat text" and became **the staging area for
-names that haven't been resolved to an organisation yet**: it is where a
-typed name lives between submission and admin approval. Dropping it needs
-either a replacement holder or a different answer to where that text sits, so
-this phase is now a design question rather than three `DROP` statements.
+### What phase 6 actually is: dropping `artists.labels`
+
+The legacy comma-separated column, already out of `ARTIST_SELECT` since
+phase 4 and rendered nowhere. A short tail comes with it:
+
+| Also needs changing | Why |
+|---|---|
+| The `"labels"` entry in [`supabase_migration_artists_private_columns.sql`](../migrations/supabase_migration_artists_private_columns.sql) | That file is re-runnable and lists granted columns explicitly. Leaving a dropped column in it makes the whole migration fail — exactly what the file already documents happening with `linktree_url` |
+| `Artist.labels` in [`types.ts`](../src/lib/types.ts) | Already optional and marked deprecated |
+| [`migrate-labels-to-organisations.mjs`](../scripts/migrate-labels-to-organisations.mjs) | Still selects `labels` and comma-splits it (`splitLegacyLabels`). It would break on its next run, and it is idempotent precisely so it *can* be re-run |
+
+One thing is genuinely lost. Measured 2026-08-23: 93 artists still carry a
+non-empty legacy column, and **7 names live only there** — not in
+`artist_labels`. The backfill turned all of them into organisations, so
+nothing is lost while those organisations exist; but if one is later
+rejected, that name would then exist nowhere. Seven rows is a cheap price,
+recorded here so it is a decision rather than a surprise.
+
+### What is NOT phase 6 any more
+
+**`artist_labels` stays.** That assumption did not survive phase 5. With
+submitters barred from creating organisations, the table stopped being
+"legacy flat text" and became **the staging area for names not yet resolved
+to an organisation** — it is where a typed name lives between submission and
+admin approval. Dropping it needs a replacement holder, which is a design
+question, not a `DROP`.
+
+**The artist page's fallback branch stays too**, and should be re-read rather
+than removed. It is no longer migration scaffolding waiting to be deleted; it
+is the permanent answer to "this artist has a label that is not yet an
+approved organisation", which is a state new submissions keep producing. Only
+its comment needs updating, to stop describing itself as temporary.
+
+---
+
+## Known gaps
+
+Phases 1–5 are shipped and working. These are the things that are *not*
+handled, recorded 2026-08-23 so they are known rather than discovered.
+
+### 1. A newly promoted organisation is indistinguishable from a backfilled one
+
+The one most likely to bite. [`/admin/organisations`](../src/app/admin/organisations/page.tsx)
+selects `id, name, status, duplicate_of` and orders by **name** —
+`created_at` is not even fetched. So an organisation promoted from a
+submission this morning lands alphabetically among the 217 pending backfilled
+rows with nothing to mark it out. `/admin` carries only a nav link, with no
+pending count and no mention in the submissions queue, so nothing signals
+that one arrived. Finding it means already knowing its name.
+
+Cheap to fix: fetch `created_at`, add a newest-first sort, put a pending
+count on `/admin`. Worth doing before the backfill queue is worked through,
+because until then new arrivals are hidden in a crowd of 217.
+
+### 2. Uniqueness is enforced only in application code
+
+`organisations.name_search` is indexed but **not unique**. The entire
+duplicate guarantee is `findOrganisationByName` at promotion time and
+`findByNormalisedName` in the admin create/rename actions. Two promotions
+racing on the same new name would both insert, and the database would not
+stop them.
+
+All 273 organisations currently have distinct `name_search` (checked
+2026-08-23), so a unique index would apply cleanly today. It needs one
+decision first: a merged loser keeps its name, so the index has to allow for
+that — most likely `WHERE duplicate_of IS NULL AND status <> 'deleted'`.
+
+### 3. Near-duplicates are never caught automatically
+
+Matching is exact-normalised only. "Ostgut Ton" and "Ostgut Ton Berlin" are
+two rows and always will be. `scripts/lib/organisation-backfill.mjs` has
+trigram near-duplicate detection (`findNearDuplicates`), but that is a
+one-off script — nothing in the running app does it, and the merge tool is
+manual and needs somebody to spot the pair first. Lifting that function into
+a "possible duplicates" panel on `/admin/organisations` is the obvious fix,
+and the biggest piece of work of the three.
 
 ---
 
