@@ -1,17 +1,24 @@
 # Proposal — organisations (record labels, clubs, events) as real entries
 
-> **Status: phases 1–3 built 2026-08-23; the migration has not been applied
-> to production yet.** Written 2026-08-12 from a design discussion; the four
-> shape decisions in [Decisions taken](#decisions-taken) are settled. The
-> schema, the backfill and the admin panel now exist in the repo — see
-> [How to run it](#how-to-run-it). Phases 4–6 (read path, public pages,
-> forms, cleanup) are still plan.
+> **Status: phases 1–5 shipped 2026-08-23 and live in production.** Written
+> 2026-08-12 from a design discussion; the four shape decisions in
+> [Decisions taken](#decisions-taken) are settled.
 >
-> The counts in [Where things stand](#where-things-stand) are as measured on
-> 2026-08-12 and the data has grown since; a dry run on 2026-08-23 reported
-> **478** `artist_labels` rows, **115** names from the legacy column, **238**
-> distinct organisations and **25** `label_etc` artists. Re-run the dry run
-> for current numbers rather than trusting either set.
+> The migration has been applied, the backfill has been run with `--apply`,
+> and the admin panel, public read path and forms are all in `main`. What is
+> left is **review work, not build work**: 217 of the 273 organisations are
+> still `pending` and need types, links and locations filling in by hand.
+>
+> [Phase 6](#8-cleanup) is the only phase still outstanding, and it has
+> shrunk to dropping one column. [Known gaps](#known-gaps) lists what phases
+> 1–5 deliberately do not handle.
+>
+> Numbers as at 2026-08-23, after the backfill: **273** organisations (217
+> pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,
+> **480** `artist_labels` rows still carrying flat text, and **0** remaining
+> live `label_etc` artists — pass 2 converted and soft-deleted all 155 of
+> them. The 2026-08-12 figures in [Where things stand](#where-things-stand)
+> are the original survey and are kept as the before picture.
 
 ---
 
@@ -388,9 +395,9 @@ and the biggest piece of work of the three.
 | 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
 | 4 Read path + organisation pages | **built** | dual-read means no coupling to phase 2 finishing |
 | 5 Forms | **built** | needs approved organisations to exist |
-| 6 Cleanup | after a release of soak | |
+| 6 Cleanup | after a release of soak | now only `artists.labels` — see [Cleanup](#8-cleanup) |
 
-Phases 1–3 were the agreed first pass and are the ones now in the repo.
+Phases 1–3 were the agreed first pass; 4 and 5 followed the same day. All five are merged.
 
 ---
 
