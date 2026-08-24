@@ -150,7 +150,7 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
 
       <GenreList label="Genres" values={genres} onChange={setGenres} options={genreOptions} />
 
-      <OrganisationList label="Labels / crews" values={labelList} onChange={setLabelList}
+      <OrganisationList label="Organisations" values={labelList} onChange={setLabelList}
         options={organisationOptions} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">

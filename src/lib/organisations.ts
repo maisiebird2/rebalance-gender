@@ -14,6 +14,9 @@ import type {
   OrganisationRole,
 } from "./types";
 
+/** Mirrors DEFAULT_ROLE in organisation-writes.ts, which is server-only. */
+export const DEFAULT_ROLE_KEY = "associated";
+
 /**
  * The normalised name key — the same value Postgres stores in the
  * `name_search` generated column on both `artists` and `organisations`:
@@ -143,4 +146,50 @@ export function initialOrganisationRows(
   }
 
   return rows.length > 0 ? rows : [{ id: null, name: "" }];
+}
+
+/**
+ * The admin edit form's seeding: EVERY organisation the artist is attached
+ * to, one row per (organisation, role), plus the unresolved names.
+ *
+ * The associated-only variant above deliberately hides other roles, because
+ * the public forms can't edit them and mustn't silently drop them on save.
+ * On the admin form that same filter was a defect: an artist who is `head`
+ * of an organisation showed NOTHING for it, while their public page rendered
+ * "Head: …". The form concealed data the page displayed.
+ *
+ * The same organisation under two roles is two rows, which is the point —
+ * owner AND resident is what the composite primary key exists to allow.
+ */
+export function initialOrganisationRowsWithRoles(
+  organisations: ArtistOrganisationEntry[] | undefined,
+  labels: { name: string }[] | undefined,
+): OrganisationFormRow[] {
+  const rows: OrganisationFormRow[] = [];
+  const seenPairs = new Set<string>();
+  const seenNames = new Set<string>();
+
+  for (const entry of organisations ?? []) {
+    const nameKey = normalisedNameKey(entry.organisation.name);
+    const pair = `${nameKey}|${entry.role.key}`;
+    if (seenPairs.has(pair)) continue;
+    seenPairs.add(pair);
+    seenNames.add(nameKey);
+    rows.push({
+      id: entry.organisation.id,
+      name: entry.organisation.name,
+      role_key: entry.role.key,
+    });
+  }
+
+  // A flat label whose organisation is already attached in ANY role is
+  // the dual-read's redundant copy, not a second thing to edit.
+  for (const label of labels ?? []) {
+    const key = normalisedNameKey(label.name);
+    if (!key || seenNames.has(key)) continue;
+    seenNames.add(key);
+    rows.push({ id: null, name: label.name, role_key: DEFAULT_ROLE_KEY });
+  }
+
+  return rows.length > 0 ? rows : [{ id: null, name: "", role_key: DEFAULT_ROLE_KEY }];
 }

@@ -27,6 +27,14 @@ export const DEFAULT_ROLE = "associated";
 export interface OrganisationInput {
   id?: string | null;
   name: string;
+  /** Only honoured when the caller passes `allowRoles` — see below. */
+  role_key?: string;
+}
+
+/** A resolved organisation and the role to attach the artist in. */
+export interface ResolvedOrganisation {
+  organisationId: string;
+  roleKey: string;
 }
 
 type Admin = SupabaseClient;
@@ -44,9 +52,19 @@ type Admin = SupabaseClient;
 export async function resolveOrganisationInputs(
   admin: Admin,
   inputs: OrganisationInput[],
-): Promise<{ ids: string[]; names: string[] }> {
+  { allowRoles = false }: { allowRoles?: boolean } = {},
+): Promise<{ resolved: ResolvedOrganisation[]; names: string[] }> {
   const cleaned = inputs
-    .map((input) => ({ id: input.id ?? null, name: (input.name ?? "").trim() }))
+    .map((input) => ({
+      id: input.id ?? null,
+      name: (input.name ?? "").trim(),
+      // Roles are ADMIN-ONLY, enforced here rather than in the form: the
+      // public submit and revise paths call this without allowRoles, so a
+      // hand-edited request claiming role_key='head' still lands as
+      // 'associated'. A stranger must not be able to assert that someone
+      // runs a label.
+      roleKey: allowRoles ? (input.role_key || DEFAULT_ROLE) : DEFAULT_ROLE,
+    }))
     .filter((input) => input.name !== "");
 
   const claimedIds = [...new Set(cleaned.map((c) => c.id).filter((id): id is string => !!id))];
@@ -62,27 +80,36 @@ export async function resolveOrganisationInputs(
     for (const row of data ?? []) approved.add(row.id as string);
   }
 
-  const ids: string[] = [];
+  const resolved: ResolvedOrganisation[] = [];
+  const seen = new Set<string>();
   const names: string[] = [];
   for (const input of cleaned) {
-    if (input.id && approved.has(input.id)) ids.push(input.id);
-    else names.push(input.name);
+    if (input.id && approved.has(input.id)) {
+      // (organisation, role) is the unit — the same organisation in two
+      // roles is two rows, which is what the composite key allows.
+      const pair = `${input.id}|${input.roleKey}`;
+      if (seen.has(pair)) continue;
+      seen.add(pair);
+      resolved.push({ organisationId: input.id, roleKey: input.roleKey });
+    } else {
+      names.push(input.name);
+    }
   }
-  return { ids: [...new Set(ids)], names };
+  return { resolved, names };
 }
 
-/** Attach an artist to organisations that already exist, in the default role. */
+/** Attach an artist to organisations that already exist, in the given roles. */
 export async function attachOrganisations(
   admin: Admin,
   artistId: string,
-  organisationIds: string[],
+  resolved: ResolvedOrganisation[],
 ): Promise<void> {
-  if (organisationIds.length === 0) return;
+  if (resolved.length === 0) return;
   await admin.from("artist_organisations").upsert(
-    organisationIds.map((organisation_id) => ({
+    resolved.map((r) => ({
       artist_id: artistId,
-      organisation_id,
-      role_key: DEFAULT_ROLE,
+      organisation_id: r.organisationId,
+      role_key: r.roleKey,
     })),
     { onConflict: "artist_id,organisation_id,role_key", ignoreDuplicates: true },
   );
@@ -167,6 +194,10 @@ export async function promoteArtistLabelsToOrganisations(
     created++;
   }
 
-  await attachOrganisations(admin, artistId, ids);
+  await attachOrganisations(
+    admin,
+    artistId,
+    ids.map((organisationId) => ({ organisationId, roleKey: DEFAULT_ROLE })),
+  );
   return { created, attached: ids.length };
 }

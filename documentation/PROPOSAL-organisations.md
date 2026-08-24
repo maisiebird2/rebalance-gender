@@ -246,7 +246,7 @@ Merge is the one that matters long-term: free-text entry will keep producing
 
 ## 7. Forms (submit / revise / edit)
 
-`TextList` on "Labels / crews" is replaced by `OrganisationList`: a native
+The "Labels / crews" `TextList` is replaced by an **Organisations** field using `OrganisationList`: a native
 `<input list>` + `<datalist>` over the approved organisations. Type-ahead
 over real entries, still accepts a name that isn't one, and no custom
 dropdown state to get wrong. Matching is on the normalised name key, so
@@ -287,9 +287,30 @@ correctly named, typed and located" — that judgement happens on
 `/admin/organisations`. The dual-read keeps showing the flat text meanwhile,
 so nothing is lost by waiting.
 
-The field manages only the `associated` role. Head, resident, A&R and the
-rest are set on `/admin/organisations`, and the apply paths scope their
-deletes to `associated` so those survive an edit untouched.
+**Roles are admin-only, and the split is enforced on the server.**
+
+- The **public** submit and revise forms show no role picker and post no
+  role. `resolveOrganisationInputs` is called without `allowRoles` there, so
+  a hand-edited request claiming `role_key: 'head'` still lands as
+  `associated`. A stranger must not be able to assert that somebody runs a
+  label, and `associated` is exactly what the old flat text meant anyway.
+  Those paths scope their deletes to `associated`, so roles an admin set
+  survive a public revision untouched.
+- The **admin** edit form shows every organisation the artist is attached
+  to, with a per-row role picker, and owns the complete set — so its delete
+  is unscoped, because removing a row there must actually remove it.
+
+This corrected a defect (2026-08-23). The admin form originally reused the
+public seeding, which filters to `associated` — so an artist who was `head`
+of an organisation saw an **empty box**, while their public page rendered
+"Head: …". Ten associations were invisible that way, including Gabrielle
+Rites, who holds two roles at one organisation. `initialOrganisationRows`
+(public, associated-only) and `initialOrganisationRowsWithRoles` (admin, all
+roles) are now separate functions so the two can't be confused again.
+
+A newly typed name still promotes as `associated` regardless of the picker:
+its organisation doesn't exist yet, and the row is created by the promotion
+step. The form says so rather than silently dropping the choice.
 
 `RevisionData` accepts **both** shapes: `organisations` from the current
 form, and `labels: string[]` from any revision written before this shipped.

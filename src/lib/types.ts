@@ -449,6 +449,14 @@ export interface ArtistOrganisationEntry {
 export interface OrganisationFormRow {
   id: string | null;
   name: string;
+  /**
+   * The role held at this organisation. Only the ADMIN edit form sets it —
+   * the public submit and revise forms leave it undefined and the server
+   * forces 'associated' regardless of what the browser posts, because a
+   * stranger must not be able to assert that someone is head of a label.
+   * See resolveOrganisationInputs()'s `allowRoles`.
+   */
+  role_key?: string;
 }
 
 /** The inverse: one artist attached to an organisation, with their role. */

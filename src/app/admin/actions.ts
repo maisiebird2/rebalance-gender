@@ -372,7 +372,10 @@ export async function approveRevision(
     rd.organisations ?? rd.labels?.map((name) => ({ name })) ?? null;
 
   if (revisionOrganisations?.length) {
-    const { ids, names } = await resolveOrganisationInputs(admin, revisionOrganisations);
+    // No allowRoles: the revise form is public, so whatever it posts can
+    // only become 'associated'. Roles the admin set on the organisation
+    // page are a different scope and survive the delete below.
+    const { resolved, names } = await resolveOrganisationInputs(admin, revisionOrganisations);
 
     // The revision owns the complete set, so both sides are replaced.
     await admin.from("artist_labels").delete().eq("artist_id", artistId);
@@ -387,7 +390,7 @@ export async function approveRevision(
         names.map((name) => ({ artist_id: artistId, name }))
       );
     }
-    await attachOrganisations(admin, artistId, ids);
+    await attachOrganisations(admin, artistId, resolved);
     await promoteArtistLabelsToOrganisations(admin, artistId);
   }
 
