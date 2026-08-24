@@ -28,8 +28,8 @@ const DEFAULT_ROLE_KEY = "associated";
 const EMPTY: OrganisationFormRow = { id: null, name: "", role_key: DEFAULT_ROLE_KEY };
 
 /**
- * A repeatable list of organisation inputs — the replacement for the
- * free-text `TextList` on "Labels / crews".
+ * A repeatable list of organisation inputs — the Organisations field,
+ * replacing the free-text `TextList` that used to be "Labels / crews".
  *
  * Deliberately a native <input list> + <datalist> rather than a custom
  * dropdown. It gives type-ahead over the approved organisations, still

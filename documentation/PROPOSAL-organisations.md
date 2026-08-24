@@ -9,10 +9,14 @@
 > left is **review work, not build work**: 217 of the 273 organisations are
 > still `pending` and need types, links and locations filling in by hand.
 >
-> [Phase 6](#8-cleanup) is written and waiting to be applied: one
-> `DROP COLUMN`, with `artist_labels` and the dual-read fallback both
-> deliberately kept. [Known gaps](#known-gaps) lists what the built system
-> does not handle.
+> **[Phase 6](#8-cleanup)'s code is merged but its SQL has not been run.**
+> Nothing reads `artists.labels` any more, so there is no rush and no
+> breakage — but the column is still there until
+> [`supabase_migration_drop_artists_labels.sql`](../migrations/supabase_migration_drop_artists_labels.sql)
+> is pasted into the Supabase SQL editor. `artist_labels` and the artist
+> page's dual-read fallback are both deliberately kept.
+>
+> [Known gaps](#known-gaps) lists what the built system does not handle.
 >
 > Numbers as at 2026-08-23, after the backfill: **273** organisations (217
 > pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,

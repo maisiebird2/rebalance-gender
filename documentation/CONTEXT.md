@@ -65,7 +65,7 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `organisations` | Record labels, clubs, crews, events. `status` (pending/approved/rejected/deleted), `duplicate_of` merge pointer, `name_search` generated key. `notes` is admin-only via column grants |
 | `organisation_types` / `organisation_type_links` | Type vocabulary + many-to-many join — Tresor is a club *and* a label |
 | `organisation_roles` | Role vocabulary: `associated`, `head`, `resident`, `A&R`… Editable from `/admin/settings` |
-| `artist_organisations` | Artist ↔ organisation join, with `role_key` **in the primary key** so one artist can hold several roles at one organisation |
+| `artist_organisations` | Artist ↔ organisation join, with `role_key` **in the primary key** so one artist can hold several roles at one organisation. Editable from both sides in the admin panel; public forms can only ever write `associated` |
 | `organisation_locations` / `organisation_links` | Mirror `artist_locations` / `artist_links`; links share the same `platforms` lookup |
 
 ### `directory_status` values
@@ -102,6 +102,9 @@ src/
     RecommendedArtists.tsx      # "You might also like" strip on artist pages
     FilterBar.tsx               # Genre/country/search filters
     BandcampWidget.tsx          # Embedded Bandcamp player
+    form/OrganisationList.tsx   # The Organisations field, shared by submit/revise/edit.
+                                # <input list> + <datalist> over approved organisations;
+                                # a role picker appears only when `roles` is passed (admin)
   lib/
     supabase.ts                 # Supabase client helpers
     queries.ts                  # All data-fetching functions (inc. getRecommendedArtists)

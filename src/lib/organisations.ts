@@ -108,7 +108,7 @@ export function roleHeading(role: OrganisationRole, direction: RoleDirection): s
 }
 
 /**
- * Seed the forms' "Labels / crews" field from an artist's current data.
+ * Seed the forms' Organisations field from an artist's current data.
  *
  * Two sources, because the migration is mid-flight: organisations already
  * attached (which carry an id) and `artist_labels` names that haven't

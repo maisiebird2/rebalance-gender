@@ -1972,9 +1972,17 @@ form, and `labels` (plain strings) from any revision written before the
 picker shipped. `approveRevision` applies **both** shapes — a revision
 already in the queue was written by the old form.
 
-Only the `associated` role is replaced when a revision or an edit is
-applied. `head`, `resident`, `A&R` and the rest are set on
-`/admin/organisations` and survive untouched.
+Only the `associated` role is replaced when a **revision** is applied.
+`head`, `resident`, `A&R` and the rest survive untouched, because the
+revise form is public and can neither see nor set them.
+
+That restriction is enforced on the SERVER, not by the absence of a UI
+control: `resolveOrganisationInputs()` takes an `allowRoles` flag which
+the submit and revise paths do not pass, so a hand-edited request
+claiming `role_key: 'head'` still lands as `associated`. A stranger must
+not be able to assert that somebody runs a label.
+
+The admin edit form is the exception — see "Direct edit" below.
 
 An approved revision that adds or changes platform links logically
 re-enters the pipeline the same way a new artist does (the changed
@@ -1982,10 +1990,21 @@ links affect Phases 2, 3, 5, 6, and 7 for that artist).
 
 ### Direct edit (admin / owner)
 
-`/artist/[id]/edit` writes `artist_aliases`, `artist_labels` and the
-`associated` `artist_organisations` rows wholesale (delete + insert),
-plus links and core fields, and auto-runs image enrichment when new
-image-capable links are added. An admin typing a name that isn't an
+`/artist/[id]/edit` writes `artist_aliases`, `artist_labels` and
+`artist_organisations` wholesale (delete + insert), plus links and core
+fields, and auto-runs image enrichment when new image-capable links are
+added.
+
+Unlike the public paths this covers **every role**, not just
+`associated`: the form shows each organisation the artist is attached to
+with a role picker, and owns the complete set — so its delete is
+unscoped, because removing a row here has to actually remove it. It calls
+`resolveOrganisationInputs()` with `allowRoles`.
+
+(Until 2026-08-23 this form reused the public seeding, which filters to
+`associated` — so an artist who was `head` of an organisation saw an
+empty box while their public page rendered "Head: …". Ten associations
+were hidden that way.) An admin typing a name that isn't an
 organisation yet gets it created by the same promotion step — as
 `pending`, like every other route in: approving an *artist* is not the
 same judgement as deciding a label is correctly named and located.

@@ -29,7 +29,7 @@ interface SubmitBody {
   pronouns?: string;
   genres?: string[];
   /**
-   * Labels / crews / clubs as the form now posts them: an `id` when the
+   * The Organisations field as the form now posts it: an `id` when the
    * typed text matched an approved organisation, just a `name` when it
    * didn't. `labels` (plain strings) is still accepted for any client
    * that hasn't been updated.
