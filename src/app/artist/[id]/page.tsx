@@ -5,7 +5,7 @@ import { groupByRole, roleHeading } from "@/lib/organisations";
 import {
   getPlatforms,
   platformLabel,
-  PLATFORMS_HIDDEN_ON_ARTIST_PAGE,
+  visiblePublicLinks,
 } from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
 import { getViewer } from "@/lib/admin-auth";
@@ -57,13 +57,11 @@ export default async function ArtistPage({ params }: PageProps) {
     .filter(Boolean)
     .join(", ");
 
-  // Profile links shown to visitors: drop not-found/empty links, and hide the
+  // Profile links shown to visitors: drop not-found/empty links and the
   // platforms that are directory data sources rather than clickable profiles
-  // (MusicBrainz, Last.fm). Those links are still stored; see
-  // PLATFORMS_HIDDEN_ON_ARTIST_PAGE.
-  const visibleLinks = artist.links?.filter(
-    (l) => !l.not_found && l.url && !PLATFORMS_HIDDEN_ON_ARTIST_PAGE.has(l.platform)
-  );
+  // (Spotify, MusicBrainz, Last.fm), then order them as the page presents
+  // them. Hidden links are still stored; see PUBLIC_PAGE_PLATFORM_ORDER.
+  const visibleLinks = visiblePublicLinks(artist.links);
 
   const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
