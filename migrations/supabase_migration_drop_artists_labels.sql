@@ -4,7 +4,7 @@
 -- supabase_migration_organisations.sql and after the backfill
 -- (npm run migrate-labels-to-organisations -- --apply) have run.
 --
--- Phase 6 of documentation/PROPOSAL-organisations.md, and the whole of
+-- Phase 6 of documentation/ORGANISATIONS.md, and the whole of
 -- it. Two things the phase originally included are deliberately NOT
 -- here:
 --

@@ -1,7 +1,7 @@
 "use server";
 
 // Server actions for /admin/organisations — phase 3 of
-// documentation/PROPOSAL-organisations.md.
+// documentation/ORGANISATIONS.md.
 //
 // Every action here writes (or reads any-status data) through the
 // service-role client, so each is gated on ADMIN_EMAILS membership rather

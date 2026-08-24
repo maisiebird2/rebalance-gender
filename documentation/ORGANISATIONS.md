@@ -1,46 +1,46 @@
-# Proposal — organisations (record labels, clubs, events) as real entries
+# Organisations — record labels, clubs and events as real entries
 
-> **Status: phases 1–5 shipped 2026-08-23 and live in production.** Written
-> 2026-08-12 from a design discussion; the four shape decisions in
-> [Decisions taken](#decisions-taken) are settled.
+> **Status: done.** All six phases are built, merged and applied to
+> production, as of 2026-08-23. There is no outstanding migration and no
+> outstanding code.
 >
-> The migration has been applied, the backfill has been run with `--apply`,
-> and the admin panel, public read path and forms are all in `main`. What is
-> left is **review work, not build work**: 217 of the 273 organisations are
-> still `pending` and need types, links and locations filling in by hand.
+> This began as a proposal, written 2026-08-12 from a design discussion, and
+> is kept as the reference for the system that came out of it — the design,
+> the reasoning, and the decisions that were reversed along the way. The
+> numbered sections below describe what exists, not what was planned; where a
+> decision changed during the build, the section says so and why.
 >
-> **[Phase 6](#8-cleanup)'s code is merged but its SQL has not been run.**
-> Nothing reads `artists.labels` any more, so there is no rush and no
-> breakage — but the column is still there until
-> [`supabase_migration_drop_artists_labels.sql`](../migrations/supabase_migration_drop_artists_labels.sql)
-> is pasted into the Supabase SQL editor. `artist_labels` and the artist
-> page's dual-read fallback are both deliberately kept.
+> **What is left is review work, not build work.** 217 of the 273
+> organisations are still `pending` and need types, links and locations
+> filling in by hand at [`/admin/organisations`](../src/app/admin/organisations/page.tsx).
+> [Known gaps](#known-gaps) lists the three things the built system
+> deliberately does not handle.
 >
-> [Known gaps](#known-gaps) lists what the built system does not handle.
->
-> Numbers as at 2026-08-23, after the backfill: **273** organisations (217
-> pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,
-> **480** `artist_labels` rows still carrying flat text, and **0** remaining
-> live `label_etc` artists — pass 2 converted and soft-deleted all 155 of
-> them. The 2026-08-12 figures in [Where things stand](#where-things-stand)
-> are the original survey and are kept as the before picture.
+> Numbers as at 2026-08-23, just after the backfill: **273** organisations
+> (217 pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,
+> **480** `artist_labels` rows still carrying unresolved flat text, and **0**
+> remaining live `label_etc` artists — pass 2 converted and soft-deleted all
+> 155 of them.
 
 ---
 
-## The problem
+## The problem this solved
 
-An artist's record labels, crews, clubs and events are stored as **flat
-strings** in `artist_labels(artist_id, name)`. Nothing can be said about the
+An artist's record labels, crews, clubs and events **were** stored as flat
+strings in `artist_labels(artist_id, name)`. Nothing could be said about the
 thing named: no links, no type, no location, no notes, no way to record who
-runs it, and no way to know that "Ostgut Ton" on one artist is the same
+ran it, and no way to know that "Ostgut Ton" on one artist was the same
 organisation as "ostgut ton" on another.
 
-This proposal gives each organisation its own row, with links, a type, a
-location, notes, and typed relationships to the artists in the directory.
+Each organisation now has its own row, with links, types, a location, notes,
+and typed relationships to the artists in the directory.
 
 ---
 
-## Where things stand
+## Where things stood before the work
+
+The original survey, kept as the "before" picture. Every row below has since
+changed — the current figures are in the status block at the top.
 
 | Thing | Reality (measured 2026-08-12) |
 |---|---|
@@ -51,9 +51,14 @@ location, notes, and typed relationships to the artists in the directory.
 | Input UI | `TextList` free-text rows in the submit / revise / edit forms |
 | Related | 12 artists sit at `directory_status = 'label_etc'` (Anjunadeep, ARJUNAMUSIC, Mørk…) — organisations that were submitted as artists |
 
-Data quality is good: only 3 rows contain separators, no URLs, and one junk row
-(`she/they`, typed into the wrong field). 208 entities is small enough to
+Data quality was good: only 3 rows contained separators, no URLs, and one junk
+row (`she/they`, typed into the wrong field). 208 entities was small enough to
 review by hand in one sitting.
+
+By the time the backfill actually ran the data had grown — 480 `artist_labels`
+rows, 238 distinct organisations, 155 `label_etc` artists — which is why the
+[How to run it](#how-to-run-it) section says to trust a fresh dry run over any
+number written down.
 
 ---
 
@@ -167,9 +172,9 @@ needs correcting more often than platform vocabulary does:
   enforces it at the database level anyway) and report how many associations
   block it, rather than surfacing a raw Postgres error.
 
-Shipping add-only first, at parity with the platforms panel, is acceptable —
-the FK guard still prevents damage — but the rename is cheap and will be
-wanted the first time "A&R" gets typed as "AR".
+Both were built, not just the add form: the rename is what makes "A&R" typed
+as "AR" a one-field fix rather than a migration, and the guarded delete turns
+the `restrict` FK's raw Postgres error into a count of what is blocking it.
 
 ## 3. Security (same migration, not a follow-up)
 
@@ -438,7 +443,18 @@ and the biggest piece of work of the three.
 | 5 Forms | **built** | needs approved organisations to exist |
 | 6 Cleanup | **built** | only `artists.labels`, dropped as-is — see [Cleanup](#8-cleanup) |
 
-Phases 1–3 were the agreed first pass; 4, 5 and 6 followed the same day.
+Phases 1–3 were the agreed first pass; 4, 5 and 6 followed the same day. All
+six are merged and applied.
+
+Two things changed shape during the build, and both are worth knowing before
+reading the sections above as gospel:
+
+- **Phase 5 reversed a decision from §3** — a name typed into a form does not
+  create an organisation. See [Forms](#7-forms-submit--revise--edit).
+- **Phase 6 shrank** from three drops to one. `artist_labels` stopped being
+  legacy the moment submitters were barred from creating organisations; it is
+  now the staging area for unresolved names, and the artist page's dual-read
+  fallback is permanent rather than scaffolding. See [Cleanup](#8-cleanup).
 
 ---
 
@@ -480,7 +496,7 @@ Three CSVs land in the output folder either way:
 The ambiguity reasons, in the order they are reported:
 
 - `pronouns_in_label` — every word is a pronoun; somebody typed the wrong
-  field. The `she/they` row the proposal predicted, plus a `she/her`.
+  field. The `she/they` row the original survey predicted, plus a `she/her`.
 - `matches_pronoun_row` — matches a row in the `pronouns` table but doesn't
   read as pronouns. This points the *other* way: production has a pronouns
   row reading `BØX collectif`, which is an organisation name typed into the

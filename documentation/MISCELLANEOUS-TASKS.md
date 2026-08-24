@@ -172,10 +172,11 @@ only fires when someone runs `npm test` locally; wiring up a workflow is a
 separate job.
 
 One implementation trap, hit while measuring this: matching link targets with
-a pattern like `\]\(([A-Z0-9_-]+\.md)\)` silently misses
-`PROPOSAL-organisations.md`, because the filenames mix upper and lower case.
-Use `[\w.-]+\.md` and compare against the real directory listing rather than
-assuming a naming shape.
+a pattern like `\]\(([A-Z0-9_-]+\.md)\)` silently missed
+`PROPOSAL-organisations.md` (since renamed to `ORGANISATIONS.md`), because
+that filename mixed upper and lower case. The specific file is gone, but the
+lesson isn't: use `[\w.-]+\.md` and compare against the real directory
+listing rather than assuming a naming shape.
 
 ### Worth deciding at the same time
 

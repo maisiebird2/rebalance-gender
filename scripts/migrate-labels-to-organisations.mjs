@@ -2,7 +2,7 @@
 // ============================================================
 // Backfill: artist_labels (flat strings) -> organisations (real rows)
 //
-// Phase 2 of documentation/PROPOSAL-organisations.md. Run
+// Phase 2 of documentation/ORGANISATIONS.md. Run
 // migrations/supabase_migration_organisations.sql first.
 //
 // What it does

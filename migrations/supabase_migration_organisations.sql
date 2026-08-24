@@ -4,7 +4,7 @@
 --   npm run migrate-labels-to-organisations            (dry run)
 --   npm run migrate-labels-to-organisations -- --apply
 --
--- Phase 1 of documentation/PROPOSAL-organisations.md. Safe to re-run
+-- Phase 1 of documentation/ORGANISATIONS.md. Safe to re-run
 -- (CREATE ... IF NOT EXISTS, guarded seeds, idempotent GRANT/REVOKE and
 -- policy drops); the whole thing is one transaction.
 --
