@@ -61,7 +61,7 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `mb_collaborations` | Artist pairs with MusicBrainz relationship edges |
 | `artist_similarity_scores` | Computed pairwise recommendation scores (source → recommended) |
 | `artist_harvested_links` | Staging table for links harvested from SC bios etc., before integration |
-| `artist_labels` | Flat label/crew strings per artist. Superseded by `organisations` but **not** legacy — now the staging area for names not yet resolved to an organisation |
+| `artist_labels` | Flat label/crew strings per artist. Superseded by `organisations` but **not** legacy — now the staging area for names not yet resolved to an organisation. (The older `artists.labels` text column it replaced was dropped in phase 6 of the organisations work.) |
 | `organisations` | Record labels, clubs, crews, events. `status` (pending/approved/rejected/deleted), `duplicate_of` merge pointer, `name_search` generated key. `notes` is admin-only via column grants |
 | `organisation_types` / `organisation_type_links` | Type vocabulary + many-to-many join — Tresor is a club *and* a label |
 | `organisation_roles` | Role vocabulary: `associated`, `head`, `resident`, `A&R`… Editable from `/admin/settings` |

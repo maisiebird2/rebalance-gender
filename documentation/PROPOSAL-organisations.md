@@ -9,9 +9,10 @@
 > left is **review work, not build work**: 217 of the 273 organisations are
 > still `pending` and need types, links and locations filling in by hand.
 >
-> [Phase 6](#8-cleanup) is the only phase still outstanding, and it has
-> shrunk to dropping one column. [Known gaps](#known-gaps) lists what phases
-> 1–5 deliberately do not handle.
+> [Phase 6](#8-cleanup) is written and waiting to be applied: one
+> `DROP COLUMN`, with `artist_labels` and the dual-read fallback both
+> deliberately kept. [Known gaps](#known-gaps) lists what the built system
+> does not handle.
 >
 > Numbers as at 2026-08-23, after the backfill: **273** organisations (217
 > pending, 55 approved, 1 deleted), **491** `artist_organisations` rows,
@@ -318,12 +319,27 @@ phase 4 and rendered nowhere. A short tail comes with it:
 | `Artist.labels` in [`types.ts`](../src/lib/types.ts) | Already optional and marked deprecated |
 | [`migrate-labels-to-organisations.mjs`](../scripts/migrate-labels-to-organisations.mjs) | Still selects `labels` and comma-splits it (`splitLegacyLabels`). It would break on its next run, and it is idempotent precisely so it *can* be re-run |
 
-One thing is genuinely lost. Measured 2026-08-23: 93 artists still carry a
-non-empty legacy column, and **7 names live only there** — not in
-`artist_labels`. The backfill turned all of them into organisations, so
-nothing is lost while those organisations exist; but if one is later
-rejected, that name would then exist nowhere. Seven rows is a cheap price,
-recorded here so it is a decision rather than a surprise.
+**Nothing is copied out of the column first**, and that is a reversal worth
+recording. An earlier draft of the migration rescued the names living only
+there into `artist_labels`, so the drop would be provably lossless. Measured
+against production it turned out to be unnecessary and actively harmful:
+
+- 93 artists carry a non-empty legacy column, and **7 names live only
+  there**. **Five** are already attached to that same artist as an
+  organisation — the relationship is modelled, the text is redundant.
+- The other two are both "Exhale", whose organisation an admin has since set
+  to `status = 'deleted'`. Copying the name back would undo that decision on
+  the next approval, because promotion reuses an existing row whatever its
+  status.
+- **Three of the seven are not organisations at all** — `she/they` and
+  `she/her` (pronouns typed into the wrong field) and
+  `Blind Harmonies (label owner)`. Both pronoun rows belong to **approved**
+  artists, and `artist_labels` is exactly what the artist page falls back to
+  — so the rescue would have printed a stranger's pronouns as an affiliation
+  on two live public pages that currently show nothing there.
+
+So the column is dropped as-is: what it holds is either already modelled
+properly or already been decided against.
 
 ### What is NOT phase 6 any more
 
@@ -395,9 +411,9 @@ and the biggest piece of work of the three.
 | 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
 | 4 Read path + organisation pages | **built** | dual-read means no coupling to phase 2 finishing |
 | 5 Forms | **built** | needs approved organisations to exist |
-| 6 Cleanup | after a release of soak | now only `artists.labels` — see [Cleanup](#8-cleanup) |
+| 6 Cleanup | **built** | only `artists.labels`, dropped as-is — see [Cleanup](#8-cleanup) |
 
-Phases 1–3 were the agreed first pass; 4 and 5 followed the same day. All five are merged.
+Phases 1–3 were the agreed first pass; 4, 5 and 6 followed the same day.
 
 ---
 

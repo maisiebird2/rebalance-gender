@@ -7,9 +7,8 @@
 //
 // What it does
 //
-//   Pass 1  Reads the artist_labels rows and comma-splits the legacy
-//           artists.labels strings, groups them by normalised name,
-//           creates one PENDING organisation per group, and attaches
+//   Pass 1  Reads the artist_labels rows, groups them by normalised
+//           name, creates one PENDING organisation per group, and attaches
 //           each artist with role_key = 'associated' — which is exactly
 //           what today's flat text means.
 //
@@ -23,8 +22,16 @@
 //
 // What it does NOT do
 //
-//   artist_labels and artists.labels are left untouched — the read path
-//   dual-reads during the transition and the old columns go in phase 8.
+//   artist_labels is left untouched. It is not legacy: it holds the
+//   names that have not been resolved to an organisation yet, and the
+//   artist page dual-reads from it.
+//
+//   This used to comma-split the legacy artists.labels column as a
+//   second source. That column was dropped by
+//   supabase_migration_drop_artists_labels.sql without copying anything
+//   out of it: of the seven names that lived only there, five were
+//   already attached to the same artist as an organisation and the rest
+//   had been decided against. artist_labels is now the only input.
 //   Nothing gets a type, location or link automatically either; that is
 //   the hand work the admin panel exists for.
 //
@@ -57,7 +64,6 @@ import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { outputPath } from "./lib/output-path.mjs";
 import { writeCSV, timestamp } from "./lib/hoer-resolve.mjs";
 import {
-  splitLegacyLabels,
   groupOrganisations,
   buildAmbiguityReport,
   isHandledByLabelEtcPass,
@@ -124,7 +130,7 @@ async function loadState() {
   const [labelRows, artistRows, pronounRows, existingOrgs, existingAssociations] =
     await Promise.all([
       fetchAll("artist_labels", "id, artist_id, name"),
-      fetchAll("artists", "id, name, name_search, directory_status, deleted, labels"),
+      fetchAll("artists", "id, name, name_search, directory_status, deleted"),
       fetchAll("pronouns", "id, value"),
       fetchAllOptional("organisations", "id, name, name_search, status"),
       fetchAllOptional("artist_organisations", "artist_id, organisation_id, role_key", (q) => q, [
@@ -157,19 +163,14 @@ async function main() {
 
   // ── Pass 1: group the flat strings ───────────────────────────────
 
-  const entries = [];
-  for (const row of state.labelRows) {
-    entries.push({ artistId: row.artist_id, rawName: row.name, source: "artist_labels" });
-  }
-  for (const artist of state.artistRows) {
-    for (const name of splitLegacyLabels(artist.labels)) {
-      entries.push({ artistId: artist.id, rawName: name, source: "artists.labels" });
-    }
-  }
+  const entries = state.labelRows.map((row) => ({
+    artistId: row.artist_id,
+    rawName: row.name,
+    source: "artist_labels",
+  }));
 
   const { groups, unnamed } = groupOrganisations(entries);
   log(`  ${state.labelRows.length} artist_labels rows`);
-  log(`  ${entries.length - state.labelRows.length} names from the legacy artists.labels column`);
   log(`  ${groups.size} distinct organisations after normalisation`);
   if (unnamed.length) {
     log(`  ${unnamed.length} row(s) whose name is punctuation only — skipped`);

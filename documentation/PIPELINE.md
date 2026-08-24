@@ -1676,9 +1676,9 @@ in the automated pipeline:
   ```
 
   **Ran against production 2026-08-23** and is not expected to run again.
-  It still reads `artists.labels`, so dropping that column means updating
-  this script first — see the cleanup section of
-  `PROPOSAL-organisations.md`.
+  It used to comma-split the legacy `artists.labels` column as a second
+  source; that column was dropped in phase 6 and the script no longer
+  reads it, so `artist_labels` is now its only input.
 
 ---
 

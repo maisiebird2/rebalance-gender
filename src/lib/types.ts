@@ -205,15 +205,6 @@ export interface Artist {
   name: string;
   pronoun_id: number | null;
   /**
-   * DEPRECATED legacy column: a comma-separated label string that predates
-   * artist_labels and is superseded by organisations. Nothing renders it and
-   * ARTIST_SELECT no longer requests it, so it is absent from rows loaded
-   * through queries.ts — hence optional. The backfill still reads it directly
-   * (service role) to recover the 115 names only this column carries. Dropped
-   * in the organisations cleanup phase.
-   */
-  labels?: string | null;
-  /**
    * PRIVATE column (admin-only internal notes). anon/authenticated have no
    * SELECT grant on it — see supabase_migration_artists_private_columns.sql —
    * so it is absent from rows loaded through the public client (whose
