@@ -1,9 +1,9 @@
 # Admin reports
 
 The admin **Reports** page (`/admin/reports`) is a small collection of one-off
-diagnostic reports. Each is registered in [`src/lib/reports.ts`](src/lib/reports.ts)
-and rendered as a card by [`src/app/admin/reports/page.tsx`](src/app/admin/reports/page.tsx)
-via [`ReportButton.tsx`](src/app/admin/reports/ReportButton.tsx). The page is
+diagnostic reports. Each is registered in [`src/lib/reports.ts`](../src/lib/reports.ts)
+and rendered as a card by [`src/app/admin/reports/page.tsx`](../src/app/admin/reports/page.tsx)
+via [`ReportButton.tsx`](../src/app/admin/reports/ReportButton.tsx). The page is
 auth-guarded like the rest of `/admin`.
 
 There are two kinds of report:
@@ -22,7 +22,7 @@ that failed to harvest — with the `artist_id` replaced by the artist's name,
 hyperlinked to their edit page. Columns: artist, URL, status, detail, service,
 occurred at.
 
-**How:** [`/api/admin/reports/harvest-failures`](src/app/api/admin/reports/harvest-failures/route.ts)
+**How:** [`/api/admin/reports/harvest-failures`](../src/app/api/admin/reports/harvest-failures/route.ts)
 pages through `harvest_failures` (embedding `artists` via the
 `harvest_failures_artist_id_fkey` FK) and builds the `.ods`. The table is small,
 so a plain server-side download is fine here.
@@ -43,7 +43,7 @@ serverless download it repeatedly blew up:
 - Reading the SoundCloud permalink out of the `api_response_cache.payload` JSONB
   **detoasts** the large blob for every row. Fixed by a generated column,
   `api_response_cache.permalink_url`
-  ([`supabase_migration_cache_permalink_url.sql`](supabase_migration_cache_permalink_url.sql)),
+  ([`supabase_migration_cache_permalink_url.sql`](../migrations/supabase_migration_cache_permalink_url.sql)),
   which materializes `payload->>'permalink_url'` as a cheap text column.
 - Even then, paging ~135k rows over PostgREST (hard-capped at 1000 rows/request)
   is ~135 sequential round-trips. That ran ~30s+ and tripped Postgres'
@@ -54,9 +54,9 @@ The same match runs in **~20s as a single query in the Supabase SQL editor**
 hands you that query instead of trying to run it in a route.
 
 **The query** lives in two places, kept in sync:
-[`scripts/find-sc-followee-duplicates.sql`](scripts/find-sc-followee-duplicates.sql)
+[`scripts/find-sc-followee-duplicates.sql`](../scripts/find-sc-followee-duplicates.sql)
 (canonical, for `psql`/documentation) and the `sql` string in
-[`src/lib/reports.ts`](src/lib/reports.ts) (what the button copies).
+[`src/lib/reports.ts`](../src/lib/reports.ts) (what the button copies).
 
 **To run it:** open the Reports page → **Copy SQL** on this card → paste into the
 Supabase SQL editor → run.
@@ -70,7 +70,7 @@ essentially nothing matches. That normalization is in the query.
 
 ## Adding a report
 
-Append an entry to `REPORTS` in [`src/lib/reports.ts`](src/lib/reports.ts):
+Append an entry to `REPORTS` in [`src/lib/reports.ts`](../src/lib/reports.ts):
 
 - **`download`**: set `kind: "download"` and `endpoint`, then add the matching
   route under `src/app/api/admin/reports/<slug>/`. Fine for small result sets.

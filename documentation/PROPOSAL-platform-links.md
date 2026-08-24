@@ -12,7 +12,7 @@
 ## The problem
 
 The submit, revise, and edit forms render **one link field per platform**
-([`ProfileLinksFieldset.tsx`](src/components/form/ProfileLinksFieldset.tsx)
+([`ProfileLinksFieldset.tsx`](../src/components/form/ProfileLinksFieldset.tsx)
 maps over every row in the `platforms` table). That's manageable at today's
 platform count and unusable at ~100 platforms.
 
@@ -50,7 +50,7 @@ properties fall out for free:
 
 Detection itself is a host lookup against a data-driven domain map (§2),
 reusing the existing subdomain-safe `hostMatchesDomain` and the existing
-pre-steps in [`src/lib/profile-links.ts`](src/lib/profile-links.ts):
+pre-steps in [`src/lib/profile-links.ts`](../src/lib/profile-links.ts):
 `unwrapRedirectUrl` (Instagram/Facebook shims) and, server-side,
 `resolveShareUrl` (`on.soundcloud.com`).
 
@@ -68,14 +68,14 @@ over "allow multiple links per platform" — see
 **`platforms` table** — make detection data-driven, so an admin can add a
 platform without a deploy (same reasoning as the existing
 `search_url_template` column, see
-[`supabase_migration_platform_search_templates.sql`](supabase_migration_platform_search_templates.sql)):
+[`supabase_migration_platform_search_templates.sql`](../migrations/supabase_migration_platform_search_templates.sql)):
 
 - Add `domains text[]` — e.g. `youtube → {youtube.com, youtu.be}`,
   `bandcamp → {bandcamp.com}`.
 - Backfill from the existing `domainHints` in `profile-links.ts`'s `CONFIG`
   (soundcloud, instagram, bandcamp, resident_advisor) plus every other platform.
 - Add the matching field to the `Platform` type in
-  [`src/lib/types.ts`](src/lib/types.ts).
+  [`src/lib/types.ts`](../src/lib/types.ts).
 
 **`artist_links` table** — enforce the invariant in the DB:
 
@@ -92,9 +92,9 @@ platform without a deploy (same reasoning as the existing
 ## 3. Form state & UI
 
 Replace the platform-keyed maps in all three forms
-([`SubmissionForm.tsx`](src/components/SubmissionForm.tsx),
-[`RevisionForm.tsx`](src/components/RevisionForm.tsx),
-[`EditForm.tsx`](src/app/artist/[id]/edit/EditForm.tsx) — currently
+([`SubmissionForm.tsx`](../src/components/SubmissionForm.tsx),
+[`RevisionForm.tsx`](../src/components/RevisionForm.tsx),
+[`EditForm.tsx`](../src/app/artist/[id]/edit/EditForm.tsx) — currently
 `Record<platform, string>`, plus `Record<platform, boolean>` for not-found in
 the edit form) with an **ordered list**:
 
@@ -118,7 +118,7 @@ Behavior:
 - **Detection** runs on paste + on blur, so the label appears immediately for
   the common paste case. **Normalization** (rewriting the text to canonical
   form) stays on blur so it doesn't fight the cursor — same as
-  [`ProfileLinkField.tsx`](src/components/ProfileLinkField.tsx) does today via
+  [`ProfileLinkField.tsx`](../src/components/ProfileLinkField.tsx) does today via
   `normalizeProfileLink`.
 - **Read-only platform label** beside each row, projected from
   `assignPlatforms`.
@@ -177,7 +177,7 @@ first avoids ordering problems:
 1. Delete all `artist_links` for the artist.
 2. Insert the submitted set in order, each through `resolveProfileLinkUrlAsync`
    + `deriveHandle` (unchanged from
-   [`src/app/artist/[id]/edit/actions.ts`](src/app/artist/[id]/edit/actions.ts)).
+   [`src/app/artist/[id]/edit/actions.ts`](../src/app/artist/[id]/edit/actions.ts)).
 
 The image-pruning block in the same file still works — a platform survives if
 any surviving link has it — but **reword its comment**: the premise "the form
@@ -202,11 +202,11 @@ Nothing here needs to change, because the primary is still uniquely
 `platform=<known>` and the overflow hides under `other`:
 
 - SoundCloud widget selection —
-  [`src/app/artist/[id]/page.tsx`](src/app/artist/[id]/page.tsx) (`find(l => l.platform === "soundcloud")`)
+  [`src/app/artist/[id]/page.tsx`](../src/app/artist/[id]/page.tsx) (`find(l => l.platform === "soundcloud")`)
 - Image enrichment / `PLATFORM_PRIORITY`
 - SoundCloud/Bandcamp sync scripts
 - `getArtistsMissingLink` anti-join —
-  [`src/lib/queries.ts`](src/lib/queries.ts) (missing = zero rows; unchanged)
+  [`src/lib/queries.ts`](../src/lib/queries.ts) (missing = zero rows; unchanged)
 - Profile-link display (`page.tsx`) — already maps all non-not_found links;
   overflow simply renders as "Other". Improving that label (append the handle
   or domain) is optional and not required.
@@ -219,7 +219,7 @@ Nothing here needs to change, because the primary is still uniquely
    `artist_links`.
 2. **Detection + `assignPlatforms`** in `lib/profile-links.ts` — build
    **test-first**; there's already
-   [`profile-links.test.ts`](src/lib/profile-links.test.ts).
+   [`profile-links.test.ts`](../src/lib/profile-links.test.ts).
 3. **Shared list UI component**, replacing `ProfileLinksFieldset` /
    `ProfileLinkField`.
 4. **Wire the three forms** to the list + unified array payload; update the
