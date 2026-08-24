@@ -1659,7 +1659,7 @@ in the automated pipeline:
 
 - **`migrate-labels-to-organisations.mjs`** — the `artist_labels` →
   `organisations` backfill (phase 2 of
-  `PROPOSAL-organisations.md`). Groups the flat label rows and the
+  `ORGANISATIONS.md`). Groups the flat label rows and the
   comma-split legacy `artists.labels` strings by normalised name, creates
   one **pending** organisation per group, and attaches each artist as
   `associated`. A second pass turns the `label_etc` artists into

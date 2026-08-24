@@ -3,7 +3,7 @@
 // service-role client — none of it does its own auth, so never call it
 // from a path that hasn't checked first.
 //
-// The rule these implement (documentation/PROPOSAL-organisations.md §7,
+// The rule these implement (documentation/ORGANISATIONS.md §7,
 // decided 2026-08-23): a submitter can ATTACH an artist to an
 // organisation that already exists and is approved, but typing a new
 // name does NOT create one. `organisations` is a shared, cross-artist

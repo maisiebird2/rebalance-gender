@@ -304,7 +304,7 @@ export interface ArtistPage {
 
 // ── Organisations (record labels, clubs, events) ─────────────────────────────
 //
-// Phase 1–3 of documentation/PROPOSAL-organisations.md. The replacement for
+// Phase 1–3 of documentation/ORGANISATIONS.md. The replacement for
 // the flat `artist_labels(artist_id, name)` strings: each organisation is its
 // own row with links, types, a location and typed relationships to the artists
 // in the directory. artist_labels / ArtistLabel are still read during the

@@ -14,29 +14,29 @@ Sometimes an incorrect platform link gets attached to an artist. Fixing
 the link is easy; cleaning up everything the bad link *produced* is not:
 
 - **Only images are pruned today**, and only when a platform's link is
-  **removed entirely** ([actions.ts §7b](src/app/artist/[id]/edit/actions.ts)).
+  **removed entirely** ([actions.ts §7b](../src/app/artist/[id]/edit/actions.ts)).
   If a wrong SoundCloud URL is *replaced* with the right one in a single
   edit, the platform survives the save and nothing is pruned — the wrong
   profile's image, bio, and genres all stay.
 - **Genres have no provenance.** The staging table
   (`artist_harvested_genres`) records `source_platform`, but
-  [integrate-harvested-genres.mjs](scripts/integrate-harvested-genres.mjs)
+  [integrate-harvested-genres.mjs](../scripts/integrate-harvested-genres.mjs)
   promotes into `artist_genres (artist_id, genre_id)` with
   `ON CONFLICT DO NOTHING` — the source is dropped at the door. There is
   no way to delete "the genres that came from SoundCloud."
 - **Harvested links have no provenance either.** Same pattern:
   `artist_harvested_links` carries `source_platform`/`source_url`, but
-  [integrate-harvested-links.mjs](scripts/integrate-harvested-links.mjs)
+  [integrate-harvested-links.mjs](../scripts/integrate-harvested-links.mjs)
   inserts just `{artist_id, platform, handle, url}`. So if a wrong
   SoundCloud bio contributed an Instagram link, nothing records that the
   Instagram link — and everything later harvested *from Instagram* — is
   downstream of the bad SoundCloud URL.
 - **The one invalidation mechanism that exists is dead on the main
   path.** `trg_artist_links_url_change`
-  ([supabase_migration_follow_graph_tracking.sql](supabase_migration_follow_graph_tracking.sql))
+  ([supabase_migration_follow_graph_tracking.sql](../migrations/supabase_migration_follow_graph_tracking.sql))
   clears `follow_graph_built_at` on `UPDATE OF url` — but the edit save
   path does delete-all-then-reinsert of `artist_links`
-  ([actions.ts:301](src/app/artist/[id]/edit/actions.ts)), which never
+  ([actions.ts:301](../src/app/artist/[id]/edit/actions.ts)), which never
   fires an UPDATE trigger.
 
 Goal: removing **or changing** a platform link purges everything derived
@@ -121,7 +121,7 @@ entry. So deletion must be per-claim, not per-genre.
 - `integrate-harvested-genres.mjs` writes the staging row's
   `source_platform` instead of `ON CONFLICT DO NOTHING` on the pair.
 - Readers deduplicate on `genre_id` (all reads go through
-  [queries.ts](src/lib/queries.ts), so this is one change site; a view
+  [queries.ts](../src/lib/queries.ts), so this is one change site; a view
   is an option if PostgREST embedding gets awkward).
 - Purge semantics fall out naturally: purging platform X deletes X's
   claim rows; the genre disappears from the artist only when no claims
@@ -131,7 +131,7 @@ entry. So deletion must be per-claim, not per-genre.
   `source_platform`) where possible; unmatched rows → `unknown`
   (protected).
 
-**Note (per [artists-column-grants](supabase_migration_artists_private_columns.sql)
+**Note (per [artists-column-grants](../migrations/supabase_migration_artists_private_columns.sql)
 convention):** any table recreation or new column must re-check grants —
 new columns are private by default on tables with column-level grants.
 

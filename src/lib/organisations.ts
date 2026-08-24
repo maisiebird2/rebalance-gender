@@ -1,5 +1,5 @@
 // Shared shaping for the organisation read path (phase 4 of
-// documentation/PROPOSAL-organisations.md).
+// documentation/ORGANISATIONS.md).
 //
 // One artist_organisations row is a fact about an artist AND about an
 // organisation, so both pages render the same data inverted: the artist

@@ -18,6 +18,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [GENRES.md](GENRES.md) | How genres are harvested, normalised and pruned |
 | [GENRE_CONFIDENCE.md](GENRE_CONFIDENCE.md) | Genre confidence & corroboration scoring |
 | [MATCHING.md](MATCHING.md) | External platform matching — the two pipelines |
+| [ORGANISATIONS.md](ORGANISATIONS.md) | Record labels, clubs, crews and events as real entries — schema, backfill, admin panel, public pages and forms |
 | [SCORING.md](SCORING.md) | Similarity scoring for recommendations |
 | [REPORTS.md](REPORTS.md) | Admin reports and their download routes |
 | [OUTPUT-FILE-LOCATION.md](OUTPUT-FILE-LOCATION.md) | Where generated `.csv`/`.ods` files are written, and by which script |
@@ -31,7 +32,6 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 | [IMAGE-HARVESTING-PLAN.md](IMAGE-HARVESTING-PLAN.md) | Image harvesting — ownership & shared policy |
 | [URL-RESOLUTION-PLAN.md](URL-RESOLUTION-PLAN.md) | URL redirect resolution |
 | [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) | Recommendation engine improvements |
-| [PROPOSAL-organisations.md](PROPOSAL-organisations.md) | Organisations (labels, clubs, events) as real entries — **phases 1–5 shipped**; keeps the `PROPOSAL-` filename because migrations and code comments link to it, and doubles as the reference |
 | [RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md](RECOMMENDED-ARTISTS-SIDEBAR-PATCH.md) | Abandoned July sidebar work — **and the unrepaired `artist_similarity_scores` wipe that left recommendations dark in production** |
 
 ## Loose ends
