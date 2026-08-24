@@ -18,7 +18,6 @@ import { parseArtistIdInput } from "@/lib/duplicate-of";
 import type { DuplicateTargetResult } from "@/lib/duplicate-of";
 import type { LinkPlatform, ArtistStatus } from "@/lib/types";
 import {
-  DEFAULT_ROLE,
   attachOrganisations,
   promoteArtistLabelsToOrganisations,
   resolveOrganisationInputs,
@@ -245,17 +244,18 @@ export async function saveArtist(
   // looking at the row. It is created PENDING, like every other route into
   // organisations: approving an ARTIST is not the same judgement as
   // deciding a label is correctly named, typed and located.
-  const { ids: organisationIds, names: labelNames } = await resolveOrganisationInputs(
+  // allowRoles: this form is admin-only and now shows EVERY role the
+  // artist holds, so it owns the complete set rather than just the
+  // 'associated' slice. That is why the delete below is unscoped —
+  // removing a row here must actually remove it, whatever its role.
+  const { resolved, names: labelNames } = await resolveOrganisationInputs(
     admin,
     organisationInputs,
+    { allowRoles: true },
   );
 
   await admin.from("artist_labels").delete().eq("artist_id", artistId);
-  await admin
-    .from("artist_organisations")
-    .delete()
-    .eq("artist_id", artistId)
-    .eq("role_key", DEFAULT_ROLE);
+  await admin.from("artist_organisations").delete().eq("artist_id", artistId);
 
   if (labelNames.length > 0) {
     const { error: labErr } = await admin.from("artist_labels").insert(
@@ -264,7 +264,7 @@ export async function saveArtist(
     if (labErr) return { error: `Labels save error: ${labErr.message}` };
   }
 
-  await attachOrganisations(admin, artistId, organisationIds);
+  await attachOrganisations(admin, artistId, resolved);
   if (labelNames.length > 0) {
     await promoteArtistLabelsToOrganisations(admin, artistId);
   }

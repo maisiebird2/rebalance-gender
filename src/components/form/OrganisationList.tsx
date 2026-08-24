@@ -2,31 +2,30 @@
 
 import { useId, useMemo } from "react";
 import { normalisedNameKey } from "@/lib/organisations";
-import type { OrganisationSummary } from "@/lib/types";
-
-/**
- * One row's value: an existing organisation, or a name nobody has matched yet.
- *
- * `id` is set when the typed text resolves to an approved organisation, and
- * null otherwise. The parent posts both shapes; the server attaches the
- * resolved ones straight away and holds the rest until an admin approves the
- * artist (see documentation/PROPOSAL-organisations.md §7).
- */
-export interface OrganisationRow {
-  id: string | null;
-  name: string;
-}
+import type { OrganisationFormRow, OrganisationRole, OrganisationSummary } from "@/lib/types";
 
 interface Props {
   /** Small heading shown above the rows. */
   label?: string;
-  values: OrganisationRow[];
-  onChange: (values: OrganisationRow[]) => void;
+  values: OrganisationFormRow[];
+  onChange: (values: OrganisationFormRow[]) => void;
   /** Approved organisations, offered as suggestions. */
   options: OrganisationSummary[];
+  /**
+   * The role vocabulary. Supply it to show a per-row role picker — the
+   * ADMIN edit form does, so any role can be set from the artist side
+   * as well as from the organisation page.
+   *
+   * The public submit and revise forms omit it: a stranger should not be
+   * asserting that somebody is head of a label. `associated` is the
+   * ceiling there, and it is exactly what the old flat label text meant.
+   * The server enforces that too — see resolveOrganisationInputs().
+   */
+  roles?: OrganisationRole[];
 }
 
-const EMPTY: OrganisationRow = { id: null, name: "" };
+const DEFAULT_ROLE_KEY = "associated";
+const EMPTY: OrganisationFormRow = { id: null, name: "", role_key: DEFAULT_ROLE_KEY };
 
 /**
  * A repeatable list of organisation inputs — the replacement for the
@@ -44,7 +43,7 @@ const EMPTY: OrganisationRow = { id: null, name: "" };
  * "ostgut ton" resolves to the existing "Ostgut Ton" instead of quietly
  * proposing a second row that differs only in case.
  */
-export default function OrganisationList({ label, values, onChange, options }: Props) {
+export default function OrganisationList({ label, values, onChange, options, roles }: Props) {
   const listId = useId();
   const rows = values.length > 0 ? values : [EMPTY];
 
@@ -64,12 +63,16 @@ export default function OrganisationList({ label, values, onChange, options }: P
         idx === i
           ? // Snap to the existing organisation's own spelling when it
             // matches, so the submitter can see they picked the real one.
+            // The role is the row's own and survives a rename.
             matched
-            ? { id: matched.id, name: matched.name }
-            : { id: null, name }
+            ? { ...row, id: matched.id, name: matched.name }
+            : { ...row, id: null, name }
           : row,
       ),
     );
+  }
+  function setRole(i: number, roleKey: string) {
+    onChange(rows.map((row, idx) => (idx === i ? { ...row, role_key: roleKey } : row)));
   }
   function add() {
     onChange([...rows, { ...EMPTY }]);
@@ -100,6 +103,20 @@ export default function OrganisationList({ label, values, onChange, options }: P
               placeholder="Label, club, crew or event"
               className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 dark:border-gray-700 dark:bg-gray-900"
             />
+            {roles && roles.length > 0 && (
+              <select
+                value={row.role_key ?? DEFAULT_ROLE_KEY}
+                onChange={(e) => setRole(i, e.target.value)}
+                aria-label="Role at this organisation"
+                className="rounded-md border border-gray-300 px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              >
+                {roles.map((role) => (
+                  <option key={role.key} value={role.key}>
+                    {role.label}
+                  </option>
+                ))}
+              </select>
+            )}
             {rows.length > 1 && (
               <button
                 type="button"
@@ -115,7 +132,9 @@ export default function OrganisationList({ label, values, onChange, options }: P
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {row.id
                 ? "Matches an existing entry."
-                : "New — it'll be added once a moderator has looked at it."}
+                : roles
+                  ? "New — it'll be created for review, in the associated role. Set a different one once it exists."
+                  : "New — it'll be added once a moderator has looked at it."}
             </p>
           )}
         </div>

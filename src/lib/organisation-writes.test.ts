@@ -66,7 +66,10 @@ describe("resolveOrganisationInputs", () => {
     const result = await resolveOrganisationInputs(admin, [
       { id: "org-1", name: "Ostgut Ton" },
     ]);
-    expect(result).toEqual({ ids: ["org-1"], names: [] });
+    expect(result).toEqual({
+      resolved: [{ organisationId: "org-1", roleKey: DEFAULT_ROLE }],
+      names: [],
+    });
   });
 
   it("demotes an id that is not approved to a plain name", async () => {
@@ -76,7 +79,7 @@ describe("resolveOrganisationInputs", () => {
     const result = await resolveOrganisationInputs(admin, [
       { id: "org-2", name: "Trip Records" },
     ]);
-    expect(result).toEqual({ ids: [], names: ["Trip Records"] });
+    expect(result).toEqual({ resolved: [], names: ["Trip Records"] });
   });
 
   it("demotes an id that no longer exists rather than dropping the row", async () => {
@@ -84,23 +87,79 @@ describe("resolveOrganisationInputs", () => {
     const result = await resolveOrganisationInputs(admin, [
       { id: "deleted-since-page-load", name: "Some Label" },
     ]);
-    expect(result).toEqual({ ids: [], names: ["Some Label"] });
+    expect(result).toEqual({ resolved: [], names: ["Some Label"] });
   });
 
   it("treats a typed name with no id as a name", async () => {
     const { admin } = fakeAdmin({ organisations: [APPROVED] });
     const result = await resolveOrganisationInputs(admin, [{ name: "Brand New Label" }]);
-    expect(result).toEqual({ ids: [], names: ["Brand New Label"] });
+    expect(result).toEqual({ resolved: [], names: ["Brand New Label"] });
   });
 
-  it("drops blank rows and de-duplicates ids", async () => {
+  it("drops blank rows and de-duplicates (organisation, role) pairs", async () => {
     const { admin } = fakeAdmin({ organisations: [APPROVED] });
     const result = await resolveOrganisationInputs(admin, [
       { id: "org-1", name: "Ostgut Ton" },
       { id: "org-1", name: "Ostgut Ton" },
       { name: "   " },
     ]);
-    expect(result).toEqual({ ids: ["org-1"], names: [] });
+    expect(result.resolved).toHaveLength(1);
+    expect(result.names).toEqual([]);
+  });
+
+  // ── role handling ────────────────────────────────────────────────
+
+  it("IGNORES a posted role unless the caller allows roles", async () => {
+    // The public submit and revise paths call without allowRoles. A
+    // hand-edited request claiming 'head' must still land as 'associated'
+    // — a stranger cannot assert that somebody runs a label.
+    const { admin } = fakeAdmin({ organisations: [APPROVED] });
+    const result = await resolveOrganisationInputs(admin, [
+      { id: "org-1", name: "Ostgut Ton", role_key: "head" },
+    ]);
+    expect(result.resolved).toEqual([
+      { organisationId: "org-1", roleKey: DEFAULT_ROLE },
+    ]);
+  });
+
+  it("honours a posted role when the caller allows roles", async () => {
+    const { admin } = fakeAdmin({ organisations: [APPROVED] });
+    const result = await resolveOrganisationInputs(
+      admin,
+      [{ id: "org-1", name: "Ostgut Ton", role_key: "head" }],
+      { allowRoles: true },
+    );
+    expect(result.resolved).toEqual([{ organisationId: "org-1", roleKey: "head" }]);
+  });
+
+  it("keeps the same organisation under two different roles", async () => {
+    // owner AND resident at one place is two rows — what the composite
+    // primary key exists to allow.
+    const { admin } = fakeAdmin({ organisations: [APPROVED] });
+    const result = await resolveOrganisationInputs(
+      admin,
+      [
+        { id: "org-1", name: "Ostgut Ton", role_key: "owner" },
+        { id: "org-1", name: "Ostgut Ton", role_key: "resident" },
+      ],
+      { allowRoles: true },
+    );
+    expect(result.resolved).toEqual([
+      { organisationId: "org-1", roleKey: "owner" },
+      { organisationId: "org-1", roleKey: "resident" },
+    ]);
+  });
+
+  it("falls back to the default role when allowRoles is on but none is given", async () => {
+    const { admin } = fakeAdmin({ organisations: [APPROVED] });
+    const result = await resolveOrganisationInputs(
+      admin,
+      [{ id: "org-1", name: "Ostgut Ton" }],
+      { allowRoles: true },
+    );
+    expect(result.resolved).toEqual([
+      { organisationId: "org-1", roleKey: DEFAULT_ROLE },
+    ]);
   });
 });
 

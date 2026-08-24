@@ -8,13 +8,14 @@ import type {
   ArtistStatus,
   ArtistAlias,
   OrganisationFormRow,
+  OrganisationRole,
   OrganisationSummary,
   Platform,
 } from "@/lib/types";
 import TextList from "@/components/form/TextList";
 import GenreList from "@/components/form/GenreList";
 import OrganisationList from "@/components/form/OrganisationList";
-import { initialOrganisationRows } from "@/lib/organisations";
+import { initialOrganisationRowsWithRoles } from "@/lib/organisations";
 import LocationList, { type LocationRow } from "@/components/form/LocationList";
 import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
 import Field from "@/components/form/Field";
@@ -26,6 +27,8 @@ interface Props {
   artist: ArtistWithRelations;
   genreOptions: string[];
   organisationOptions: OrganisationSummary[];
+  /** The role vocabulary, so associations can be given a role from here. */
+  organisationRoles: OrganisationRole[];
   /** The full type vocabulary (producer / DJ / vocalist) for the checkboxes. */
   typeOptions: { name: string; label: string }[];
   /** The artist's current MANUAL type slugs, to prefill the checkboxes. */
@@ -45,7 +48,9 @@ type DupCheck =
 export default function EditForm({
   artist,
   genreOptions,
-  organisationOptions, typeOptions, initialTypes, platforms, duplicateOfName }: Props) {
+  organisationOptions,
+  organisationRoles,
+  typeOptions, initialTypes, platforms, duplicateOfName }: Props) {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<"save" | "approve" | "not_eligible" | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -59,7 +64,7 @@ export default function EditForm({
     artist.aliases?.length > 0 ? artist.aliases.map((a: ArtistAlias) => a.name) : [""]
   );
   const [labelList, setLabelList] = useState<OrganisationFormRow[]>(
-    initialOrganisationRows(artist.organisations, artist.label_list)
+    initialOrganisationRowsWithRoles(artist.organisations, artist.label_list)
   );
   const [genres, setGenres] = useState<string[]>(
     artist.genres?.map((g) => g.name).length > 0 ? artist.genres.map((g) => g.name) : [""]
@@ -340,11 +345,16 @@ export default function EditForm({
         <GenreList values={genres} onChange={setGenres} options={mergedGenreOptions} />
       </fieldset>
 
-      {/* ── Labels / crews ─────────────────────────────────────── */}
+      {/* ── Organisations ──────────────────────────────────────── */}
       <fieldset className="space-y-3">
-        <legend className="text-base font-semibold">Labels / crews</legend>
+        <legend className="text-base font-semibold">Organisations</legend>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Labels, clubs, crews and events, with the role held at each. This
+          list is the complete set — removing a row removes the association,
+          whatever its role.
+        </p>
         <OrganisationList values={labelList} onChange={setLabelList}
-          options={organisationOptions} />
+          options={organisationOptions} roles={organisationRoles} />
       </fieldset>
 
       {/* ── Links ──────────────────────────────────────────────── */}

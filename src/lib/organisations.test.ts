@@ -4,6 +4,7 @@ import {
   roleHeading,
   normalisedNameKey,
   initialOrganisationRows,
+  initialOrganisationRowsWithRoles,
 } from "./organisations";
 import type { OrganisationRole } from "./types";
 
@@ -127,5 +128,53 @@ describe("initialOrganisationRows", () => {
   it("always returns at least one empty row to type into", () => {
     expect(initialOrganisationRows([], [])).toEqual([{ id: null, name: "" }]);
     expect(initialOrganisationRows(undefined, undefined)).toEqual([{ id: null, name: "" }]);
+  });
+});
+
+describe("initialOrganisationRowsWithRoles", () => {
+  const entry = (id: string, name: string, r = ASSOCIATED) => ({
+    organisation: { id, name },
+    role: r,
+  });
+
+  it("shows roles the associated-only seeding hides", () => {
+    // The defect this exists to fix: an artist who is `head` of an
+    // organisation saw NOTHING for it on the admin edit form, while their
+    // public page rendered "Head: …".
+    const rows = initialOrganisationRowsWithRoles([entry("o1", "PAN", HEAD)], []);
+    expect(rows).toEqual([{ id: "o1", name: "PAN", role_key: "head" }]);
+    // …whereas the public-form seeding still filters it out.
+    expect(initialOrganisationRows([entry("o1", "PAN", HEAD)], [])).toEqual([
+      { id: null, name: "" },
+    ]);
+  });
+
+  it("gives one organisation a row per role", () => {
+    const rows = initialOrganisationRowsWithRoles(
+      [entry("o1", "Tresor", ASSOCIATED), entry("o1", "Tresor", RESIDENT)],
+      [],
+    );
+    expect(rows.map((r) => r.role_key)).toEqual(["associated", "resident"]);
+  });
+
+  it("defaults an unresolved flat label to the associated role", () => {
+    expect(initialOrganisationRowsWithRoles([], [{ name: "Trip Records" }])).toEqual([
+      { id: null, name: "Trip Records", role_key: "associated" },
+    ]);
+  });
+
+  it("drops a flat label whose organisation is already attached in any role", () => {
+    // The dual-read's redundant copy, not a second thing to edit.
+    const rows = initialOrganisationRowsWithRoles(
+      [entry("o1", "PAN", HEAD)],
+      [{ name: "pan" }],
+    );
+    expect(rows).toEqual([{ id: "o1", name: "PAN", role_key: "head" }]);
+  });
+
+  it("always returns at least one empty row", () => {
+    expect(initialOrganisationRowsWithRoles([], [])).toEqual([
+      { id: null, name: "", role_key: "associated" },
+    ]);
   });
 });

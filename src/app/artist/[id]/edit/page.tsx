@@ -110,7 +110,14 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
 
   // ── Load artist (all statuses), selected genres, and all platforms ──
   const admin = getSupabaseAdminClient();
-  const [{ data, error }, genreOptions, organisationOptions, platforms, { data: typeRows }] =
+  const [
+    { data, error },
+    genreOptions,
+    organisationOptions,
+    { data: roleRows },
+    platforms,
+    { data: typeRows },
+  ] =
     await Promise.all([
       admin
         .from("artists")
@@ -119,6 +126,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         .maybeSingle(),
       getGenrePickerOptions(),
       getOrganisationPickerOptions(),
+      admin.from("organisation_roles").select("key, label, sort_order").order("sort_order"),
       getPlatforms(admin),
       admin.from("artist_types").select("name, label, sort_order").order("sort_order"),
     ]);
@@ -182,6 +190,7 @@ export default async function ArtistEditPage({ params, searchParams }: PageProps
         artist={artist}
         genreOptions={genreOptions}
         organisationOptions={organisationOptions}
+        organisationRoles={(roleRows ?? []) as OrganisationRole[]}
         typeOptions={typeOptions}
         initialTypes={initialTypes}
         platforms={platforms}

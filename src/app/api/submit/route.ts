@@ -235,12 +235,10 @@ export async function POST(request: NextRequest) {
   // everything else stays flat text in artist_labels until an admin
   // approves the artist, at which point it is promoted.
   const inputs = body.organisations ?? (body.labels ?? []).map((name) => ({ name }));
-  const { ids: organisationIds, names: labelNames } = await resolveOrganisationInputs(
-    supabase,
-    inputs,
-  );
+  // No allowRoles: a public submission can only ever create 'associated'.
+  const { resolved, names: labelNames } = await resolveOrganisationInputs(supabase, inputs);
 
-  await attachOrganisations(supabase, artistId, organisationIds);
+  await attachOrganisations(supabase, artistId, resolved);
 
   if (labelNames.length > 0) {
     await supabase.from("artist_labels").insert(
