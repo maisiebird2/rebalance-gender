@@ -7,6 +7,12 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { isAdminUser } from "@/lib/admin-auth";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
+import {
+  DEFAULT_ROLE,
+  attachOrganisations,
+  promoteArtistLabelsToOrganisations,
+  resolveOrganisationInputs,
+} from "@/lib/organisation-writes";
 
 async function requireAuth() {
   const supabase = await createClient();
@@ -39,6 +45,12 @@ export async function quickApprove(id: string): Promise<{ error: string } | void
     .update({ directory_status: "approved" })
     .eq("id", id);
   if (error) return { error: error.message };
+
+  // Approving the artist is the moment their typed labels are allowed to
+  // become organisations — see src/lib/organisation-writes.ts for why that
+  // doesn't happen at submit time. The organisations are created PENDING,
+  // so this queues them for their own review rather than publishing them.
+  await promoteArtistLabelsToOrganisations(admin, id);
   revalidatePath("/admin");
   revalidatePath("/");
   // Run image enrichment in the background after the response is sent.
@@ -82,6 +94,12 @@ export async function quickApproveArtist(id: string): Promise<{ error: string } 
     .update({ directory_status: "approved" })
     .eq("id", id);
   if (error) return { error: error.message };
+
+  // Approving the artist is the moment their typed labels are allowed to
+  // become organisations — see src/lib/organisation-writes.ts for why that
+  // doesn't happen at submit time. The organisations are created PENDING,
+  // so this queues them for their own review rather than publishing them.
+  await promoteArtistLabelsToOrganisations(admin, id);
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath(`/artist/${id}`);
@@ -263,7 +281,15 @@ export async function approveRevision(
     pronouns?: string;
     genres?: string[];
     locations?: { city?: string; country?: string }[];
+    /**
+     * BACK-COMPAT: revisions submitted before the organisation picker
+     * shipped carry plain strings here. Revisions submitted after it carry
+     * `organisations` instead. Both shapes must keep applying — a revision
+     * sitting in the queue at deploy time was written by the old form and
+     * nobody is going to rewrite it.
+     */
     labels?: string[];
+    organisations?: { id?: string | null; name: string }[];
     aliases?: string[];
     links?: Record<string, string>;
   };
@@ -334,15 +360,35 @@ export async function approveRevision(
     }
   }
 
-  // Replace labels.
-  if (rd.labels?.length) {
+  // Replace labels / organisations.
+  //
+  // `organisations` is what the current form posts; `labels` is the older
+  // plain-string shape, still applied so revisions already in the queue
+  // keep working. Either way the split is the same: resolved ids become
+  // associations, unresolved names stay flat text and are promoted below —
+  // approving a revision is an admin looking at it, which is the moment
+  // typed names are allowed to become organisations.
+  const revisionOrganisations =
+    rd.organisations ?? rd.labels?.map((name) => ({ name })) ?? null;
+
+  if (revisionOrganisations?.length) {
+    const { ids, names } = await resolveOrganisationInputs(admin, revisionOrganisations);
+
+    // The revision owns the complete set, so both sides are replaced.
     await admin.from("artist_labels").delete().eq("artist_id", artistId);
-    const validLabels = rd.labels.map((l) => l.trim()).filter(Boolean);
-    if (validLabels.length) {
+    await admin
+      .from("artist_organisations")
+      .delete()
+      .eq("artist_id", artistId)
+      .eq("role_key", DEFAULT_ROLE);
+
+    if (names.length) {
       await admin.from("artist_labels").insert(
-        validLabels.map((name) => ({ artist_id: artistId, name }))
+        names.map((name) => ({ artist_id: artistId, name }))
       );
     }
+    await attachOrganisations(admin, artistId, ids);
+    await promoteArtistLabelsToOrganisations(admin, artistId);
   }
 
   // Replace aliases.

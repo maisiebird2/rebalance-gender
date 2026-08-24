@@ -3,8 +3,14 @@
 import { useState, useRef, FormEvent } from "react";
 import Link from "next/link";
 import { Turnstile } from "@marsidev/react-turnstile";
-import type { LinkPlatform, Platform } from "@/lib/types";
+import type {
+  LinkPlatform,
+  OrganisationFormRow,
+  OrganisationSummary,
+  Platform,
+} from "@/lib/types";
 import TextList from "./form/TextList";
+import OrganisationList from "./form/OrganisationList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
 import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
@@ -12,6 +18,7 @@ import Field from "./form/Field";
 
 interface Props {
   genreOptions: string[];
+  organisationOptions: OrganisationSummary[];
   platforms: Platform[];
   isAdmin?: boolean;
 }
@@ -23,13 +30,13 @@ interface DuplicateMatch {
   name: string;
 }
 
-export default function SubmissionForm({ genreOptions, platforms, isAdmin = false }: Props) {
+export default function SubmissionForm({ genreOptions, organisationOptions, platforms, isAdmin = false }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
   const [genres, setGenres] = useState<string[]>([""]);
   const [locations, setLocations] = useState<LocationRow[]>([{ city: "", country: "" }]);
-  const [labelList, setLabelList] = useState<string[]>([""]);
+  const [labelList, setLabelList] = useState<OrganisationFormRow[]>([{ id: null, name: "" }]);
   const [aliasNames, setAliasNames] = useState<string[]>([""]);
   const [linkUrls, setLinkUrls] = useState<Record<string, string>>({});
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -59,7 +66,7 @@ export default function SubmissionForm({ genreOptions, platforms, isAdmin = fals
       pronouns: data.get("pronouns"),
       genres: genres.filter(Boolean),
       locations: locations.filter((l) => l.city || l.country),
-      labels: labelList.filter(Boolean),
+      organisations: labelList.filter((row) => row.name.trim() !== ""),
       aliases: aliasNames.filter(Boolean),
       // Internal notes are only collected from logged-in admins.
       notes: isAdmin ? data.get("notes") : undefined,
@@ -143,8 +150,8 @@ export default function SubmissionForm({ genreOptions, platforms, isAdmin = fals
 
       <GenreList label="Genres" values={genres} onChange={setGenres} options={genreOptions} />
 
-      <TextList label="Labels / crews" itemNoun="label" values={labelList} onChange={setLabelList}
-        placeholder="e.g. Ostgut Ton" />
+      <OrganisationList label="Labels / crews" values={labelList} onChange={setLabelList}
+        options={organisationOptions} />
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>

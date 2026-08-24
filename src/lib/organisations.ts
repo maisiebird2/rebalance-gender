@@ -8,7 +8,35 @@
 // role ("Resident: Ada, Bea"). The grouping is therefore written once
 // here rather than twice in the two pages.
 
-import type { OrganisationRole } from "./types";
+import type {
+  ArtistOrganisationEntry,
+  OrganisationFormRow,
+  OrganisationRole,
+} from "./types";
+
+/**
+ * The normalised name key — the same value Postgres stores in the
+ * `name_search` generated column on both `artists` and `organisations`:
+ *
+ *   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
+ *
+ * i.e. lowercase, strip diacritics, then drop everything that isn't a
+ * letter or a digit. "Ostgut Ton", "ostgut ton" and "Ostgut-Ton" all
+ * collapse to "ostgutton".
+ *
+ * This is the single definition for the app side; scripts have their own
+ * mirror in scripts/lib/hoer-resolve.mjs. It had been copy-pasted into
+ * four places (the directory search, the admin duplicate check twice, and
+ * the organisations list filter) — which is three chances for the two
+ * sides to drift apart and silently stop matching.
+ */
+export function normalisedNameKey(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
 
 export interface RoleGroup<T> {
   role: OrganisationRole;
@@ -74,4 +102,45 @@ export function roleHeading(role: OrganisationRole, direction: RoleDirection): s
     return direction === "organisations" ? "Associated with" : "Associated";
   }
   return role.label.charAt(0).toUpperCase() + role.label.slice(1);
+}
+
+/**
+ * Seed the forms' "Labels / crews" field from an artist's current data.
+ *
+ * Two sources, because the migration is mid-flight: organisations already
+ * attached (which carry an id) and `artist_labels` names that haven't
+ * become organisations yet (which don't). A name present in both — the
+ * normal state once an organisation has been created but the flat row is
+ * still there for the dual-read — appears ONCE, with its id, so editing
+ * the field doesn't silently split one organisation into two rows.
+ *
+ * Only the `associated` role is included. That role is what the flat label
+ * text has always meant and is the only one this field manages; head,
+ * resident and the rest are set on /admin/organisations, and the
+ * revision-apply path deletes only `associated` rows so they survive an
+ * edit here untouched.
+ */
+export function initialOrganisationRows(
+  organisations: ArtistOrganisationEntry[] | undefined,
+  labels: { name: string }[] | undefined,
+): OrganisationFormRow[] {
+  const rows: OrganisationFormRow[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of organisations ?? []) {
+    if (entry.role.key !== "associated") continue;
+    const key = normalisedNameKey(entry.organisation.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ id: entry.organisation.id, name: entry.organisation.name });
+  }
+
+  for (const label of labels ?? []) {
+    const key = normalisedNameKey(label.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ id: null, name: label.name });
+  }
+
+  return rows.length > 0 ? rows : [{ id: null, name: "" }];
 }

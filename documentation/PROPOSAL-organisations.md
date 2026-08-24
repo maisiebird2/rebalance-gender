@@ -238,19 +238,74 @@ Merge is the one that matters long-term: free-text entry will keep producing
 
 ## 7. Forms (submit / revise / edit)
 
-Replace `TextList` with an autocomplete against approved organisations: pick
-an existing one, or type a new name that creates a `pending` organisation for
-moderation, with an optional role alongside it.
+`TextList` on "Labels / crews" is replaced by `OrganisationList`: a native
+`<input list>` + `<datalist>` over the approved organisations. Type-ahead
+over real entries, still accepts a name that isn't one, and no custom
+dropdown state to get wrong. Matching is on the normalised name key, so
+"ostgut ton" resolves to the existing "Ostgut Ton" rather than proposing a
+near-duplicate.
 
-`RevisionData.labels` needs a back-compat read — existing pending revisions in
-`artist_revisions` still carry `labels: string[]`, so the revision-apply path
-in [`admin/actions.ts`](src/app/admin/actions.ts) must accept both shapes for
-one release.
+**Typing a new name does NOT create an organisation.** This reverses what §3
+of this document originally assumed, and the migration header has been
+corrected to match. The decision (2026-08-23):
+
+> A submitter may ATTACH an artist to an organisation that already exists
+> and is approved. A name they type stays flat text in `artist_labels` and
+> becomes an organisation when an **admin approves the artist**.
+
+Why, in short — `organisations` is a shared, cross-artist namespace with its
+own public page, and `/api/submit` writes the artist as `unverified` when the
+email is unconfirmed:
+
+- Creating rows there lets anyone past Turnstile write to that namespace,
+  where **whoever types a name first owns its canonical spelling**.
+- `name_search` is indexed but **not unique** — the only duplicate guard is
+  `findByNormalisedName` in the admin action, so an unguarded submit path
+  would manufacture exactly the pairs the merge tool exists to clean up.
+- 9 of 549 submissions to date were rejected; each would have left
+  organisation rows behind with nothing linking them back.
+- And it buys nothing: the picker only offers *approved* organisations, so a
+  pending row is invisible to the next submitter and to every page until an
+  admin approves it — which is precisely when the approval path creates it.
+
+Ids posted by the browser are **re-checked server-side** before being
+trusted: an organisation can be rejected, merged or deleted between the page
+rendering and the form being posted, and a stale id degrades to a typed name
+rather than dropping the row.
+
+Promoted organisations are created **pending**, not approved. Approving an
+artist says "this person belongs in the directory", not "this label is
+correctly named, typed and located" — that judgement happens on
+`/admin/organisations`. The dual-read keeps showing the flat text meanwhile,
+so nothing is lost by waiting.
+
+The field manages only the `associated` role. Head, resident, A&R and the
+rest are set on `/admin/organisations`, and the apply paths scope their
+deletes to `associated` so those survive an edit untouched.
+
+`RevisionData` accepts **both** shapes: `organisations` from the current
+form, and `labels: string[]` from any revision written before this shipped.
+A revision already in the queue was written by the old form and nobody is
+going to rewrite it.
+
+All of it lives in [`organisation-writes.ts`](src/lib/organisation-writes.ts)
+— `resolveOrganisationInputs`, `attachOrganisations`,
+`promoteArtistLabelsToOrganisations` — shared by `/api/submit`,
+`approveRevision`, `quickApprove`/`quickApproveArtist` and the admin edit
+form, so the rule is stated once.
 
 ## 8. Cleanup
 
-Once phases 5–7 have shipped and the dual-read has been live for a release:
-drop `artist_labels`, drop `artists.labels`, remove the fallback branch.
+Drop `artists.labels` (already out of `ARTIST_SELECT` since phase 4) and
+remove the artist page's fallback branch once the dual-read has soaked.
+
+**`artist_labels` does not simply go away, though** — that assumption did not
+survive phase 5. With submitters barred from creating organisations, the
+table stopped being "legacy flat text" and became **the staging area for
+names that haven't been resolved to an organisation yet**: it is where a
+typed name lives between submission and admin approval. Dropping it needs
+either a replacement holder or a different answer to where that text sits, so
+this phase is now a design question rather than three `DROP` statements.
 
 ---
 
@@ -262,7 +317,7 @@ drop `artist_labels`, drop `artists.labels`, remove the fallback branch.
 | 2 Backfill | **built** | dry-run → review CSV → apply |
 | 3 Admin CRUD + merge + roles panel | **built** | types/links/locations get filled in by hand here |
 | 4 Read path + organisation pages | **built** | dual-read means no coupling to phase 2 finishing |
-| 5 Forms | yes | needs approved organisations to exist |
+| 5 Forms | **built** | needs approved organisations to exist |
 | 6 Cleanup | after a release of soak | |
 
 Phases 1–3 were the agreed first pass and are the ones now in the repo.

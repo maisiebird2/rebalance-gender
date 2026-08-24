@@ -36,7 +36,14 @@ export interface RevisionData {
   pronouns?: string;
   genres?: string[];
   locations?: { city?: string; country?: string }[];
+  /**
+   * BACK-COMPAT. Revisions written before the organisation picker shipped
+   * carry plain label strings here; newer ones carry `organisations`
+   * instead. approveRevision() applies whichever is present, because a
+   * revision already sitting in the queue was written by the old form.
+   */
   labels?: string[];
+  organisations?: OrganisationFormRow[];
   aliases?: string[];
   links?: Partial<Record<string, string>>;
 }
@@ -438,6 +445,19 @@ export interface OrganisationSummary {
 export interface ArtistOrganisationEntry {
   organisation: OrganisationSummary;
   role: OrganisationRole;
+}
+
+/**
+ * One row of the forms' "Labels / crews" field.
+ *
+ * `id` is set when the typed text resolved to an approved organisation and
+ * null when it didn't. The server re-checks the id before trusting it, and
+ * holds unresolved names as flat text until an admin approves the artist —
+ * see src/lib/organisation-writes.ts.
+ */
+export interface OrganisationFormRow {
+  id: string | null;
+  name: string;
 }
 
 /** The inverse: one artist attached to an organisation, with their role. */
