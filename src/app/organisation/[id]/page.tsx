@@ -53,7 +53,7 @@ export default async function OrganisationPage({ params }: PageProps) {
 
   // Same treatment the artist page gives its links: drop the not-found and
   // empty rows, hide the platforms that exist for enrichment rather than for
-  // visitors, and render what is left in PUBLIC_PAGE_PLATFORM_ORDER.
+  // visitors, and render what is left in PLATFORM_DISPLAY_ORDER.
   const visibleLinks = visiblePublicLinks(organisation.links);
 
   // The role-inverted people list: "Head: …", "Resident: …". Same grouping

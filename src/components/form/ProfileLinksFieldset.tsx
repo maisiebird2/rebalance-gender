@@ -1,7 +1,11 @@
 "use client";
 
 import type { LinkPlatform, Platform } from "@/lib/types";
-import { platformDisplayLabel, platformPlaceholder } from "@/lib/platforms";
+import {
+  platformDisplayLabel,
+  platformPlaceholder,
+  sortPlatformsForForms,
+} from "@/lib/platforms";
 import ProfileLinkField from "@/components/ProfileLinkField";
 
 /**
@@ -12,6 +16,10 @@ import ProfileLinkField from "@/components/ProfileLinkField";
  * "Not found" checkbox (someone searched and confirmed the artist isn't on
  * that platform); the public submit/revise forms omit those props and the
  * checkbox is hidden.
+ *
+ * `platforms` is ordered here rather than by the caller, so every form that
+ * renders this grid gets the same field order without having to remember to
+ * sort — see sortPlatformsForForms.
  */
 interface Props {
   platforms: Platform[];
@@ -33,7 +41,7 @@ export default function ProfileLinksFieldset({
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {platforms.map((p) => {
+      {sortPlatformsForForms(platforms).map((p) => {
         const platform = p.key as LinkPlatform;
         const isNotFound = notFound?.[platform] ?? false;
         const label = platformDisplayLabel(p);
