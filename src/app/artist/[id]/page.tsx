@@ -13,7 +13,6 @@ import EditButton from "@/components/EditButton";
 import AdminActions from "@/components/AdminActions";
 import BandcampWidget from "@/components/BandcampWidget";
 import RecommendedArtists from "@/components/RecommendedArtists";
-import { linkify } from "@/lib/linkify";
 
 
 // Rendered per request: what this page shows depends on the viewer — admins
@@ -68,7 +67,6 @@ export default async function ArtistPage({ params }: PageProps) {
   const soundcloudEnrichment = artist.enrichment?.find(
     (e) => e.platform === "soundcloud"
   );
-  const soundcloudBio = soundcloudEnrichment?.bio_sanitized ?? soundcloudEnrichment?.bio ?? null;
 
   // Prefer the artist's SoundCloud profile (or, if we ever harvest individual
   // track URLs into artist_enrichment, a specific track) for the embedded player.
@@ -326,48 +324,10 @@ export default async function ArtistPage({ params }: PageProps) {
           )}
         </div>
 
-        {/* ── SIDEBAR — SoundCloud bio ── */}
-        {soundcloudBio && (
-          <aside className="order-2 lg:order-2">
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
-              <strong className="font-semibold text-gray-900 dark:text-gray-100">
-                SoundCloud bio
-              </strong>
-              {soundcloudEnrichment?.bio_sanitized ? (
-                // Sanitized HTML from DOMPurify — safe to render as HTML.
-                // Links, line breaks, and basic formatting are preserved.
-                <div
-                  className="mt-2 space-y-1.5 [&_a]:text-violet-600 [&_a]:hover:underline dark:[&_a]:text-violet-400"
-                  dangerouslySetInnerHTML={{ __html: soundcloudEnrichment.bio_sanitized }}
-                />
-              ) : (
-                // Plain-text fallback for bios not yet run through sanitize-bios.mjs.
-                // Bare URLs are linkified; no HTML is rendered.
-                <div className="mt-2 space-y-1.5">
-                  {soundcloudBio.split("\n").map((line, i) => (
-                    <p key={i}>
-                      {linkify(line).map((seg, j) =>
-                        seg.type === "url" ? (
-                          <a
-                            key={j}
-                            href={seg.value}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-violet-600 hover:underline dark:text-violet-400"
-                          >
-                            {seg.value}
-                          </a>
-                        ) : (
-                          seg.value
-                        )
-                      )}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
+        {/* ── SIDEBAR ── */}
+        {/* The SoundCloud bio that used to sit here is no longer shown to
+            visitors. The column is kept so the bio block that replaces it —
+            a summary synthesised from the bios we hold — drops straight in. */}
       </div>
 
       <RecommendedArtists artistId={id} />

@@ -19,9 +19,10 @@ deliberate:
 Next.js injects inline `<script>` tags on every page to stream the RSC payload.
 Allowing those with `'unsafe-inline'` would allow an *injected* script just as
 readily, which would leave the policy doing very little for the one thing it is
-most needed for here — the site renders two `dangerouslySetInnerHTML` regions
-(`src/app/about/page.tsx`, and the harvested SoundCloud bio on
-`src/app/artist/[id]/page.tsx`).
+most needed for here — the site renders a `dangerouslySetInnerHTML` region in
+`src/app/about/page.tsx`. (The artist page rendered a second one, the harvested
+SoundCloud bio, until that block was removed from public display; the bio block
+that replaces it may well render HTML again.)
 
 So `src/proxy.ts` mints a nonce per request and sets it on **both** the response
 header and the *request* header. Next.js reads the nonce back off the
