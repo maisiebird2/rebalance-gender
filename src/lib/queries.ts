@@ -206,7 +206,8 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
 
 /**
  * Fetch one page of approved artists, optionally filtered by genre,
- * country, and a free-text search over the artist name.
+ * country, and a free-text search over the artist name. The search matches
+ * substrings by default; `filters.exact` narrows it to the whole name.
  *
  * Genre/country filters use `!inner` joins so that only artists with a
  * matching related row are returned. Results are paginated using
@@ -261,17 +262,28 @@ export async function getArtists(
   }
   if (filters.search) {
     const term = normalizeSearch(filters.search);
-    const like = `%${term}%`;
+
+    // `exact` swaps the substring pattern for the bare term, turning the
+    // match into whole-name equality: "Vel" then finds the artist called
+    // Vel and not "Velvet Underground" or "A Lovely Butt". It stays an
+    // ILIKE rather than becoming .eq() for two reasons — the pg_trgm GIN
+    // index on name_search serves LIKE/ILIKE patterns but not `=`, and
+    // both sides are already lowercase [a-z0-9] (normalizeSearch strips
+    // the rest, so no % or _ can sneak in as a wildcard), which makes a
+    // wildcard-free ILIKE exactly an equality test. Matching is still on
+    // the *normalised* key, so case, accents, spacing and punctuation are
+    // ignored in exact mode too: "V.E.L" matches the artist "Vel".
+    const pattern = filters.exact ? term : `%${term}%`;
 
     // Match on the primary name OR any alias. Aliases live in their own
     // table (an artist can have several), so first collect the ids of
     // artists whose alias matches, then OR those into the main filter.
     // artist_aliases.name_search mirrors artists.name_search, so the same
-    // normalized term matches both columns identically.
+    // normalised term matches both columns identically.
     const { data: aliasRows, error: aliasError } = await supabase
       .from("artist_aliases")
       .select("artist_id")
-      .ilike("name_search", like);
+      .ilike("name_search", pattern);
 
     if (aliasError) {
       console.error("getArtists alias search error:", aliasError);
@@ -287,11 +299,12 @@ export async function getArtists(
       // Within .or(), ilike uses `*` as the wildcard (not `%`); the pattern
       // is double-quoted so terms containing commas/periods/parens (e.g.
       // "Tyler, the Creator", "M.I.A.") don't break the filter grammar.
+      const orPattern = filters.exact ? term : `*${term}*`;
       query = query.or(
-        `name_search.ilike."*${term}*",id.in.(${aliasIds.join(",")})`
+        `name_search.ilike."${orPattern}",id.in.(${aliasIds.join(",")})`
       );
     } else {
-      query = query.ilike("name_search", like);
+      query = query.ilike("name_search", pattern);
     }
   }
 
