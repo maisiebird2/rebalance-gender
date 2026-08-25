@@ -3,9 +3,11 @@
 > **Status: proposal, not accepted.** Written 2026-08-24 from a design
 > discussion. Nothing here is built. The findings in
 > [What we verified](#what-we-verified) are empirical — they were measured
-> against hoer.live and YouTube on the day of writing — and two of them
-> (no framing; the artist-page hero is not the artist's video) rule out the
-> obvious implementations, so read that section before the plan.
+> against hoer.live and YouTube on the day of writing — and three of them
+> shape everything after: hoer.live cannot be framed at all; an artist page
+> carries two different players and the obvious regex finds the wrong one; and
+> the broken embeds on HÖR's own pages are a missing **thumbnail rendition**,
+> not a dead video. Read that section before the plan.
 
 ---
 
@@ -26,7 +28,8 @@ next request with no backfill step. That falls out of the storage shape in
 
 ## What we verified
 
-Five things were measured rather than assumed. Three of them changed the plan.
+Six things were measured against hoer.live and YouTube rather than assumed.
+Four of them changed the plan.
 
 ### 1. hoer.live cannot be embedded at all
 
@@ -39,15 +42,46 @@ Every hoer.live page refuses to be framed by a third-party origin. There is no
 "embed the HÖR player directly" option, on any page, for anyone. **YouTube is
 the only route.** This is not a preference; it is the whole decision.
 
-### 2. The video ID is only in the set page's HTML
+### 2. Two different players live on an artist page — only one is the artist's
 
-The set page carries the ID inline, in the bootstrap for YouTube's IFrame API:
+This is the finding that answers "why do some HÖR pages show an embed that
+doesn't work", and getting it wrong is easy, because `/artist/<slug>/` renders
+**two unrelated players** and the obvious regex finds the wrong one.
+
+**The sticky player — not the artist's.** The `videoId: '…'` in the page's
+inline script belongs to `main-video__player_sticky`, the corner panel headed
+*"Now Playing"*, which also writes a `current=…` cookie. It is HÖR's
+site-wide radio, re-drawn per request and identical in kind on every page.
+Sampled across nine artist pages it showed a different artist's set every
+time. **Never read the video ID from `videoId:`.**
+
+**The show cards — the artist's own sets.** Inside `<div id="artist-shows">`,
+each set is a `show-card` carrying both halves of the mapping we want:
+
+```html
+<a data-show-id="4505" href="https://hoer.live/regina-leather-july-21-8pm-9pm/">
+  <img src="https://i3.ytimg.com/vi/SiWwESb_W-o/maxresdefault.jpg" …>
+```
+
+`data-show-id` is the **WP post id** — the primary key of `hoer_sets` — and
+the thumbnail URL carries the **YouTube video ID**. One fetch of the artist
+page yields `post_id → video_id` for all of that artist's sets, correctly
+attributed.
+
+Checked against the REST API for six artists, the card list matched the set
+list exactly for five of them (1, 8, 4, 2 and 5 sets). The sixth is instructive
+and is [finding 5](#5-some-sets-in-the-api-have-no-video-or-no-page).
+
+### 3. The set page is the authoritative fallback
+
+Where a card is absent, the set page carries the ID inline:
 
 ```js
 player = new YT.Player('player', { videoId: 'fIHTqo4sMS8', … })
 ```
 
-Every cheaper source was checked and rejected:
+On a **set** page — unlike an artist page — that player *is* the set's own
+video. Every cheaper source was checked and rejected:
 
 | Source | Result |
 |---|---|
@@ -56,52 +90,57 @@ Every cheaper source was checked and rejected:
 | ACF REST (`/wp-json/acf/v3/posts/<id>`) | ✗ `rest_no_route`, 404. |
 | Set page HTML | ✓ One regex on `videoId: '…'`. |
 
-So the harvest is **one HTTP GET per set**, matching the existing crawl posture
-in [`enrich-hoer-terms.mjs`](../scripts/enrich-hoer-terms.mjs).
+That `youtube_id` key matters for a second reason: HÖR's own load-more endpoint
+queries posts with `{"key":"youtube_id","compare":"!=","value":"0"}` —
+**HÖR itself treats `youtube_id = 0` as "this set has no video"**, and omits
+such sets from the card list.
 
-That `youtube_id` key is worth noting for a second reason. HÖR's own
-load-more endpoint queries posts with `{"key":"youtube_id","compare":"!=","value":"0"}`
-— **HÖR itself treats `youtube_id = 0` as "this set has no video"**. Sets
-with no video therefore exist by design, and the harvester must tolerate a set
-page with no `videoId` rather than treating it as a failure.
+### 4. The real cause of broken embeds: HÖR asks for a thumbnail that doesn't exist
 
-### 3. The artist-page hero video is NOT the artist's set
+The show cards hardcode **`maxresdefault.jpg`** (1280×720). YouTube only
+generates that size when the source upload was at least that large — otherwise
+it **404s**, and the card renders as a broken image with nothing to click.
 
-This is the finding that answers "why do some HÖR pages show an embed that
-doesn't work", and it invalidates the cheapest-looking implementation.
+Across the 33 videos sampled:
 
-`/artist/<slug>/` renders a hero player. It is tempting to read the video ID
-from there, because [`enrich-hoer-terms.mjs`](../scripts/enrich-hoer-terms.mjs)
-already fetches that exact page for the portrait and socials, so the ID would
-cost **zero** extra requests.
+| Thumbnail | Present |
+|---|---|
+| `maxresdefault.jpg` (1280×720) | 30/33 |
+| `sddefault.jpg` (640×480) | 30/33 |
+| **`hqdefault.jpg` (480×360)** | **33/33** |
 
-It is the wrong video. Sampled in one pass:
+Regina Leather's set is one of the three. Her card requests
+`i3.ytimg.com/vi/SiWwESb_W-o/maxresdefault.jpg` → **404**, while
+`hqdefault.jpg` → **200**, and the video itself is public and embeddable. Her
+set is fine; HÖR is asking for a rendition of the thumbnail that was never
+made.
 
-| Artist page | Their newest set | Hero video actually shown |
-|---|---|---|
-| `regina-leather` | 2020-07-21 | `aurora-halal-hor-aug-9-2023` |
-| `trujillo` | 2026-08-24 | `large-marge-pepiita-hor-november-2-2023` |
-| `deepa-biri` | 2020-07-13 | `xhumans-bconscious-hor-august-12-2024` |
-| `curses` | 2023-07-26 | `onlytrance-dj-traytex-b2b-antnk-hor-august-13-2024` |
-| `dr-rubinstein` | 2022-12-06 | `ali3n-hor-september-9-2024` |
-| `machina` | 2023-01-04 | `lux2000-hor-march-7-2025` |
-| `marie-lung` | 2024-01-09 | `g1rlontop-hor-july-31-2026` |
-| `jammy` | 2025-01-06 | `flirt-records-route-8-hor-october-17-2025` |
-| `florian-kupfer` | 2020-03-26 | `dukwa-hor-may-26-2025` |
+**So: always request `hqdefault.jpg`.** It was present for every video tested,
+and it is the one rendition YouTube appears to generate unconditionally. This
+single choice is what stops us reproducing the failure that prompted this
+document.
 
-**9 of 9 heroes belonged to a different artist.** The hero is a rotating
-site-wide featured set, re-drawn per request — an earlier fetch of
-`trujillo` returned Trujillo's own set purely because it happened to be the
-newest set on the site that hour, and a later fetch of the same URL returned a
-different artist's. Reading it once and believing it would silently attribute
-someone else's set to an artist on our pages.
+### 5. Some sets in the API have no video, or no page
 
-**Rule: the video ID must come from the set page, keyed on
-`hoer_sets.post_id`.** The set→artist mapping is already authoritative in our
-own database (`hoer_sets.term_ids` → `hoer_terms.artist_id`), so we never need
-HÖR to tell us whose video it is.
+Marie Lung has 10 sets in the REST API and 9 show cards. The missing one,
+post `70709` (2023-11-10), is not a pagination cut-off — it sits between two
+sets that *are* carded. Its page is dead:
 
-### 4. The videos themselves are healthy
+```
+$ curl -sI https://hoer.live/marie-lung-hor-november-10-2023/
+302 → https://hoer.live/404/
+```
+
+This is the same `302 → /404/` dead-link fingerprint already known from the
+pending-HÖR export work. Combined with the `youtube_id = 0` case, it means
+**a set existing in `hoer_sets` does not imply a video exists**, and it is
+specifically possible for an artist's *newest* set to be the one without a
+video. The fallback chain is not decoration; it is load-bearing.
+
+Usefully, the card list already excludes both cases — HÖR only cards sets that
+have a video and a live page.
+
+### 6. The videos themselves are healthy
 
 32 sets sampled across the full archive, four per year from 2019 to 2026,
 resolving each set page's video ID and then probing YouTube:
@@ -110,27 +149,11 @@ resolving each set page's video ID and then probing YouTube:
 total 32 | no videoId: 0 | oembed != 200: 0 | not embeddable: 0
 ```
 
-All 32 returned `playabilityStatus.status = "OK"` and
-`playableInEmbed = true`. Regina Leather's own 2020 set — the page that
-prompted the question — resolves to `SiWwESb_W-o`, which is public, live and
-embeddable right now.
-
-**The broken embed on `/artist/regina-leather/` is HÖR's hero bug from finding
-3, not a dead video.** Her set is fine; the player on that page was pointed at
-someone else's stream. Because we take IDs from set pages, we would not
-reproduce that failure.
-
-The remaining thing that page demonstrates is HÖR's own cookie-consent gate,
-which blanks their embeds until a visitor consents. That is their
-implementation, not a property of the videos, and does not follow the ID to our
-site.
-
-### 5. Health can still rot, so it must still be checked
-
-A 0-in-32 failure rate today is not a guarantee for a 9,500-video archive over
-time. Videos get deleted, made private, region-locked, or have embedding
-switched off — all after we harvested the ID. So the plan below validates
-anyway; see [Guarding against dead embeds](#guarding-against-dead-embeds).
+All 32 returned `playabilityStatus.status = "OK"` and `playableInEmbed = true`.
+Nothing in the archive is currently unembeddable. That is not a guarantee for
+9,500 videos over time — videos get deleted, privatised, region-locked or have
+embedding switched off after harvest — so the plan validates anyway; see
+[Guarding against dead embeds](#guarding-against-dead-embeds).
 
 ---
 
@@ -199,30 +222,49 @@ Three reasons, and they are the reason not to collapse this to a single
 A new script, `scripts/harvest-hoer-videos.mjs`, reusing the existing throttled
 `hoerFetch` and the HTTP/1.1 dispatcher.
 
-1. **Select work.** Sets whose `term_ids` intersect a term with a non-null
-   `artist_id`, where `video_checked_at IS NULL`, newest first. This is a small
-   fraction of the 9,565-row ledger — do **not** crawl the whole archive.
-2. **Fetch the set page**, regex `videoId: '([\w-]{11})'`.
-3. **Validate** (below), write `youtube_video_id` / `video_status` /
+**Read the show cards, not the set pages.** Parsing `#artist-shows` gives every
+one of an artist's `post_id → video_id` pairs from a **single** request — and
+[`enrich-hoer-terms.mjs`](../scripts/enrich-hoer-terms.mjs) already fetches
+that exact URL for the portrait and socials. Extending its parser in
+[`hoer-page.mjs`](../scripts/lib/hoer-page.mjs) makes the common case cost
+**zero extra requests**. Set-page scraping drops to a fallback for a set that
+has no card but is believed to have a video.
+
+1. **Select work.** Terms with a non-null `artist_id` whose sets have no
    `video_checked_at`.
-4. **Project** `ok` rows into `artist_hoer_sets`; delete rows that stop being
+2. **Parse the cards** from the artist page — `data-show-id` → post id,
+   thumbnail path → video id. Ignore `videoId:` entirely (finding 2).
+3. **Reconcile against `hoer_sets`.** A set with no card is `video_status =
+   'none'` — it has `youtube_id = 0` or a dead page (finding 5). Both are
+   **converged** states, not retries, the same discipline `scraped_at` already
+   enforces for terms.
+4. **Validate** the video IDs that were found, write `youtube_video_id` /
+   `video_status` / `video_checked_at`.
+5. **Project** `ok` rows into `artist_hoer_sets`; delete rows that stop being
    `ok`.
 
-Steps 3–4 also run standalone as a revalidation pass.
+Steps 4–5 also run standalone as a revalidation pass.
 
-### Bounding the crawl further
+### On trusting HÖR's card list
 
-Only the newest set per artist is ever displayed, so the harvester can walk
-sets newest-first per artist and stop after it has found, say, **three healthy
-videos** for that artist — one to show and two in reserve for the fallback
-chain. That turns a per-set crawl into an effectively per-artist one.
-
----
+The cards are HÖR's own rendering, so in principle they could omit a set that
+does have a usable video. In the six artists checked, the only omission was a
+genuinely dead set, so the list looks trustworthy — and its filtering is a
+feature, since it excludes exactly the sets we could not embed anyway. The
+reconciliation in step 3 means a wrongly-omitted set is recorded as `none`
+rather than silently lost, so the assumption is auditable after the fact.
 
 ## Guarding against dead embeds
 
 Four layers, cheapest first. The user-visible contract is: **an artist page
 shows a working video or shows no video block at all — never a broken player.**
+
+### Layer 0 — ask for a thumbnail that exists
+
+Request **`hqdefault.jpg`**, never `maxresdefault.jpg`. This is the whole of
+finding 4, and it is the single most important line in this document: it is
+the difference between reproducing HÖR's broken cards and not. ~9% of the
+sampled archive (3 of 33) has no `maxresdefault` rendition.
 
 ### Layer 1 — validate at harvest (no API key)
 
@@ -255,10 +297,13 @@ at all. Two ways to close that gap:
 
 ### Layer 3 — fall back at render, then hide
 
-The page query asks for the newest **healthy** set. If an artist has none, the
-component returns `null` and the page renders exactly as it does today. This
-is the same posture the SoundCloud widget already takes when
-`track_count === 0` — suppress rather than embed something empty.
+The page query asks for the newest **healthy** set, which is not always the
+newest set — finding 5 showed an artist whose second-newest set has no video
+at all, and a newest-set-only design would have shown that artist nothing. If
+an artist has no healthy set, the component returns `null` and the page renders
+exactly as it does today. This is the same posture the SoundCloud widget
+already takes when `track_count === 0` — suppress rather than embed something
+empty.
 
 ### Layer 4 — revalidate on a schedule
 
@@ -279,8 +324,15 @@ same media stack on the artist page.
 **Use a click-to-load facade, not a live iframe.** A YouTube iframe pulls well
 over a megabyte and runs third-party script before anyone presses play, on a
 page that may already be running a Bandcamp player and three SoundCloud
-widgets. Render `https://i.ytimg.com/vi/<id>/hqdefault.jpg` with a play
+widgets. Render **`https://i.ytimg.com/vi/<id>/hqdefault.jpg`** with a play
 control, and swap in the iframe on click with `autoplay=1`.
+
+`hqdefault` is not a resolution compromise made for weight — it is
+[finding 4](#4-the-real-cause-of-broken-embeds-hör-asks-for-a-thumbnail-that-doesnt-exist).
+`maxresdefault` is what HÖR requests and what 404s on ~9% of the archive. At
+480×360 upscaled into a card, `hqdefault` is adequate; a broken image is not.
+If a sharper facade is wanted later, probe `maxresdefault` at harvest and
+store which renditions exist rather than guessing at render time.
 
 Point the iframe at **`https://www.youtube-nocookie.com/embed/<id>`**, which
 matches the privacy posture of the rest of the site.
@@ -314,9 +366,14 @@ them into `artist_links`.
 3. **Should an artist with a HÖR binding but no healthy video show anything?**
    The plan says no — render nothing. A "listen on HÖR" text link is the
    alternative, and the HÖR profile link is already in the links list anyway.
-4. **How aggressively should the harvest be bounded?** "Three healthy videos
-   per artist, newest first" is a guess. One is enough to display; more is
-   insurance against rot at the cost of crawl time.
-5. **Sets with no video (`youtube_id = 0`).** Confirmed to exist by HÖR's own
-   query. Their frequency has not been measured, only that the harvester must
-   converge on them rather than retry.
+4. **Is `hqdefault` sharp enough?** 480×360 in a card that may render wider.
+   The alternative is storing which renditions exist per video, which costs one
+   extra HEAD per set at harvest and removes the guess permanently.
+5. **How common are video-less sets across the whole archive?** Two causes are
+   confirmed — `youtube_id = 0` and the `302 → /404/` dead page — but only in a
+   six-artist sample. The number decides whether the fallback chain needs one
+   spare set per artist or several.
+6. **Do the show cards ever omit a set that does have a usable video?** Not in
+   the six artists checked, but that is the one assumption the whole
+   artist-page-first pipeline rests on. Step 3's reconciliation makes it
+   auditable; it does not make it true.
