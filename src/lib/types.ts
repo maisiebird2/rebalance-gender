@@ -291,6 +291,13 @@ export interface DirectoryFilters {
   genre?: string;
   country?: string;
   search?: string;
+  /**
+   * Narrow `search` from a substring match to a whole-name match, so "Vel"
+   * finds the artist called Vel and not "Velvet Underground". Exact on the
+   * normalised key, so case, accents, spacing and punctuation are still
+   * ignored ("V.E.L" still matches).
+   */
+  exact?: boolean;
   /** 1-indexed page number */
   page?: number;
 }

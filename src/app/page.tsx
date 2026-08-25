@@ -19,6 +19,9 @@ export default async function Home({ searchParams }: PageProps) {
     typeof params.country === "string" ? params.country : undefined;
   const search =
     typeof params.search === "string" ? params.search : undefined;
+  // Set by the "Exact match" checkbox in FilterBar. Only meaningful
+  // alongside a search term; on its own it filters nothing.
+  const exact = params.exact === "1";
   const pageParam = typeof params.page === "string" ? parseInt(params.page, 10) : 1;
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
 
@@ -31,9 +34,9 @@ export default async function Home({ searchParams }: PageProps) {
   // the random_approved_artist_ids RPC only samples approved rows.
   const [{ artists, hasMore }, genres, countries, artistCount] = await Promise.all([
     isAdmin
-      ? getArtists({ genre, country, search, page }, { includeNonApproved: true })
+      ? getArtists({ genre, country, search, exact, page }, { includeNonApproved: true })
       : isFiltered
-        ? getArtists({ genre, country, search, page })
+        ? getArtists({ genre, country, search, exact, page })
         : getRandomArtists(page),
     getGenreOptions(),
     getCountryOptions(),
@@ -60,7 +63,7 @@ export default async function Home({ searchParams }: PageProps) {
 
       {artists.length === 0 ? (
         search ? (
-          <SearchMissResults searchTerm={search} />
+          <SearchMissResults searchTerm={search} exact={exact} />
         ) : (
           <p className="text-gray-500">No artists match these filters yet.</p>
         )
