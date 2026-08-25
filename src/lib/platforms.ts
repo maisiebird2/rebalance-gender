@@ -45,22 +45,78 @@ export function platformLabel(platforms: Platform[], key: string): string {
 }
 
 /**
- * Platform keys whose links are hidden from the public individual artist page
- * (src/app/artist/[id]/page.tsx). The underlying links are still stored and
- * used everywhere else — enrichment, genre harvesting, admin QC —
- * and remain editable in the submit/edit/revise forms; they are simply not
- * surfaced as profile links to visitors. MusicBrainz is a directory data
- * source rather than a link a visitor would want to click through to.
+ * The platforms a visitor sees on the public individual artist page
+ * (src/app/artist/[id]/page.tsx) and organisation page
+ * (src/app/organisation/[id]/page.tsx), in the order their links are
+ * rendered.
  *
- * Last.fm is a leftover: its data was dropped from the directory (see
- * supabase_migration_remove_lastfm_data.sql) and nothing consumes a Last.fm
- * link any more, but existing links are retained, so they still need hiding.
+ * This list is both the order AND the allowlist: a platform absent from it is
+ * not shown at all. Today that means Spotify, MusicBrainz and Last.fm —
+ * directory data sources rather than links a visitor would want to click
+ * through to (Last.fm's data was dropped outright, see
+ * supabase_migration_remove_lastfm_data.sql, though existing links are
+ * retained). A platform key added to the `platforms` table in future is hidden
+ * until it is added here deliberately.
+ *
+ * Hidden links are still stored and used everywhere else — enrichment, genre
+ * harvesting, admin QC — and remain editable in the submit/edit/revise forms.
+ *
+ * The order is a curated editorial one and is deliberately NOT the `sort_order`
+ * column: that column still drives the admin screens and the order of the link
+ * fields in the submit/edit/revise forms.
  */
-export const PLATFORMS_HIDDEN_ON_ARTIST_PAGE: ReadonlySet<string> = new Set([
-  "lastfm",
-  "musicbrainz",
-  "spotify",
-]);
+export const PUBLIC_PAGE_PLATFORM_ORDER: readonly string[] = [
+  "homepage",
+  "soundcloud",
+  "instagram",
+  "linktree",
+  "hoer",
+  "youtube",
+  "tiktok",
+  "discogs",
+  "bandcamp",
+  "beatport",
+  "qobuz",
+  "resident_advisor",
+  "apple_music",
+  "tidal",
+  "songkick",
+  "facebook",
+  "wikipedia",
+  "1001tracklists",
+  "djanes",
+  "other",
+];
+
+const PUBLIC_PAGE_PLATFORM_RANK: ReadonlyMap<string, number> = new Map(
+  PUBLIC_PAGE_PLATFORM_ORDER.map((key, i) => [key, i])
+);
+
+/** True when a platform's links are shown to visitors — see
+ *  PUBLIC_PAGE_PLATFORM_ORDER. */
+export function isPlatformShownOnPublicPage(platform: string): boolean {
+  return PUBLIC_PAGE_PLATFORM_RANK.has(platform);
+}
+
+/**
+ * Filters a page's profile links down to the ones a visitor should see —
+ * dropping not-found rows, rows with no URL, and platforms outside
+ * PUBLIC_PAGE_PLATFORM_ORDER — and returns them in that order.
+ *
+ * Shared by the artist and organisation pages, which store their links in
+ * separate tables but present them identically.
+ */
+export function visiblePublicLinks<
+  T extends { platform: string; url: string | null; not_found?: boolean | null },
+>(links: readonly T[] | null | undefined): T[] {
+  return (links ?? [])
+    .filter((l) => !l.not_found && l.url && isPlatformShownOnPublicPage(l.platform))
+    .sort(
+      (a, b) =>
+        PUBLIC_PAGE_PLATFORM_RANK.get(a.platform)! -
+        PUBLIC_PAGE_PLATFORM_RANK.get(b.platform)!
+    );
+}
 
 /**
  * Builds a "search this platform for <artist>" URL from the platform's

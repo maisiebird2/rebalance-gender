@@ -5,7 +5,7 @@ import { groupByRole, roleHeading } from "@/lib/organisations";
 import {
   getPlatforms,
   platformLabel,
-  PLATFORMS_HIDDEN_ON_ARTIST_PAGE,
+  visiblePublicLinks,
 } from "@/lib/platforms";
 import { getSupabaseClient } from "@/lib/supabase";
 
@@ -52,14 +52,9 @@ export default async function OrganisationPage({ params }: PageProps) {
     .join(" | ");
 
   // Same treatment the artist page gives its links: drop the not-found and
-  // empty rows, and hide the platforms that exist for enrichment rather
-  // than for visitors.
-  const visibleLinks = organisation.links.filter(
-    (link) =>
-      !link.not_found &&
-      link.url &&
-      !PLATFORMS_HIDDEN_ON_ARTIST_PAGE.has(link.platform),
-  );
+  // empty rows, hide the platforms that exist for enrichment rather than for
+  // visitors, and render what is left in PUBLIC_PAGE_PLATFORM_ORDER.
+  const visibleLinks = visiblePublicLinks(organisation.links);
 
   // The role-inverted people list: "Head: …", "Resident: …". Same grouping
   // the artist page uses, read the other way round.
