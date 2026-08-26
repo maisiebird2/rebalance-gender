@@ -21,65 +21,22 @@ import fs from "node:fs";
 // ------------------------------------------------------------
 // Name normalization.
 //
-// normalizeName() is DEFINED TO MIRROR the post-migration name_search
-// generated column exactly:
+// The normalised name key and the unaccent() it is built on now live in
+// src/lib/name-key.mjs, shared with the web app, so there is exactly one
+// definition in the repo. This module used to carry its own hand-written
+// UNACCENT_MAP; it had already drifted from Postgres (it folded "ĸ" to "k"
+// where unaccent() gives "q"), which is the whole argument for not keeping
+// a second copy. The shared table is generated from the database by
+// scripts/generate-unaccent-delta.mjs.
 //
-//   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
-//
-// i.e. lowercase -> strip diacritics (unaccent) -> drop every character
-// that isn't [a-z0-9] (so both spaces AND punctuation go).
-//
-// The scripts prefer the DB's own name_search value as the canonical key
-// wherever a row already carries one (it's Postgres-computed and therefore
-// authoritative). normalizeName() is used for the HÖR-internal report and
-// the fuzzy shortlist, and as the yardstick the resolver uses to confirm
-// the punctuation-stripping migration has actually been applied.
-//
-// unaccent() below is a best-effort JS port of Postgres's unaccent
-// extension. NFKD decomposition handles the large majority of accented
-// Latin letters (é, ü, ñ, ...); a small explicit table covers the
-// non-decomposable letters the default unaccent.rules also folds (ø, ß,
-// æ, ...). Any divergence can only ever cause a *missed* match, never a
-// false one, so the exact-duplicate rule stays conservative.
+// normalizeName() keeps its name here because the HÖR scripts call it all
+// over; it is the same function as normalisedNameKey().
 // ------------------------------------------------------------
 
-const UNACCENT_MAP = {
-  ø: "o", Ø: "O",
-  ß: "ss",
-  æ: "ae", Æ: "AE",
-  œ: "oe", Œ: "OE",
-  đ: "d", Đ: "D",
-  ð: "d", Ð: "D",
-  ł: "l", Ł: "L",
-  þ: "th", Þ: "TH",
-  ı: "i",
-  ħ: "h", Ħ: "H",
-  ŧ: "t", Ŧ: "T",
-  ĸ: "k",
-};
-
-export function unaccent(input) {
-  if (typeof input !== "string") return "";
-  let out = "";
-  // NFKD splits e.g. "é" into "e" + combining accent; the combining marks
-  // (U+0300–U+036F) are then dropped. Letters with no decomposition are
-  // routed through UNACCENT_MAP first.
-  for (const ch of input.normalize("NFKD")) {
-    if (Object.prototype.hasOwnProperty.call(UNACCENT_MAP, ch)) {
-      out += UNACCENT_MAP[ch];
-    } else {
-      out += ch;
-    }
-  }
-  return out.replace(/[̀-ͯ]/g, "");
-}
-
-export function normalizeName(name) {
-  if (typeof name !== "string") return "";
-  return unaccent(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
+// Imported rather than re-exported straight through: bioTokens() and
+// normalizeGenre() below call unaccent() as a local binding.
+import { unaccent, normalisedNameKey as normalizeName } from "../../src/lib/name-key.mjs";
+export { unaccent, normalizeName };
 
 // ------------------------------------------------------------
 // Trigram name similarity — a JS port of Postgres pg_trgm similarity(),

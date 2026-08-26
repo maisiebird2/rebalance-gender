@@ -15,6 +15,7 @@ import { revalidatePath } from "next/cache";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { normalisedNameKey } from "@/lib/name-key.mjs";
 import type { LinkPlatform, OrganisationStatus } from "@/lib/types";
 
 const ORGANISATION_STATUSES: OrganisationStatus[] = [
@@ -114,11 +115,7 @@ async function findByNormalisedName(
   name: string,
   excludeId?: string,
 ): Promise<{ id: string; name: string; status: OrganisationStatus } | null> {
-  const key = name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+  const key = normalisedNameKey(name);
   if (!key) return null;
 
   let query = admin
@@ -439,11 +436,7 @@ export async function searchArtistsForAssociation(
   const authError = await requireAdminForAction();
   if (authError) return [];
 
-  const key = term
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+  const key = normalisedNameKey(term);
   if (!key) return [];
 
   const admin = getSupabaseAdminClient();

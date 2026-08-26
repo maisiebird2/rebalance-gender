@@ -18,6 +18,7 @@
     "apply-review-csv": "node scripts/apply-review-csv.mjs",
     "find-duplicates": "node scripts/find-duplicates.mjs",
     "check-artists-column-grants": "node scripts/check-artists-column-grants.mjs",
+    "generate-unaccent-delta": "node scripts/generate-unaccent-delta.mjs",
     "resolve-and-load-links": "node scripts/resolve-and-load-links-mb-sp.mjs",
     "clean-artist-names": "node scripts/clean-artist-names.mjs",
     "enrich-musicbrainz": "tsx scripts/enrich-musicbrainz.mjs",

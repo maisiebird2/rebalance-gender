@@ -18,7 +18,7 @@
 // visible the whole time either way.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { normalisedNameKey } from "./organisations";
+import { normalisedNameKey } from "./name-key.mjs";
 
 /** The role every attachment gets until somebody says otherwise. */
 export const DEFAULT_ROLE = "associated";

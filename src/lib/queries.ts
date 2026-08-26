@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { getSupabaseClient, getSupabaseAdminClient } from "./supabase";
 import { pickArtistImage } from "./artist-images";
-import { normalisedNameKey } from "./organisations";
+import { normalisedNameKey } from "./name-key.mjs";
 import type {
   ArtistPage,
   ArtistWithRelations,
@@ -70,20 +70,6 @@ type RawOrganisationRow = {
 };
 
 export const PAGE_SIZE = 24;
-
-/**
- * Normalizes a search string to match the `name_search` generated column:
- * strips accents (NFD decompose + remove combining marks), lowercases, and
- * removes every character that isn't [a-z0-9] (spaces AND punctuation). Must
- * stay in sync with the Postgres expression:
- *   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
- * Stripping punctuation is what lets a query like "A.mo" match the artist
- * whose name_search is "amo"; if this only stripped spaces, the period in the
- * query would never match the punctuation-free stored key.
- */
-// The directory search key. Shared with the organisation duplicate check
-// and the admin list filter so the two can never drift apart.
-const normalizeSearch = normalisedNameKey;
 
 // Shared select string: pulls the artist plus all joined relations
 // (pronoun, genres via the artist_genres junction table, locations,
@@ -261,18 +247,31 @@ export async function getArtists(
     query = query.eq("locations.country", filters.country);
   }
   if (filters.search) {
-    const term = normalizeSearch(filters.search);
+    const term = normalisedNameKey(filters.search);
+
+    // A term that normalises to nothing has no key to match on: "???", or a
+    // name written entirely in a script unaccent() can't romanise ("МОЛЧАТ
+    // ДОМА"). It must not fall through to a pattern. In substring mode that
+    // pattern is `%%`, the empty LIKE pattern, which matches every artist;
+    // in exact mode it is `""`, which matches exactly those artists whose
+    // own name_search is empty — every non-Latin name in the directory,
+    // handed back as though they were hits. Those artists store an empty
+    // name_search too, so there is genuinely nothing for such a term to find.
+    if (!term) {
+      return { artists: [], hasMore: false };
+    }
 
     // `exact` swaps the substring pattern for the bare term, turning the
     // match into whole-name equality: "Vel" then finds the artist called
     // Vel and not "Velvet Underground" or "A Lovely Butt". It stays an
     // ILIKE rather than becoming .eq() for two reasons — the pg_trgm GIN
     // index on name_search serves LIKE/ILIKE patterns but not `=`, and
-    // both sides are already lowercase [a-z0-9] (normalizeSearch strips
+    // both sides are already lowercase [a-z0-9] (normalisedNameKey strips
     // the rest, so no % or _ can sneak in as a wildcard), which makes a
     // wildcard-free ILIKE exactly an equality test. Matching is still on
     // the *normalised* key, so case, accents, spacing and punctuation are
-    // ignored in exact mode too: "V.E.L" matches the artist "Vel".
+    // ignored in exact mode too: "V.E.L" matches the artist "Vel", and
+    // "otta" matches "ØTTA".
     const pattern = filters.exact ? term : `%${term}%`;
 
     // Match on the primary name OR any alias. Aliases live in their own

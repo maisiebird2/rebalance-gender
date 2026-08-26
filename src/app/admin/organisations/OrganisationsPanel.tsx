@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { normalisedNameKey } from "@/lib/name-key.mjs";
 import type { OrganisationStatus } from "@/lib/types";
 import {
   createOrganisation,
@@ -29,16 +30,6 @@ const TABS: { status: OrganisationStatus; label: string }[] = [
   { status: "deleted", label: "Deleted" },
 ];
 
-// Same normalisation the database stores in name_search, so typing
-// "ostgut ton" finds "Ostgut-Ton" without the punctuation having to match.
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
 export default function OrganisationsPanel({ organisations }: Props) {
   const [tab, setTab] = useState<OrganisationStatus>(
     organisations.some((o) => o.status === "pending") ? "pending" : "approved",
@@ -58,10 +49,10 @@ export default function OrganisationsPanel({ organisations }: Props) {
   }, [organisations]);
 
   const visible = useMemo(() => {
-    const needle = normalize(filter);
+    const needle = normalisedNameKey(filter);
     return organisations
       .filter((org) => org.status === tab)
-      .filter((org) => !needle || normalize(org.name).includes(needle));
+      .filter((org) => !needle || normalisedNameKey(org.name).includes(needle));
   }, [organisations, tab, filter]);
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
