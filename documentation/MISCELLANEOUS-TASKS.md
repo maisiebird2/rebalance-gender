@@ -10,10 +10,10 @@ once it ships.
 
 ---
 
-## 1. Uncommitted work is unprotected when a checkout is shared
+## 1. Uncommitted work when a checkout is shared
 
-**Status:** open, unmitigated in code. First seen 2026-07-24; still live as of
-2026-08-23.
+**Status:** the first pass shipped 2026-08-26; what is left is listed under
+*What is still uncovered*. First seen 2026-07-24.
 
 ### What goes wrong
 
@@ -36,58 +36,54 @@ Both are silent at the moment they happen. They are typically noticed later,
 when a file is missing or a commit turns out to contain something it should
 not.
 
-### Why the existing guards don't catch it
+### What shipped
 
-`scripts/git-hooks/guard-branch.sh` (PreToolUse) and
-`scripts/git-hooks/pre-commit` both ask exactly one question: *is the branch
-called `main`?* Everything else passes silently. See
-[BRANCH-SAFETY.md](BRANCH-SAFETY.md).
+The two measures this entry proposed as a realistic first pass, both described
+in full in [BRANCH-SAFETY.md](BRANCH-SAFETY.md):
 
-That leaves this failure entirely uncovered, for three separate reasons:
+- **`guard-branch.sh` now refuses `HEAD` surgery over a dirty primary
+  checkout.** `git checkout`, `git switch`, `git reset` and `git stash` are
+  denied there while the working tree holds uncommitted changes, untracked
+  files included. Worktrees are exempt, since a worktree belongs to one task.
+  Path-limited restores and branch creation in place still pass — the latter
+  is the way out of this, not an instance of it. Escape hatch:
+  `CLAUDE_ALLOW_DIRTY_SWITCH=1`.
+- **A `post-checkout` hook warns when a switch carried uncommitted changes.**
+  It fires in whoever's terminal ran the switch, so it covers the human side
+  that no `PreToolUse` hook can see. It stays quiet when the commit did not
+  move, which is what keeps `git switch -c` — the recommended rescue — from
+  being nagged at.
 
-1. **It happens on feature branches.** Both mechanisms play out between two
-   non-`main` branches, so the branch-name test never fires.
-2. **The guards protect committed work, not uncommitted work.** They govern
-   where a commit is allowed to land. Neither looks at the state of the
-   working tree, and no check runs at the moment a branch is switched.
-3. **Half the danger is outside any hook's reach.** `guard-branch.sh` is a
-   Claude Code `PreToolUse` hook, so it only ever sees tool calls Claude
-   itself makes. A person running `git checkout` in their own terminal is
-   invisible to it. Git has no `pre-checkout` hook to fall back on — only
-   `post-checkout`, which runs after the damage is done.
+`scripts/git-hooks/hooks.test.mjs` exercises both against a real scratch
+repository, with most of its cases pinning the forms that must *not* be
+caught. Existing clones need `scripts/git-hooks/install.sh` re-run to pick the
+new hook up.
 
-### What a fix would have to do
+Fixed on the way past, because adding a second hook exposed it: `install.sh`
+used to symlink whichever checkout it was run from, so a run inside a worktree
+silently repointed every checkout's hooks at a directory that would be deleted
+when the task landed. It now always installs from the primary checkout.
 
-Nothing here is decided; these are the candidate directions, roughly in
-increasing order of cost.
+### What is still uncovered
 
-- **Make sharing rare rather than safe.** A worktree per task removes the
-  shared `HEAD` outright, which is why it is already the working agreement in
-  [../CLAUDE.md](../CLAUDE.md). This is prevention, not protection, and it
-  does nothing on the occasions the primary checkout is still shared.
-- **Reduce the exposure window.** A `Stop` hook that commits work-in-progress
-  to the session's own branch at the end of each turn would mean there is
-  rarely anything uncommitted to strand. Needs a decision on what to do with
-  the resulting noise — squash before the PR, or a `wip:` prefix that a
-  pre-push hook refuses.
-- **Warn after the fact.** A `post-checkout` hook can compare the working tree
-  against what it looked like before, and print a loud warning when a switch
-  carried or stashed uncommitted changes. Cheap, and it covers a person's
-  terminal as well as Claude's, but it is a notification, not a block.
-- **Block the agent's half.** Extend `guard-branch.sh` to deny `git checkout`,
-  `git switch`, `git reset` and `git stash` in the primary checkout when the
-  working tree is dirty. Only constrains Claude, which is the half that can be
-  constrained. Overlaps with the "never run git in a checkout you don't own"
-  rule that already exists as guidance.
-- **Narrow the staging blast radius.** A `pre-commit` check that refuses
-  `git add -A`-style commits containing files outside the paths this session
-  has touched. The most targeted option and the most work, since it needs a
-  notion of session-owned paths that git does not have.
-
-A realistic first pass is the `post-checkout` warning plus the
-`guard-branch.sh` extension: together they cover both mechanisms for the agent
-side and give the human side a visible signal, without needing session
-ownership tracking.
+- **`git add -A` sweeping up another session's untracked files.** Nothing
+  blocks or reports it. The proposal was a `pre-commit` check refusing commits
+  that touch paths outside the ones this session has worked on — the most
+  targeted option and the most work, since it needs a notion of session-owned
+  paths that git does not have.
+- **Changes shelved rather than carried.** `post-checkout` detects a dirty
+  tree after a switch, which is exact for changes that came along. A `git
+  stash` or a `pull --autostash` beforehand leaves the tree clean, so the hook
+  has nothing to see. Detecting it would mean recording the stash count
+  somewhere and diffing it.
+- **Reaching into another checkout with `git -C <dir>`.** Both `guard-branch.sh`
+  checks judge a Bash command by the session's working directory, so this form
+  slips past. Covered by the "never run git in a checkout you don't own"
+  agreement only.
+- **Reducing the exposure window at all.** The `Stop`-hook idea — committing
+  work-in-progress to the session's own branch at the end of each turn — was
+  not attempted. It still needs a decision on what to do with the resulting
+  noise: squash before the PR, or a `wip:` prefix that a pre-push hook refuses.
 
 ### Recovery, if it happens again
 
@@ -103,6 +99,9 @@ git checkout <sha> -- <paths>         # restore from that commit
 ```
 
 `git fsck --lost-found` is the last resort if neither turns it up.
+
+Both `git checkout ... -- <paths>` forms above are deliberately exempt from the
+new guard, so recovery works without reaching for the escape hatch.
 
 ### Provenance
 
