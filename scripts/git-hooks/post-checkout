@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# Warn when a branch switch carried uncommitted changes across with it.
+#
+# `HEAD` belongs to the directory, not to the session working in it. When two
+# sessions share a checkout and one switches branch, the other's uncommitted
+# edits come along for the ride and are now sitting on top of an unrelated
+# base — silently, and usually noticed much later. Git has no `pre-checkout`
+# hook, so this cannot be blocked; the next best thing is to say so loudly, at
+# the moment it happens, in whoever's terminal ran the switch. That includes a
+# person's own terminal, which the Claude Code PreToolUse guard cannot see.
+#
+# The logic is exact rather than heuristic. A checkout never creates changes,
+# so anything dirty afterwards was dirty before and came with us. We only care
+# when the commit actually moved: if `HEAD` still points at the same commit —
+# `git switch -c my-branch`, or switching between two branches at the same tip
+# — the diff still applies to the same base and nothing has been stranded.
+# That exemption matters, because creating a branch in place is precisely the
+# recommended way *out* of this situation.
+#
+# Git passes: $1 previous HEAD, $2 new HEAD, $3 1 for a branch checkout.
+#
+# Installed by scripts/git-hooks/install.sh — edit this file, not the copy in
+# .git/hooks (which is a symlink back to here).
+#
+# See documentation/BRANCH-SAFETY.md.
+
+prev=${1:-}
+next=${2:-}
+is_branch_checkout=${3:-0}
+
+[ "$is_branch_checkout" = "1" ] || exit 0   # a file checkout moves no branch
+[ "$prev" != "$next" ] || exit 0            # same commit: nothing stranded
+
+# `git clone` and `git worktree add` also fire this hook, with a null previous
+# HEAD and nothing yet to lose.
+git rev-parse --verify --quiet "$prev^{commit}" >/dev/null 2>&1 || exit 0
+
+dirty=$(git status --porcelain 2>/dev/null)
+[ -n "$dirty" ] || exit 0
+
+tracked=$(printf '%s\n' "$dirty" | grep -v '^??' || true)
+untracked=$(printf '%s\n' "$dirty" | grep '^??' || true)
+
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || branch="$next"
+
+{
+    echo
+    echo "  ⚠ That branch switch carried uncommitted changes with it."
+    echo
+    echo "    They were made against $(git rev-parse --short "$prev") and are now sitting"
+    echo "    on '$branch'. If they are not yours, the session that wrote them still"
+    echo "    believes they are where it left them."
+    echo
+
+    if [ -n "$tracked" ]; then
+        echo "    Modified:"
+        printf '%s\n' "$tracked" | sed 's/^/      /' | head -n 20
+        echo
+    fi
+
+    if [ -n "$untracked" ]; then
+        echo "    Untracked — these are what a stray 'git add -A' sweeps into"
+        echo "    an unrelated commit:"
+        printf '%s\n' "$untracked" | sed 's/^/      /' | head -n 20
+        echo
+    fi
+
+    echo "    To put them back where they belong:"
+    echo
+    echo "        git switch -c <branch-name>      # keep them, on a branch of their own"
+    echo "        git switch -                     # or return to $(git rev-parse --short "$prev")"
+    echo
+    echo "    To stop sharing a checkout in the first place:"
+    echo
+    echo "        scripts/new-worktree.sh <branch-name>"
+    echo
+} >&2
+
+exit 0   # a warning, never a block

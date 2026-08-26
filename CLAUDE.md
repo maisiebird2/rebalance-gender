@@ -86,9 +86,13 @@ for the inventory of which script writes what.
   code comments, and commit and PR text. It is the majority spelling
   internationally and already the voice of most docs here.
 
-Both rules about branches are enforced, not just documented — a `PreToolUse`
-guard blocks edits while `main` is checked out, and a `pre-commit` hook rejects
-commits on `main`. New clones need `scripts/git-hooks/install.sh` once. See
+Both rules about branches are enforced, not just documented. A `PreToolUse`
+guard blocks edits while `main` is checked out, and also refuses `git
+checkout` / `switch` / `reset` / `stash` in the primary checkout while its
+working tree is dirty; a `pre-commit` hook rejects commits on `main`; and a
+`post-checkout` hook warns when a switch carried uncommitted changes with it.
+New clones need `scripts/git-hooks/install.sh` once, and existing ones need it
+re-run whenever a hook is added. See
 [documentation/BRANCH-SAFETY.md](documentation/BRANCH-SAFETY.md) for why the
 guards exist and how to override them deliberately.
 
