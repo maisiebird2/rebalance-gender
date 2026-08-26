@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { checkBotProtection } from "@/lib/submission-helpers";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { normalisedNameKey } from "@/lib/name-key.mjs";
 
 interface SearchMissBody {
   query: string;
@@ -61,12 +62,28 @@ export async function POST(request: NextRequest) {
 
   const supabase = getSupabaseAdminClient();
 
-  // Check if an artist with this name already exists (any status, not deleted)
-  const { data: existing } = await supabase
+  // Check if an artist with this name already exists (any status, not
+  // deleted). Matched on the normalised name key, so the visitor who
+  // searched "Otta" and missed doesn't queue a second row for the "ØTTA"
+  // that is already in the directory — the same key the search itself uses.
+  //
+  // A name that normalises to nothing (written entirely in a script
+  // unaccent() can't romanise) falls back to matching the raw name: every
+  // such artist shares the empty key, so filtering on it would match an
+  // unrelated row and wrongly report the name as already present.
+  const key = normalisedNameKey(name);
+
+  const existingQuery = supabase
     .from("artists")
     .select("id")
-    .ilike("name", escapeLikePattern(name))
-    .eq("deleted", false)
+    .eq("deleted", false);
+
+  const { data: existing } = await (
+    key
+      ? existingQuery.eq("name_search", key)
+      : existingQuery.ilike("name", escapeLikePattern(name))
+  )
+    .limit(1)
     .maybeSingle();
 
   if (existing) {

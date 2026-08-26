@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { getSupabaseClient, getSupabaseAdminClient } from "./supabase";
 import { pickArtistImage } from "./artist-images";
-import { normalisedNameKey } from "./organisations";
+import { normalisedNameKey } from "./name-key.mjs";
 import type {
   ArtistPage,
   ArtistWithRelations,
@@ -70,20 +70,6 @@ type RawOrganisationRow = {
 };
 
 export const PAGE_SIZE = 24;
-
-/**
- * Normalizes a search string to match the `name_search` generated column:
- * strips accents (NFD decompose + remove combining marks), lowercases, and
- * removes every character that isn't [a-z0-9] (spaces AND punctuation). Must
- * stay in sync with the Postgres expression:
- *   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
- * Stripping punctuation is what lets a query like "A.mo" match the artist
- * whose name_search is "amo"; if this only stripped spaces, the period in the
- * query would never match the punctuation-free stored key.
- */
-// The directory search key. Shared with the organisation duplicate check
-// and the admin list filter so the two can never drift apart.
-const normalizeSearch = normalisedNameKey;
 
 // Shared select string: pulls the artist plus all joined relations
 // (pronoun, genres via the artist_genres junction table, locations,
@@ -260,7 +246,19 @@ export async function getArtists(
     query = query.eq("locations.country", filters.country);
   }
   if (filters.search) {
-    const term = normalizeSearch(filters.search);
+    const term = normalisedNameKey(filters.search);
+
+    // A term that normalises to nothing has no key to match on: "???", or
+    // a name written entirely in a script unaccent() can't romanise
+    // ("МОЛЧАТ ДОМА"). It must not fall through, because `%%` is the empty
+    // LIKE pattern and matches every artist — the visitor typed a real
+    // query and would be handed the entire directory as its result set.
+    // Those artists store an empty name_search too, so there is genuinely
+    // nothing for such a term to find.
+    if (!term) {
+      return { artists: [], hasMore: false };
+    }
+
     const like = `%${term}%`;
 
     // Match on the primary name OR any alias. Aliases live in their own

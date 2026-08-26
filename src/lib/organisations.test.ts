@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   groupByRole,
   roleHeading,
-  normalisedNameKey,
   initialOrganisationRows,
   initialOrganisationRowsWithRoles,
 } from "./organisations";
@@ -67,25 +66,6 @@ describe("roleHeading", () => {
       expect(roleHeading(role("a_r", 90, "A&R"), direction)).toBe("A&R");
       expect(roleHeading(role("tour_manager", 130, "tour manager"), direction)).toBe("Tour manager");
     }
-  });
-});
-
-describe("normalisedNameKey", () => {
-  it("collapses case, spaces and punctuation", () => {
-    for (const name of ["Ostgut Ton", "ostgut ton", "Ostgut-Ton", "OSTGUT  TON!"]) {
-      expect(normalisedNameKey(name)).toBe("ostgutton");
-    }
-  });
-  it("strips diacritics the way Postgres unaccent does", () => {
-    expect(normalisedNameKey("Öştgut Ton")).toBe("ostgutton");
-    expect(normalisedNameKey("Brutaż")).toBe("brutaz");
-  });
-  it("keeps digits", () => {
-    expect(normalisedNameKey("3MOON Records")).toBe("3moonrecords");
-  });
-  it("is empty for punctuation-only input", () => {
-    expect(normalisedNameKey("???")).toBe("");
-    expect(normalisedNameKey("")).toBe("");
   });
 });
 

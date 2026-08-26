@@ -1807,10 +1807,11 @@ Not part of the pipeline; run manually when debugging.
      would be wrong in both directions. `not_found` rows are skipped —
      those record "there is no Discogs page for this artist".
   2. **name** — for whatever step 1 missed, the Discogs name normalized
-     through `normalizeName()` (`scripts/lib/hoer-resolve.mjs`) against
-     `artists.name_search`. That function mirrors the generated column's
-     expression character-for-character, so this is equality on the DB's
-     own key, not a fuzzy match.
+     through `normalizeName()` (re-exported by `scripts/lib/hoer-resolve.mjs`
+     from the shared `src/lib/name-key.mjs`) against `artists.name_search`.
+     That function mirrors the generated column's expression
+     character-for-character, so this is equality on the DB's own key, not a
+     fuzzy match.
 
   Where more than one live artist answers, `db_artist_name` and
   `db_artist_id` stay **blank**, `db_match` records `link_ambiguous` /

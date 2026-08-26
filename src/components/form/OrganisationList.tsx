@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo } from "react";
-import { normalisedNameKey } from "@/lib/organisations";
+import { normalisedNameKey } from "@/lib/name-key.mjs";
 import type { OrganisationFormRow, OrganisationRole, OrganisationSummary } from "@/lib/types";
 
 interface Props {

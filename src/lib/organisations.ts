@@ -8,6 +8,7 @@
 // role ("Resident: Ada, Bea"). The grouping is therefore written once
 // here rather than twice in the two pages.
 
+import { normalisedNameKey } from "./name-key.mjs";
 import type {
   ArtistOrganisationEntry,
   OrganisationFormRow,
@@ -16,30 +17,6 @@ import type {
 
 /** Mirrors DEFAULT_ROLE in organisation-writes.ts, which is server-only. */
 export const DEFAULT_ROLE_KEY = "associated";
-
-/**
- * The normalised name key — the same value Postgres stores in the
- * `name_search` generated column on both `artists` and `organisations`:
- *
- *   regexp_replace(lower(immutable_unaccent(name)), '[^a-z0-9]', '', 'g')
- *
- * i.e. lowercase, strip diacritics, then drop everything that isn't a
- * letter or a digit. "Ostgut Ton", "ostgut ton" and "Ostgut-Ton" all
- * collapse to "ostgutton".
- *
- * This is the single definition for the app side; scripts have their own
- * mirror in scripts/lib/hoer-resolve.mjs. It had been copy-pasted into
- * four places (the directory search, the admin duplicate check twice, and
- * the organisations list filter) — which is three chances for the two
- * sides to drift apart and silently stop matching.
- */
-export function normalisedNameKey(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
 
 export interface RoleGroup<T> {
   role: OrganisationRole;

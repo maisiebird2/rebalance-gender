@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { normalisedNameKey } from "@/lib/name-key.mjs";
 import type { Organisation } from "@/lib/types";
 import { mergeOrganisations } from "./actions";
 
@@ -24,10 +25,14 @@ export default function MergeOrganisationForm({ organisation, targets }: Props) 
   const [done, setDone] = useState<string | null>(null);
   const [isMerging, startMerging] = useTransition();
 
+  // Matched on the normalised name key, like every other name search here,
+  // so "ostgut ton" finds "Ostgut-Ton" and "otta" finds "ØTTA".
   const matches = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    const needle = normalisedNameKey(filter);
     if (!needle) return targets.slice(0, 20);
-    return targets.filter((t) => t.name.toLowerCase().includes(needle)).slice(0, 20);
+    return targets
+      .filter((t) => normalisedNameKey(t.name).includes(needle))
+      .slice(0, 20);
   }, [targets, filter]);
 
   const target = targets.find((t) => t.id === targetId) ?? null;
