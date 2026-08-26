@@ -66,7 +66,7 @@ number written down.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Name | **`organisations`**, route `/organisation/[id]` | British spelling, matching the docs' voice. Note existing code identifiers use American spellings (`normalizeSearch`) — this mixes conventions slightly, accepted deliberately |
+| Name | **`organisations`**, route `/organisation/[id]` | British spelling, matching the docs' voice. Note existing code identifiers use American spellings (`normalizeProfileLink`) — this mixes conventions slightly, accepted deliberately |
 | Types | **Many-to-many** | Tresor is a club *and* a label; Boiler Room a show *and* a promoter. One extra join table now vs. a data migration plus every read path later |
 | Backfill status | **All `pending`**, bulk-approved after review | Nothing goes public until it's been seen — catches the junk row, near-duplicates and artist/org name collisions |
 | First pass | **Phases 1–3** (schema, backfill, admin CRUD) | Model and clean the data behind the admin panel; public pages and forms follow |
@@ -202,7 +202,8 @@ untouched until phase 7.
 
 1. Read the 314 `artist_labels` rows and comma-split the 93 legacy
    `artists.labels` strings.
-2. Group by `normalizeSearch()` (reuse the existing helper so it matches the
+2. Group by `normalisedNameKey()` (reuse the shared helper in
+   `src/lib/name-key.mjs` so it matches the
    Postgres expression), pick the most common surface form as the canonical
    name.
 3. Create ~208 `organisations` (all `pending`) plus `artist_organisations`

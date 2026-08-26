@@ -100,7 +100,7 @@ src/
   components/
     ArtistCard.tsx              # Card used in directory listing; optional `footer` slot
     RecommendedArtists.tsx      # "You might also like" strip on artist pages
-    FilterBar.tsx               # Genre/country/search filters
+    FilterBar.tsx               # Genre/country/search filters + exact-match toggle
     BandcampWidget.tsx          # Embedded Bandcamp player
     form/OrganisationList.tsx   # The Organisations field, shared by submit/revise/edit.
                                 # <input list> + <datalist> over approved organisations;
@@ -170,6 +170,18 @@ a reimplementation. Two design decisions keep it fast even though the
   lookups and only covers the actual directory, so follow-graph growth
   doesn't slow search. Any query that wants this index must include
   both filter conditions.
+- **Exact match** — the "Exact match" checkbox in `FilterBar` sets
+  `?exact=1`, which narrows the search from `%term%` to the bare `term`,
+  so "Vel" finds the artist Vel and not "Velvet Underground". It stays an
+  ILIKE rather than becoming an `=` so the same trigram index still serves
+  it (the GIN opclass indexes LIKE/ILIKE patterns, not equality), and a
+  wildcard-free ILIKE *is* equality here: both sides are already lowercase
+  `[a-z0-9]` after `normalisedNameKey()`, which also means no `%` or `_` can
+  reach the pattern as a wildcard. Matching stays on the normalised key,
+  so exact ignores case, accents, spacing and punctuation — "V.E.L" still
+  matches "Vel". Aliases are matched the same way. An exact miss offers a
+  link to re-run the search without the constraint before offering to add
+  the name to the review queue.
 - **No exact result counts** — directory queries return `hasMore`
   (fetch `PAGE_SIZE + 1` rows, check for the extra) instead of a
   `count: "exact"` total, which would force a second full scan of all

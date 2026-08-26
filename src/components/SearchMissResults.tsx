@@ -1,15 +1,21 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useRef, useState, FormEvent } from "react";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
 interface Props {
   searchTerm: string;
+  /** Whether the miss came from an exact-match search. */
+  exact?: boolean;
 }
 
 type SubmitState = "idle" | "submitting" | "submitted" | "exists" | "error";
 
-export default function SearchMissResults({ searchTerm }: Props) {
+export default function SearchMissResults({ searchTerm, exact = false }: Props) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [trackedTerm, setTrackedTerm] = useState(searchTerm);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -57,15 +63,35 @@ export default function SearchMissResults({ searchTerm }: Props) {
     }
   }
 
+  // Same search with the exact-match constraint lifted. An exact miss often
+  // just means the visitor typed part of a longer name, so offer the wider
+  // search before offering to add the name to the review queue.
+  const broaderParams = new URLSearchParams(searchParams.toString());
+  broaderParams.delete("exact");
+  broaderParams.delete("page");
+  const broaderHref = `${pathname}?${broaderParams.toString()}`;
+
   return (
     <div className="mt-2">
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        No artists named{" "}
+        No artists {exact ? "named exactly" : "named"}{" "}
         <span className="font-semibold text-gray-800 dark:text-gray-200">
           &ldquo;{searchTerm}&rdquo;
         </span>{" "}
         are in the directory yet.
       </p>
+
+      {exact && (
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <Link
+            href={broaderHref}
+            className="text-violet-600 underline hover:no-underline dark:text-[#ff2d9b]"
+          >
+            Search every name containing &ldquo;{searchTerm}&rdquo;
+          </Link>{" "}
+          instead, or add it below.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="mt-3">
         {/* ── Honeypot (hidden from humans, filled by bots) ───────── */}

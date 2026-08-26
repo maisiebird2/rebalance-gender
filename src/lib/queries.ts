@@ -192,7 +192,8 @@ function normalizeArtist(row: RawArtistRow): ArtistWithRelations {
 
 /**
  * Fetch one page of approved artists, optionally filtered by genre,
- * country, and a free-text search over the artist name.
+ * country, and a free-text search over the artist name. The search matches
+ * substrings by default; `filters.exact` narrows it to the whole name.
  *
  * Genre/country filters use `!inner` joins so that only artists with a
  * matching related row are returned. Results are paginated using
@@ -248,28 +249,40 @@ export async function getArtists(
   if (filters.search) {
     const term = normalisedNameKey(filters.search);
 
-    // A term that normalises to nothing has no key to match on: "???", or
-    // a name written entirely in a script unaccent() can't romanise
-    // ("МОЛЧАТ ДОМА"). It must not fall through, because `%%` is the empty
-    // LIKE pattern and matches every artist — the visitor typed a real
-    // query and would be handed the entire directory as its result set.
-    // Those artists store an empty name_search too, so there is genuinely
-    // nothing for such a term to find.
+    // A term that normalises to nothing has no key to match on: "???", or a
+    // name written entirely in a script unaccent() can't romanise ("МОЛЧАТ
+    // ДОМА"). It must not fall through to a pattern. In substring mode that
+    // pattern is `%%`, the empty LIKE pattern, which matches every artist;
+    // in exact mode it is `""`, which matches exactly those artists whose
+    // own name_search is empty — every non-Latin name in the directory,
+    // handed back as though they were hits. Those artists store an empty
+    // name_search too, so there is genuinely nothing for such a term to find.
     if (!term) {
       return { artists: [], hasMore: false };
     }
 
-    const like = `%${term}%`;
+    // `exact` swaps the substring pattern for the bare term, turning the
+    // match into whole-name equality: "Vel" then finds the artist called
+    // Vel and not "Velvet Underground" or "A Lovely Butt". It stays an
+    // ILIKE rather than becoming .eq() for two reasons — the pg_trgm GIN
+    // index on name_search serves LIKE/ILIKE patterns but not `=`, and
+    // both sides are already lowercase [a-z0-9] (normalisedNameKey strips
+    // the rest, so no % or _ can sneak in as a wildcard), which makes a
+    // wildcard-free ILIKE exactly an equality test. Matching is still on
+    // the *normalised* key, so case, accents, spacing and punctuation are
+    // ignored in exact mode too: "V.E.L" matches the artist "Vel", and
+    // "otta" matches "ØTTA".
+    const pattern = filters.exact ? term : `%${term}%`;
 
     // Match on the primary name OR any alias. Aliases live in their own
     // table (an artist can have several), so first collect the ids of
     // artists whose alias matches, then OR those into the main filter.
     // artist_aliases.name_search mirrors artists.name_search, so the same
-    // normalized term matches both columns identically.
+    // normalised term matches both columns identically.
     const { data: aliasRows, error: aliasError } = await supabase
       .from("artist_aliases")
       .select("artist_id")
-      .ilike("name_search", like);
+      .ilike("name_search", pattern);
 
     if (aliasError) {
       console.error("getArtists alias search error:", aliasError);
@@ -285,11 +298,12 @@ export async function getArtists(
       // Within .or(), ilike uses `*` as the wildcard (not `%`); the pattern
       // is double-quoted so terms containing commas/periods/parens (e.g.
       // "Tyler, the Creator", "M.I.A.") don't break the filter grammar.
+      const orPattern = filters.exact ? term : `*${term}*`;
       query = query.or(
-        `name_search.ilike."*${term}*",id.in.(${aliasIds.join(",")})`
+        `name_search.ilike."${orPattern}",id.in.(${aliasIds.join(",")})`
       );
     } else {
-      query = query.ilike("name_search", like);
+      query = query.ilike("name_search", pattern);
     }
   }
 
