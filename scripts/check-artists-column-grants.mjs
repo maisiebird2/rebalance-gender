@@ -77,9 +77,14 @@ const PRIVATE_COLUMNS = [
 ];
 
 // The public shape the site actually selects (ARTIST_SELECT's artist
-// columns in src/lib/queries.ts).
+// columns in src/lib/queries.ts). Keep it in step with that select: a column
+// listed here that the table no longer has fails the probe with 42703
+// (undefined_column) and reads as a broken grant, which is what "labels" did
+// between supabase_migration_drop_artists_labels.sql and this line being
+// updated. name_search is deliberately absent — it is granted and the site
+// filters on it, but never selects it, so section 3 probes it separately.
 const PUBLIC_SELECT =
-  "id, name, pronoun_id, labels, directory_status, duplicate_of, " +
+  "id, name, pronoun_id, directory_status, duplicate_of, " +
   "profile_image_url, profile_image_source, profile_image_fetched_at, " +
   "booking_info, management_info, contact_info, deleted, created_at, updated_at";
 
