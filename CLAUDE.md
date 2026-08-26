@@ -87,12 +87,14 @@ for the inventory of which script writes what.
   internationally and already the voice of most docs here.
 
 Both rules about branches are enforced, not just documented. A `PreToolUse`
-guard blocks edits while `main` is checked out, and also refuses `git
-checkout` / `switch` / `reset` / `stash` in the primary checkout while its
-working tree is dirty; a `pre-commit` hook rejects commits on `main`; and a
-`post-checkout` hook warns when a switch carried uncommitted changes with it.
-New clones need `scripts/git-hooks/install.sh` once, and existing ones need it
-re-run whenever a hook is added. See
+guard blocks edits while `main` is checked out, and in the primary checkout
+with a dirty working tree it also refuses `git checkout` / `switch` / `reset`
+/ `stash` and `git add -A` / `git commit -a`; a `pre-commit` hook rejects
+commits on `main`; a `post-checkout` hook warns when a switch carried
+uncommitted changes or when something was stashed; and a `Stop` hook reports
+work left uncommitted in the primary checkout. New clones need
+`scripts/git-hooks/install.sh` once, and existing ones need it re-run whenever
+a hook is added. See
 [documentation/BRANCH-SAFETY.md](documentation/BRANCH-SAFETY.md) for why the
 guards exist and how to override them deliberately.
 

@@ -1,22 +1,21 @@
 #!/bin/sh
 #
-# Warn when a branch switch carried uncommitted changes across with it.
+# Warn when a branch switch carried uncommitted changes with it, or when work
+# was shelved into the stash before it.
 #
 # `HEAD` belongs to the directory, not to the session working in it. When two
 # sessions share a checkout and one switches branch, the other's uncommitted
-# edits come along for the ride and are now sitting on top of an unrelated
-# base — silently, and usually noticed much later. Git has no `pre-checkout`
-# hook, so this cannot be blocked; the next best thing is to say so loudly, at
-# the moment it happens, in whoever's terminal ran the switch. That includes a
-# person's own terminal, which the Claude Code PreToolUse guard cannot see.
+# edits either come along for the ride — now sitting on top of an unrelated
+# base — or were stashed out of the way first. Either way it is silent, and
+# usually noticed much later. Git has no `pre-checkout` hook, so this cannot
+# be blocked; the next best thing is to say so loudly, at the moment it
+# happens, in whoever's terminal ran the switch. That includes a person's own
+# terminal, which the Claude Code PreToolUse guard cannot see.
 #
-# The logic is exact rather than heuristic. A checkout never creates changes,
-# so anything dirty afterwards was dirty before and came with us. We only care
-# when the commit actually moved: if `HEAD` still points at the same commit —
-# `git switch -c my-branch`, or switching between two branches at the same tip
-# — the diff still applies to the same base and nothing has been stranded.
-# That exemption matters, because creating a branch in place is precisely the
-# recommended way *out* of this situation.
+# Both warnings address the same blind spot: the person who ran the command
+# never saw the changes they moved, so they cannot know whose they were. The
+# paths are listed for exactly that reason — recognising your own work in the
+# list takes a second, and not recognising it is the whole signal.
 #
 # Git passes: $1 previous HEAD, $2 new HEAD, $3 1 for a branch checkout.
 #
@@ -30,7 +29,73 @@ next=${2:-}
 is_branch_checkout=${3:-0}
 
 [ "$is_branch_checkout" = "1" ] || exit 0   # a file checkout moves no branch
-[ "$prev" != "$next" ] || exit 0            # same commit: nothing stranded
+
+# --- did somebody stash before switching? -----------------------------------
+#
+# `git stash push` fires no hook of its own, so the only way to notice is to
+# remember how tall the stash was last time we looked. The record lives in the
+# git directory, which is per-checkout and never committed.
+#
+# `git stash pop` does fire this hook, but as a file checkout, so it is
+# already gone by the test above and cannot mask the entry it restores.
+#
+# This half is for the primary checkout only, unlike the carried-changes
+# warning below. A stash you made yourself is a thing you already know about,
+# so in a worktree — which belongs to one task — this could only ever be
+# noise. In a shared checkout it is the one trace the shelving leaves.
+
+count=''
+git_dir=$(git rev-parse --git-dir 2>/dev/null) || git_dir=''
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || common_dir='-'
+
+if [ -n "$git_dir" ] && [ "$git_dir" = "$common_dir" ]; then
+    record="$git_dir/rebalance-last-stash-count"
+    count=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+    previous=$(cat "$record" 2>/dev/null || true)
+    printf '%s\n' "$count" > "$record" 2>/dev/null || true
+
+    case "$previous" in
+        ''|*[!0-9]*) previous='' ;;         # no record yet, or an unreadable one
+    esac
+else
+    previous=''
+fi
+
+if [ -n "$previous" ] && [ "$count" -gt "$previous" ]; then
+    # -u needs git 2.32; without it the untracked half is simply not listed.
+    stashed=$(git stash show --include-untracked --name-only stash@{0} 2>/dev/null) \
+        || stashed=$(git stash show --name-only stash@{0} 2>/dev/null)
+
+    {
+        echo
+        echo "  ⚠ Something was stashed in this checkout since it last moved."
+        echo
+        echo "    $(git stash list | head -n 1)"
+        echo
+        if [ -n "$stashed" ]; then
+            echo "    Shelved:"
+            printf '%s\n' "$stashed" | sed 's/^/      /' | head -n 20
+            echo
+        fi
+        echo "    If any of that is not yours, the session that wrote it believes it"
+        echo "    is still in the working tree. Put it back with:"
+        echo
+        echo "        git stash pop"
+        echo
+    } >&2
+fi
+
+# --- did the switch carry uncommitted changes with it? ----------------------
+#
+# Exact rather than heuristic: a checkout never creates changes, so anything
+# dirty afterwards was dirty before and came along. We only care when the
+# commit actually moved — if `HEAD` still points at the same commit (`git
+# switch -c my-branch`, or two branches at the same tip) the diff still
+# applies to the same base and nothing has been stranded. That exemption
+# matters, because creating a branch in place is the recommended way *out* of
+# this situation.
+
+[ "$prev" != "$next" ] || exit 0
 
 # `git clone` and `git worktree add` also fire this hook, with a null previous
 # HEAD and nothing yet to lose.

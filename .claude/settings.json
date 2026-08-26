@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/git-hooks/stop-dirty-tree.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking for uncommitted work"
+          }
+        ]
+      }
     ]
   }
 }
