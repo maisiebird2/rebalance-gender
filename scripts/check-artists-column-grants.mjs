@@ -24,6 +24,7 @@
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
+import { PUBLIC_ARTIST_COLUMNS } from "../src/lib/artist-columns.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,17 +77,16 @@ const PRIVATE_COLUMNS = [
   "gender_mb",
 ];
 
-// The public shape the site actually selects (ARTIST_SELECT's artist
-// columns in src/lib/queries.ts). Keep it in step with that select: a column
-// listed here that the table no longer has fails the probe with 42703
-// (undefined_column) and reads as a broken grant, which is what "labels" did
-// between supabase_migration_drop_artists_labels.sql and this line being
-// updated. name_search is deliberately absent — it is granted and the site
-// filters on it, but never selects it, so section 3 probes it separately.
-const PUBLIC_SELECT =
-  "id, name, pronoun_id, directory_status, duplicate_of, " +
-  "profile_image_url, profile_image_source, profile_image_fetched_at, " +
-  "booking_info, management_info, contact_info, deleted, created_at, updated_at";
+// The public shape the site actually selects — the SAME array
+// src/lib/queries.ts builds ARTIST_SELECT from, not a copy of it. That is the
+// point of this check: it can only prove the site's select still matches the
+// database's grants if it probes the site's actual list. A second, hand-kept
+// copy went stale exactly once and reported a dropped column (labels) as a
+// broken grant.
+//
+// name_search is not in that array (nothing selects it) but is granted and
+// filtered on, so section 3 probes it separately.
+const PUBLIC_SELECT = PUBLIC_ARTIST_COLUMNS.join(", ");
 
 function isPermissionDenied(error) {
   return (
