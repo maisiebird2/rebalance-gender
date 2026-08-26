@@ -38,7 +38,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 
 | Doc | What it covers |
 |---|---|
-| [MISCELLANEOUS-TASKS.md](MISCELLANEOUS-TASKS.md) | Small jobs with no home of their own — currently the unprotected-uncommitted-work gap in the branch guards |
+| [MISCELLANEOUS-TASKS.md](MISCELLANEOUS-TASKS.md) | Small jobs with no home of their own — branch-guard gaps, documentation-index drift, and directory-search ranking |
 
 ## Proposals (not accepted — decisions still open)
 
