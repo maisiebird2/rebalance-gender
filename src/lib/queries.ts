@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { getSupabaseClient, getSupabaseAdminClient } from "./supabase";
 import { pickArtistImage } from "./artist-images";
 import { normalisedNameKey } from "./name-key.mjs";
+import { PUBLIC_ARTIST_COLUMNS } from "./artist-columns.mjs";
 import type {
   ArtistPage,
   ArtistWithRelations,
@@ -75,33 +76,20 @@ export const PAGE_SIZE = 24;
 // (pronoun, genres via the artist_genres junction table, locations,
 // links, and cached enrichment data).
 //
-// The artist columns are listed explicitly rather than `*`: anon and
-// authenticated only hold column-level SELECT grants on artists (see
+// The artist columns come from PUBLIC_ARTIST_COLUMNS rather than being
+// spelled out here, and rather than `*`: anon and authenticated only hold
+// column-level SELECT grants on artists (see
 // supabase_migration_artists_private_columns.sql), and PostgREST rejects
-// `select=*` for a role that can't read every column. The list below must
-// stay a subset of the granted columns — the private ones (notes,
-// submitted_by_email, submitted_at, reviewed_at, gender_mb) are only
-// readable through the service-role client, which uses its own select
-// strings (e.g. ARTIST_ADMIN_SELECT on the edit page).
+// `select=*` for a role that can't read every column. That module explains
+// the grant rules and is shared with
+// scripts/check-artists-column-grants.mjs, so the checker probes the same
+// list the site selects instead of a copy of it.
 //
 // The nested organisations(...) select names its columns for exactly the
 // same reason: organisations.notes is admin-only, so `*` on that table is
 // rejected for the public roles too.
 const ARTIST_SELECT = `
-  id,
-  name,
-  pronoun_id,
-  directory_status,
-  duplicate_of,
-  profile_image_url,
-  profile_image_source,
-  profile_image_fetched_at,
-  booking_info,
-  management_info,
-  contact_info,
-  deleted,
-  created_at,
-  updated_at,
+  ${PUBLIC_ARTIST_COLUMNS.join(",\n  ")},
   pronoun:pronouns(*),
   artist_genres(genres(*)),
   artist_type_assignments(artist_types(*)),
