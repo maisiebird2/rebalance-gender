@@ -5,11 +5,10 @@
 //
 // An artist qualifies when BOTH hold:
 //   1. it has exactly ONE artist_links row, and
-//   2. a different, live (deleted = false) artist with
-//      directory_status = 'approved' holds that same link — same platform,
-//      same url under the repo's URL-sameness rule (scheme / www /
+//   2. a different, live (deleted = false) artist holds that same link — same
+//      platform, same url under the repo's URL-sameness rule (scheme / www /
 //      trailing-slash / tracking-param insensitive; see
-//      scripts/lib/link-url-match.mjs).
+//      scripts/lib/link-url-match.mjs) — AND that other row beats this one.
 //
 // Such a row carries nothing the approved artist doesn't: same platform
 // association, no other links. Soft delete (artists.deleted = true) is the
@@ -22,21 +21,31 @@
 // same platform either way, so a Bandcamp link never justifies deleting a
 // SoundCloud stub.
 //
-// When the candidate is ITSELF approved, both rows are live on the public
-// site and the question is which to keep. Link count settles it: a sharer
-// holding more links is the fuller entry, so the one-link row is the
-// duplicate and goes. Clearing those pairs — the same artist appearing twice
-// in the directory, once as a bare stub — is the main thing this script is
-// for. Only a dead heat, where every approved sharer is as bare as the
-// candidate, is left for a human.
+// "Beats this one" is a dominance test on two things — whether the row is
+// approved, and how many links it holds. A sharer wins when it is at least as
+// good on both and strictly better on at least one:
 //
-// Guards (a candidate is skipped + logged, never forced):
-//   - the candidate is approved and every approved artist sharing its link
-//     holds just the one link too -> skip; nothing to choose between them
-//   - the candidate is already soft-deleted -> skip; nothing to do
-//   - the artist row is missing (orphaned link) -> skip
-//   - the only approved sharer is soft-deleted -> not a candidate at all; a
-//     deleted row is not a survivor and cannot justify a deletion
+//   sharer approved, candidate not      -> delete; a directory entry beats a
+//                                          row outside the directory
+//   same status tier, sharer has more   -> delete; the fuller row is the real
+//                                          entry, this is the stub beside it
+//
+// Clearing those pairs — the same artist twice over, once as a bare stub — is
+// the main thing this script is for.
+//
+// Neither signal alone is decisive. An approved row holding one link is NOT
+// deleted for a not_eligible row holding six: the approved row is the only
+// one of the pair the public site shows, so deleting it would drop the artist
+// from the directory while the fuller data sits on a row nobody can see.
+//
+// Flagged for a human, never guessed (all logged to the CSV):
+//   - an exact tie: same status tier, both holding just the one link
+//   - candidate approved, sharer fuller but not in the directory -> a merge
+//   - the candidate is already soft-deleted, or its artist row is missing
+//
+// A candidate that beats every sharer outright is the survivor, and is simply
+// kept — silently, with no CSV row. So is a stub whose only sharer is
+// soft-deleted: a deleted row is not a survivor and cannot justify anything.
 //
 // The selection itself is pure and unit-tested — see
 // scripts/lib/single-link-dupes.mjs and its .test.mjs.
