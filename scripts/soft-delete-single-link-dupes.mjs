@@ -22,10 +22,17 @@
 // same platform either way, so a Bandcamp link never justifies deleting a
 // SoundCloud stub.
 //
+// When the candidate is ITSELF approved, both rows are live on the public
+// site and the question is which to keep. Link count settles it: a sharer
+// holding more links is the fuller entry, so the one-link row is the
+// duplicate and goes. Clearing those pairs — the same artist appearing twice
+// in the directory, once as a bare stub — is the main thing this script is
+// for. Only a dead heat, where every approved sharer is as bare as the
+// candidate, is left for a human.
+//
 // Guards (a candidate is skipped + logged, never forced):
-//   - the candidate is itself 'approved'   -> skip; two live approved artists
-//     sharing one link is a duplicate pair, and which one survives is a
-//     human's call, not this script's
+//   - the candidate is approved and every approved artist sharing its link
+//     holds just the one link too -> skip; nothing to choose between them
 //   - the candidate is already soft-deleted -> skip; nothing to do
 //   - the artist row is missing (orphaned link) -> skip
 //   - the only approved sharer is soft-deleted -> not a candidate at all; a
