@@ -2,10 +2,10 @@
 // single-link-dupes.mjs — pure selection logic for
 // soft-delete-single-link-dupes.mjs.
 //
-// The rule, in one sentence: an artist whose ONLY link is a link a live
-// approved artist already holds is a leftover stub — the approved row carries
-// the same platform association plus everything else, so the stub can be
-// soft-deleted.
+// The rule, in one sentence: an artist whose ONLY link is a link another live
+// artist already holds is a leftover stub, provided that other row is the
+// better of the two — it carries the same platform association and more
+// besides, so the stub can be soft-deleted.
 //
 // "Only a <platform> link" means the artist has exactly one artist_links row
 // and it is on that platform. An artist with a HÖR link *and* a SoundCloud
@@ -14,20 +14,35 @@
 // never considered.
 //
 // Runs across every platform by default. Passing `platform` narrows the
-// candidates to stubs on that one platform — the approved sharer is always
-// matched on the SAME platform either way, so a Bandcamp link never justifies
-// deleting a SoundCloud stub.
+// candidates to stubs on that one platform — the sharer is always matched on
+// the SAME platform either way, so a Bandcamp link never justifies deleting a
+// SoundCloud stub.
 //
-// When the stub is ITSELF approved, both rows are live directory entries and
-// the question becomes which one to keep. That is settled by link count, not
-// by status:
+// WHICH ROW SURVIVES is a dominance test on two things: whether the row is
+// approved, and how many links it holds. A sharer justifies deleting the
+// candidate when it is at least as good on both and strictly better on at
+// least one:
 //
-//   - a sharer holds more links -> the sharer is the fuller entry, so the
-//     one-link row is the duplicate and is soft-deleted. This is the case
-//     the script exists to clear: two of the same artist showing on the
-//     public site, one of them a bare stub.
-//   - every approved sharer also holds just the one link -> a genuine tie,
-//     nothing to choose between them. Flagged for a human, never guessed.
+//   sharer approved, candidate not         -> delete; a directory entry beats
+//                                             a row that isn't in the
+//                                             directory, whatever its links
+//   same status tier, sharer holds more    -> delete; the fuller row is the
+//                                             real entry and this is the stub
+//                                             beside it
+//
+// Status alone is not enough, and link count alone is not enough. An approved
+// row holding one link is NOT deleted for a not_eligible row holding six:
+// the approved row is the only one of the pair the public site shows, so
+// deleting it would drop the artist from the directory altogether while the
+// fuller data sits on a row nobody can see. That is a merge, not a delete,
+// and it is flagged rather than guessed.
+//
+// Flagged for a human, never guessed:
+//   - an exact tie: same status tier, both holding just the one link
+//   - the incomparable pair above: candidate approved, sharer fuller but not
+//
+// A candidate that beats every sharer outright is simply kept, silently — it
+// is the survivor, not a problem.
 //
 // DB-free so it can be unit-tested; the reads and the update live in the
 // script. See scripts/lib/hoer-db.mjs for the counterpart.
@@ -44,10 +59,11 @@ export const SOFT_DELETE_AUDIT_COLUMNS = [
   "platform",
   "url",
   "link_count",
-  "approved_artist_id",
-  "approved_artist_name",
-  "approved_artist_url",
-  "approved_artist_link_count",
+  "sharer_id",
+  "sharer_name",
+  "sharer_status",
+  "sharer_url",
+  "sharer_link_count",
   "action",
   "note",
 ];
@@ -70,6 +86,28 @@ export function linkKey(platform, url) {
   return `${platform}\n${normalizeForComparison(trimmed)}`;
 }
 
+// The two things that decide which row of a duplicate pair survives. Being in
+// the directory outranks not being in it; holding more links outranks holding
+// fewer. Neither alone is decisive — see the header.
+const rank = (row) => ({
+  approved: row.directory_status === "approved" ? 1 : 0,
+  links: row.linkCount,
+});
+
+/**
+ * Does `a` beat `b` outright — at least as good on both counts, strictly
+ * better on at least one?
+ */
+function dominates(a, b) {
+  const x = rank(a);
+  const y = rank(b);
+  return (
+    x.approved >= y.approved &&
+    x.links >= y.links &&
+    (x.approved > y.approved || x.links > y.links)
+  );
+}
+
 /**
  * Decide which artists to soft-delete.
  *
@@ -86,7 +124,7 @@ export function linkKey(platform, url) {
  *
  * @returns {{ toSoftDelete: string[], audit: object[] }}
  *          `toSoftDelete` is the artist ids to update; `audit` has one row per
- *          artist considered (soft-deleted and skipped alike), CSV-shaped.
+ *          artist deleted or flagged, CSV-shaped.
  */
 export function selectSingleLinkDupeSoftDeletes({ links, artists, platform = null }) {
   // artist_id -> { total, sole }. `sole` is the row itself when the artist has
@@ -104,21 +142,21 @@ export function selectSingleLinkDupeSoftDeletes({ links, artists, platform = nul
 
   const linkCountOf = (artistId) => linkSummary.get(artistId)?.total ?? 0;
 
-  // link key -> the live approved artists holding it. Built from EVERY link an
-  // approved artist has, not just their sole one: an approved artist with ten
-  // links still justifies deleting a stub that duplicates one of them.
-  // Soft-deleted rows are excluded — a deleted row is not a survivor, so it
-  // cannot justify deleting anything else.
-  const approvedByKey = new Map();
+  // link key -> every LIVE artist holding it, whatever their status. Built
+  // from all of an artist's links, not just a sole one: a row with ten links
+  // still justifies deleting a stub duplicating one of them. Soft-deleted
+  // rows are excluded — a deleted row is not a survivor, so it cannot justify
+  // deleting anything else.
+  const holdersByKey = new Map();
   for (const link of links) {
     const artist = artists.get(link.artist_id);
-    if (!artist || artist.deleted || artist.directory_status !== "approved") continue;
+    if (!artist || artist.deleted) continue;
     const key = linkKey(link.platform, link.url);
     if (!key) continue;
-    let holders = approvedByKey.get(key);
+    let holders = holdersByKey.get(key);
     if (!holders) {
       holders = new Map(); // artist_id -> holder, deduped
-      approvedByKey.set(key, holders);
+      holdersByKey.set(key, holders);
     }
     // One artist can hold two rows that normalise to the same link (an http
     // and an https copy, say). Count them as the one sharer they are.
@@ -143,14 +181,12 @@ export function selectSingleLinkDupeSoftDeletes({ links, artists, platform = nul
     const key = linkKey(sole.platform, sole.url);
     if (!key) continue;
 
-    // Condition 2: a *different* live approved artist holds the same link.
-    const approved = [...(approvedByKey.get(key)?.values() ?? [])].filter(
-      (a) => a.id !== artistId
-    );
-    if (approved.length === 0) continue;
+    // Condition 2: a *different* live artist holds the same link.
+    const sharers = [...(holdersByKey.get(key)?.values() ?? [])].filter((s) => s.id !== artistId);
+    if (sharers.length === 0) continue;
 
     const artist = artists.get(artistId);
-    const record = (action, note) => {
+    const record = (action, note, subjects = sharers) => {
       audit.push({
         artist_id: artistId,
         name: artist?.name ?? "",
@@ -158,10 +194,11 @@ export function selectSingleLinkDupeSoftDeletes({ links, artists, platform = nul
         platform: sole.platform,
         url: sole.url,
         link_count: total,
-        approved_artist_id: approved.map((a) => a.id).join("; "),
-        approved_artist_name: approved.map((a) => a.name).join("; "),
-        approved_artist_url: approved.map((a) => a.url).join("; "),
-        approved_artist_link_count: approved.map((a) => a.linkCount).join("; "),
+        sharer_id: subjects.map((s) => s.id).join("; "),
+        sharer_name: subjects.map((s) => s.name).join("; "),
+        sharer_status: subjects.map((s) => s.directory_status).join("; "),
+        sharer_url: subjects.map((s) => s.url).join("; "),
+        sharer_link_count: subjects.map((s) => s.linkCount).join("; "),
         action,
         note,
       });
@@ -176,30 +213,48 @@ export function selectSingleLinkDupeSoftDeletes({ links, artists, platform = nul
       continue;
     }
 
-    // Both rows live on the public site. Keep the fuller one: a sharer with
-    // more links is the real entry and this one is the stub beside it. Only a
-    // dead heat — every approved sharer as bare as this row — needs a human.
-    if (artist.directory_status === "approved") {
-      const fuller = approved.filter((a) => a.linkCount > total);
-      if (fuller.length === 0) {
-        record(
-          "skipped",
-          "approved, and every approved artist sharing this link has just the " +
-            "one link too — nothing to choose between them; pick a survivor by hand"
-        );
-        continue;
-      }
+    const self = { ...artist, linkCount: total };
+
+    const better = sharers.filter((s) => dominates(s, self));
+    if (better.length > 0) {
       toSoftDelete.push(artistId);
+      const describe = (s) => `${s.name} (${s.directory_status}, ${s.linkCount} links)`;
       record(
         "to-soft-delete",
-        "approved, but this row holds only the one link and an approved sharer " +
-          `holds more: ${fuller.map((a) => `${a.name} (${a.linkCount} links)`).join("; ")}`
+        `this row holds only the one link; kept instead: ${better.map(describe).join("; ")}`,
+        better
       );
       continue;
     }
 
-    toSoftDelete.push(artistId);
-    record("to-soft-delete", "");
+    // Nothing beats it. Two shapes of stalemate are worth a human's time.
+    const incomparable = sharers.filter(
+      (s) => rank(self).approved > rank(s).approved && s.linkCount > total
+    );
+    if (incomparable.length > 0) {
+      record(
+        "skipped",
+        "approved with one link, but a row that is NOT in the directory holds " +
+          "more — deleting this would drop the artist from the site; merge by hand",
+        incomparable
+      );
+      continue;
+    }
+
+    const tied = sharers.filter(
+      (s) => rank(s).approved === rank(self).approved && s.linkCount === total
+    );
+    if (tied.length > 0) {
+      record(
+        "skipped",
+        "same status and one link each — nothing to choose between them; " +
+          "pick a survivor by hand",
+        tied
+      );
+      continue;
+    }
+
+    // This row beats every sharer outright: it is the survivor, not a problem.
   }
 
   return { toSoftDelete, audit };

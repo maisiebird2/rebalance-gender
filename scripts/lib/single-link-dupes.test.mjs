@@ -71,7 +71,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(audit[0]).toMatchObject({
       artist_id: "stub",
       action: "to-soft-delete",
-      approved_artist_id: "live",
+      sharer_id: "live",
       platform: "hoer",
       url: HOER_A,
       link_count: 1,
@@ -103,26 +103,60 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(toSoftDelete).toEqual([]);
   });
 
-  it("keeps an artist that has a second link", () => {
+  it("never deletes an artist that has a second link", () => {
     const { toSoftDelete, audit } = select([
-      { id: "stub", status: "pending", links: [["hoer", HOER_A], ["bandcamp", "https://b.com"]] },
+      { id: "two-links", status: "pending", links: [["hoer", HOER_A], ["bandcamp", "https://b.com"]] },
       { id: "live", status: "approved", links: [["hoer", HOER_A]] },
     ]);
     expect(toSoftDelete).toEqual([]);
-    // Not a candidate at all — it never reaches the audit.
-    expect(audit).toEqual([]);
+    // The two-link row is not a candidate. The approved one-link row is, but
+    // its only sharer is fuller yet not in the directory — incomparable.
+    expect(audit.map((r) => r.artist_id)).toEqual(["live"]);
+    expect(audit[0].action).toBe("skipped");
+    expect(audit[0].note).toContain("merge by hand");
   });
 
-  it("keeps a stub whose link no approved artist shares", () => {
+  it("flags, rather than deletes, two equally bare rows of the same status", () => {
     const { toSoftDelete, audit } = select([
       { id: "stub", status: "pending", links: [["hoer", HOER_A]] },
       { id: "other-stub", status: "pending", links: [["hoer", HOER_A]] },
     ]);
     expect(toSoftDelete).toEqual([]);
-    expect(audit).toEqual([]);
+    expect(audit.map((r) => r.artist_id)).toEqual(["other-stub", "stub"]);
+    expect(audit.every((r) => r.action === "skipped")).toBe(true);
+    expect(audit[0].note).toContain("pick a survivor by hand");
   });
 
-  it("keeps a stub whose only approved sharer is soft-deleted", () => {
+  it("deletes a bare row for a fuller one when NEITHER is approved", () => {
+    // The Hacker: two not_eligible rows on one HÖR link, 1 link vs 6. The
+    // fuller row wins on links; status is equal, so it dominates.
+    const { toSoftDelete, audit } = select([
+      { id: "bare", name: "The Hacker", status: "not_eligible", links: [["hoer", HOER_A]] },
+      {
+        id: "full",
+        name: "The Hacker",
+        status: "not_eligible",
+        links: [["hoer", HOER_A], ["soundcloud", SC_A], ["bandcamp", "https://b.com"]],
+      },
+    ]);
+    expect(toSoftDelete).toEqual(["bare"]);
+    expect(audit[0].note).toContain("The Hacker (not_eligible, 3 links)");
+  });
+
+  it("keeps an approved row over an equally bare non-approved one, silently", () => {
+    // The approved row outranks its sharer on status and ties on links, so it
+    // is the survivor — not a problem, and not worth a row in the audit.
+    const { toSoftDelete, audit } = select([
+      { id: "approved-row", status: "approved", links: [["hoer", HOER_A]] },
+      { id: "pending-row", status: "pending", links: [["hoer", HOER_A]] },
+    ]);
+    // The pending row loses on status and is deleted; the approved one is not
+    // reported at all.
+    expect(toSoftDelete).toEqual(["pending-row"]);
+    expect(audit.map((r) => r.artist_id)).toEqual(["pending-row"]);
+  });
+
+  it("keeps a stub whose only sharer is soft-deleted", () => {
     const { toSoftDelete } = select([
       { id: "stub", status: "pending", links: [["hoer", HOER_A]] },
       { id: "gone", status: "approved", deleted: true, links: [["hoer", HOER_A]] },
@@ -130,7 +164,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(toSoftDelete).toEqual([]);
   });
 
-  it("does not treat an artist as its own approved sharer", () => {
+  it("does not treat an artist as its own sharer", () => {
     const { toSoftDelete, audit } = select([
       { id: "solo", status: "approved", links: [["hoer", HOER_A]] },
     ]);
@@ -147,9 +181,9 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({
       action: "to-soft-delete",
-      approved_artist_link_count: "2",
+      sharer_link_count: "2",
     });
-    expect(audit[0].note).toContain("Live (2 links)");
+    expect(audit[0].note).toContain("Live (approved, 2 links)");
   });
 
   it("flags a tie — two approved rows that both hold only the one link", () => {
@@ -189,15 +223,18 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(audit).toEqual([]);
   });
 
-  it("counts a non-approved sharer's links as no help to an approved row", () => {
-    // A pending row with five links is not a survivor: only approved sharers
-    // can settle which live entry is the fuller one.
+  it("flags — never deletes — an approved row whose fuller twin is not approved", () => {
+    // Deleting the approved row would drop the artist from the public site
+    // altogether, since the fuller row is not in the directory. A merge
+    // decision, not a delete.
     const { toSoftDelete, audit } = select([
       { id: "approved-stub", status: "approved", links: [["hoer", HOER_A]] },
       { id: "pending-rich", status: "pending", links: [["hoer", HOER_A], ["soundcloud", SC_A]] },
     ]);
     expect(toSoftDelete).toEqual([]);
-    expect(audit).toEqual([]);
+    expect(audit.map((r) => r.artist_id)).toEqual(["approved-stub"]);
+    expect(audit[0]).toMatchObject({ action: "skipped", sharer_status: "pending" });
+    expect(audit[0].note).toContain("merge by hand");
   });
 
   it("skips an already soft-deleted candidate instead of touching it again", () => {
@@ -227,7 +264,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(toSoftDelete).toEqual([]);
   });
 
-  it("counts an approved artist's every link, not just a sole one", () => {
+  it("counts a sharer's every link, not just a sole one", () => {
     const { toSoftDelete } = select([
       { id: "stub", status: "pending", links: [["soundcloud", SC_A]] },
       {
@@ -239,7 +276,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(toSoftDelete).toEqual(["stub"]);
   });
 
-  it("collects every approved sharer of one link", () => {
+  it("collects every sharer of one link", () => {
     const { toSoftDelete, audit } = select([
       { id: "stub", status: "pending", links: [["hoer", HOER_A]] },
       // A second link each, so the approved pair are sharers rather than
@@ -249,7 +286,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     ]);
     expect(toSoftDelete).toEqual(["stub"]);
     expect(audit).toHaveLength(1);
-    expect(audit[0].approved_artist_name).toBe("One; Two");
+    expect(audit[0].sharer_name).toBe("One; Two");
   });
 
   it("audits each approved member of a tied cluster separately", () => {
@@ -262,7 +299,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     ]);
     expect(toSoftDelete).toEqual([]);
     expect(audit.map((r) => r.artist_id)).toEqual(["a", "b", "c"]);
-    expect(audit[0].approved_artist_name).toBe("B; C");
+    expect(audit[0].sharer_name).toBe("B; C");
     expect(audit.every((r) => r.action === "skipped")).toBe(true);
   });
 
@@ -293,7 +330,7 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(select(specs, "hoer").toSoftDelete).toEqual(["hoer-stub"]);
   });
 
-  it("narrowing to a platform does not narrow who counts as an approved sharer", () => {
+  it("narrowing to a platform does not narrow who counts as a sharer", () => {
     // The approved artist's OTHER links are irrelevant to the filter; what
     // matters is that it holds this stub's soundcloud link.
     const { toSoftDelete } = select(
@@ -306,11 +343,11 @@ describe("selectSingleLinkDupeSoftDeletes", () => {
     expect(toSoftDelete).toEqual(["stub"]);
   });
 
-  it("never leaves a link with no approved holder", () => {
-    // The safety invariant behind deleting approved rows: an artist is only
-    // ever deleted because a sharer holds MORE links, and holding more links
-    // is itself disqualifying (a candidate must have exactly one). So the
-    // survivor can never be deleted in turn — by this link or any other.
+  it("never leaves a link with no holder at all", () => {
+    // The safety invariant: a row is only deleted because some sharer beats
+    // it outright, and "beats outright" is a strict partial order, so every
+    // link's holder set has a maximal element that nothing dominates. That
+    // row is never deleted — by this link or any other.
     const specs = [
       { id: "stub-1", status: "approved", links: [["hoer", HOER_A]] },
       { id: "stub-2", status: "approved", links: [["hoer", HOER_A]] },
