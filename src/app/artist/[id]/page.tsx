@@ -59,7 +59,7 @@ export default async function ArtistPage({ params }: PageProps) {
   // Profile links shown to visitors: drop not-found/empty links and the
   // platforms that are directory data sources rather than clickable profiles
   // (Spotify, MusicBrainz, Last.fm), then order them as the page presents
-  // them. Hidden links are still stored; see PUBLIC_PAGE_PLATFORM_ORDER.
+  // them. Hidden links are still stored; see PLATFORM_DISPLAY_ORDER.
   const visibleLinks = visiblePublicLinks(artist.links);
 
   const soundcloudEnrichment = artist.enrichment?.find(

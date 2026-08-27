@@ -45,27 +45,29 @@ export function platformLabel(platforms: Platform[], key: string): string {
 }
 
 /**
- * The platforms a visitor sees on the public individual artist page
- * (src/app/artist/[id]/page.tsx) and organisation page
- * (src/app/organisation/[id]/page.tsx), in the order their links are
- * rendered.
+ * The curated order platforms are presented in, everywhere a person sees a
+ * list of them: the profile links on the public artist and organisation pages,
+ * and the link fields in the submit/edit/revise forms.
  *
- * This list is both the order AND the allowlist: a platform absent from it is
- * not shown at all. Today that means Spotify, MusicBrainz and Last.fm —
+ * Deliberately NOT the `platforms.sort_order` column, which is a rough
+ * historical grouping. `getPlatforms()` still returns rows in `sort_order` —
+ * the admin screens use it, and it decides where a platform outside this list
+ * sits in the forms (see sortPlatformsForForms).
+ *
+ * On the PUBLIC PAGES this list is also the allowlist: a platform absent from
+ * it is not shown at all. Today that means Spotify, MusicBrainz and Last.fm —
  * directory data sources rather than links a visitor would want to click
  * through to (Last.fm's data was dropped outright, see
  * supabase_migration_remove_lastfm_data.sql, though existing links are
  * retained). A platform key added to the `platforms` table in future is hidden
  * until it is added here deliberately.
  *
- * Hidden links are still stored and used everywhere else — enrichment, genre
- * harvesting, admin QC — and remain editable in the submit/edit/revise forms.
- *
- * The order is a curated editorial one and is deliberately NOT the `sort_order`
- * column: that column still drives the admin screens and the order of the link
- * fields in the submit/edit/revise forms.
+ * The FORMS take only the order, never the allowlist: every platform stays
+ * editable there, including the hidden ones, so an admin can still fix a wrong
+ * Spotify link. Hidden links are also still used everywhere else — enrichment,
+ * genre harvesting, admin QC.
  */
-export const PUBLIC_PAGE_PLATFORM_ORDER: readonly string[] = [
+export const PLATFORM_DISPLAY_ORDER: readonly string[] = [
   "homepage",
   "soundcloud",
   "instagram",
@@ -88,20 +90,20 @@ export const PUBLIC_PAGE_PLATFORM_ORDER: readonly string[] = [
   "other",
 ];
 
-const PUBLIC_PAGE_PLATFORM_RANK: ReadonlyMap<string, number> = new Map(
-  PUBLIC_PAGE_PLATFORM_ORDER.map((key, i) => [key, i])
+const PLATFORM_DISPLAY_RANK: ReadonlyMap<string, number> = new Map(
+  PLATFORM_DISPLAY_ORDER.map((key, i) => [key, i])
 );
 
 /** True when a platform's links are shown to visitors — see
- *  PUBLIC_PAGE_PLATFORM_ORDER. */
+ *  PLATFORM_DISPLAY_ORDER. */
 export function isPlatformShownOnPublicPage(platform: string): boolean {
-  return PUBLIC_PAGE_PLATFORM_RANK.has(platform);
+  return PLATFORM_DISPLAY_RANK.has(platform);
 }
 
 /**
  * Filters a page's profile links down to the ones a visitor should see —
  * dropping not-found rows, rows with no URL, and platforms outside
- * PUBLIC_PAGE_PLATFORM_ORDER — and returns them in that order.
+ * PLATFORM_DISPLAY_ORDER — and returns them in that order.
  *
  * Shared by the artist and organisation pages, which store their links in
  * separate tables but present them identically.
@@ -113,9 +115,27 @@ export function visiblePublicLinks<
     .filter((l) => !l.not_found && l.url && isPlatformShownOnPublicPage(l.platform))
     .sort(
       (a, b) =>
-        PUBLIC_PAGE_PLATFORM_RANK.get(a.platform)! -
-        PUBLIC_PAGE_PLATFORM_RANK.get(b.platform)!
+        PLATFORM_DISPLAY_RANK.get(a.platform)! -
+        PLATFORM_DISPLAY_RANK.get(b.platform)!
     );
+}
+
+/**
+ * Orders the `platforms` rows for the grid of link fields in the submit, edit
+ * and revise forms (and the admin organisation form) — see
+ * ProfileLinksFieldset.
+ *
+ * PLATFORM_DISPLAY_ORDER first, so the fields sit in the same order a visitor
+ * reads them on the artist page. Unlike the public pages, nothing is dropped:
+ * a platform outside that list is still editable, appended after the ordered
+ * ones in the `sort_order` sequence getPlatforms() returned it in.
+ */
+export function sortPlatformsForForms(platforms: readonly Platform[]): Platform[] {
+  const rankOf = (p: Platform) =>
+    PLATFORM_DISPLAY_RANK.get(p.key) ?? PLATFORM_DISPLAY_ORDER.length;
+  // A stable sort (guaranteed since ES2019) keeps the unranked tail in the
+  // order getPlatforms() supplied.
+  return [...platforms].sort((a, b) => rankOf(a) - rankOf(b));
 }
 
 /**
