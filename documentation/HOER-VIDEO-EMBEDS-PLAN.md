@@ -231,26 +231,51 @@ and it is the one that prevents the failure this whole plan was written around.
 |---|---|---|
 | 0 | Build thumbnails as `hqdefault.jpg`, never `maxresdefault.jpg` | invariant 3 |
 | 1 | `GET /oembed?url=…&format=json` | `200` → continue · `401` → `private` · `404` → `removed` |
-| 2 | Embeddability | `false` → `not_embeddable` |
+| 2 | `videos.list?part=status,contentDetails` (YouTube Data API) | `not embeddable` / `private` / `removed` → excluded |
 | 3 | Render-time fallback | newest **healthy** set, else render nothing |
 | 4 | Scheduled revalidation | demote rows that rot |
 
-**Layer 2 needs a decision.** A `200` from oEmbed does *not* mean the video can
-be embedded — uploaders can disable third-party playback, and region locks do
-not surface in oEmbed at all. Two implementations:
+**Layer 2 uses the YouTube Data API.** *(Decided — was the plan's open
+question 1.)* A `200` from oEmbed does **not** mean the video can be embedded:
+uploaders can disable third-party playback, and region locks never surface in
+oEmbed at all. Scraping `playableInEmbed` out of the watch page's
+`ytInitialPlayerResponse` works today but is an undocumented blob on a page
+YouTube rewrites freely, so it is rejected.
 
-- **No API key** — parse `playableInEmbed` out of the watch page's
-  `ytInitialPlayerResponse`. Works today; it is an undocumented blob on a page
-  YouTube rewrites freely.
-- **With `YOUTUBE_API_KEY`** *(recommended)* —
-  `videos.list?part=status,contentDetails&id=<50 ids>` returns
-  `status.embeddable`, `status.privacyStatus` and
-  `contentDetails.regionRestriction`. **1 quota unit per call, 50 IDs per
-  call** — the entire archive is ~190 units against a 10,000/day allowance.
+`YOUTUBE_API_KEY` is documented in `.env.local.example`; add the value to
+`.env.local` before running the harvester. It is a free, read-only key — no
+billing account, no OAuth.
 
-There is no `YOUTUBE_API_KEY` in `.env.local` today. Adding one is step 4's
-only prerequisite, and it also makes step 7 trivial. **Decide this before
-writing the script**, because it changes the shape of the validation module.
+```js
+// 50 ids per call, 1 quota unit per call.
+const url = new URL("https://www.googleapis.com/youtube/v3/videos");
+url.searchParams.set("part", "status,contentDetails");
+url.searchParams.set("id", batch.join(","));   // <= 50
+url.searchParams.set("key", process.env.YOUTUBE_API_KEY);
+```
+
+Map the response to `video_status`:
+
+| Condition | `video_status` |
+|---|---|
+| id absent from `items[]` | `removed` |
+| `status.privacyStatus !== "public"` | `private` |
+| `status.embeddable === false` | `not_embeddable` |
+| `contentDetails.regionRestriction.blocked` includes a core market | `not_embeddable` |
+| otherwise | `ok` |
+
+An id missing from `items[]` is how the API reports a deleted video — it
+returns `200` with a short array, **not** an error, so a naive
+`items[i]` zip against the request order will mis-attribute every status after
+the first gap. Match on `items[].id`, never on position.
+
+Quota is not a constraint: the whole archive is ~190 units against
+10,000/day. If a call ever returns `403 quotaExceeded`, leave
+`video_checked_at` null and let the next run retry — do not write `unknown`,
+which would converge a set that was never actually checked.
+
+The key is required for the harvester and for step 8. It is **not** needed at
+render time; no browser code ever sees it.
 
 ---
 
@@ -443,10 +468,15 @@ Before merging:
 
 ## Open decisions
 
-1. **`YOUTUBE_API_KEY`: yes or no?** Blocks step 4's shape. Recommended yes.
-2. **Placement.** This plan puts the embed last in the media stack. Four media
+*(Question 1, whether to use the YouTube Data API, is settled — yes. See
+step 4.)*
+
+1. **Placement.** This plan puts the embed last in the media stack. Four media
    blocks on one artist page is a real design question, and reordering is a
    one-line change if review disagrees.
-3. **`hqdefault` sharpness.** 480×360 upscaled into a full-width card. If it
+2. **`hqdefault` sharpness.** 480×360 upscaled into a full-width card. If it
    reads soft, probe `maxresdefault` at harvest and store which renditions
-   exist, rather than guessing at render time.
+   exist, rather than guessing at render time. Cheap once the API key is in
+   place: `videos.list` already returns `snippet.thumbnails`, listing exactly
+   which renditions exist, so this can be answered from the same call layer 2
+   makes rather than by extra HEAD requests.
