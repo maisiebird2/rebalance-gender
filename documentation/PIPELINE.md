@@ -1292,6 +1292,33 @@ Full documentation of the genre lifecycle — the vocabulary/alias
 system, the data model, the display rule (≥3-approved-artists
 filter), and the cleanup toolkit below — is in `GENRES.md`.
 
+### 7h. Artist types (producer / DJ / vocalist) — *no harvester yet*
+
+**Forward-looking stub — nothing to run today.** Artist roles are
+modelled by the `artist_types` lookup and the `artist_type_assignments`
+junction (see the schema table in `CONTEXT.md`), analogous to
+`genres` / `artist_genres`. Unlike genres, the vocabulary is closed and
+hand-seeded, and there is currently **no harvesting pipeline**: types
+are set only by hand through the admin edit form, which writes rows with
+`source = 'manual'`.
+
+When a harvester is built — the obvious sources are Discogs credits
+(`Producer`, vocal credits) and MusicBrainz — it belongs here as the
+Phase 7 sibling of the genre harvesters, and should:
+
+- write each derived role with its own `source` (e.g. `'discogs'`,
+  `'musicbrainz'`), never `'manual'`, so provenance stays honest;
+- rely on the junction's `(artist_id, type_id, source)` primary key so a
+  re-run upserts its own rows and a bad run can be undone with a single
+  `DELETE ... WHERE source = '<site>'`, leaving manual and other-source
+  rows intact;
+- resolve raw credit strings to the closed vocabulary rather than
+  inventing new `artist_types` rows (there is no pending/approved
+  moderation flow for types, by design).
+
+Until then, this section is a placeholder so the eventual harvester has
+an obvious home in the phase ordering.
+
 ---
 
 ## Phase 8 — Review / data quality
