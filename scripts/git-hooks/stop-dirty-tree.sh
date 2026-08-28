@@ -21,10 +21,15 @@
 # uncommitted tree would fire on every turn of normal work until it was
 # ignored, which would cost more than it is worth.
 #
-# Wired up from .claude/settings.json. Claude Code passes the hook payload on
-# stdin, which we do not need, and shows `systemMessage` to the user. This
-# never blocks the turn from ending: it always exits 0 and never emits a
-# `decision`.
+# Wired up from .claude/settings.json.
+#
+# Three things about the hook contract are taken from Claude Code's own
+# documentation and have not been confirmed against a running session: that
+# the payload arrives on stdin, that `systemMessage` is what surfaces text to
+# the user, and that a reply carrying no `decision` lets the turn end. The
+# first two decide whether any of this is seen at all, so if the warning never
+# appears they are the place to look before the logic below. The third is
+# belt-and-braces already — exiting 0 says the same thing a second way.
 #
 # See documentation/BRANCH-SAFETY.md.
 
