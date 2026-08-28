@@ -55,6 +55,8 @@ The Supabase client helpers live in `src/lib/supabase.ts`:
 | `artist_enrichment` | Per-platform enriched data (bio, follower count, image URL, recent tracks) |
 | `artist_genres` | Artist ↔ genre join. `genre_id` is a FK to `genres` — not a text column. |
 | `genres` | Canonical genre list with `status` (pending/approved/deleted) |
+| `artist_types` | Canonical role vocabulary (producer / DJ / vocalist): `name` slug, `label`, `sort_order`. Closed, hand-seeded — no `status`, unlike `genres`. |
+| `artist_type_assignments` | Artist ↔ type join. Carries `source` (`'manual'`, or a platform key) and `created_at`; PK `(artist_id, type_id, source)` so one source's rows can be purged without touching others. Set manually via the edit form. |
 | `artist_locations` | City + country per artist |
 | `sc_follow_edges` | Directed SoundCloud follow graph (source_artist_id → followed_artist_id) |
 | `mb_tags` | MusicBrainz folksonomy tags per artist |
