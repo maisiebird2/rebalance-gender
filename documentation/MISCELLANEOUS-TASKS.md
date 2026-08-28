@@ -75,6 +75,14 @@ false positive would train people to ignore the guard. Existing clones need
   would need session-ownership tracking that git does not have, and that a
   `PostToolUse` recorder could not supply reliably either, since a session
   that writes files through `Bash` heredocs never touches `Edit` or `Write`.
+- **Whether the `Stop` hook's warning is ever seen.**
+  `scripts/git-hooks/stop-dirty-tree.sh` emits `systemMessage`, which is how
+  Claude Code's documentation says a hook surfaces text to the user, but that
+  has not been confirmed against a running session — there was no `claude` on
+  the machine it was written on to check against. The tests pin the JSON the
+  hook produces, not what the harness does with it, so a silent failure here
+  would look exactly like a clean working tree. If the end-of-turn warning
+  never appears, check the output field before the logic.
 - **Commands that change directory before running git.** `guard-branch.sh`
   follows `git -C <dir>` and sees through git's global options, but `cd
   elsewhere && git switch …` is still judged by where the session started, as
