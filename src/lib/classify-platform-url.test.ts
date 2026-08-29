@@ -20,6 +20,10 @@ describe("classifyPlatformUrl — shared table", () => {
       ["https://www.qobuz.com/us-en/interpreter/x/1", "qobuz"],
       ["https://songkick.com/artists/1", "songkick"],
       ["https://musicbrainz.org/artist/abc", "musicbrainz"],
+      ["https://hoer.live/artist/someone", "hoer"],
+      ["https://hoer.berlin/artist/someone", "hoer"],
+      ["https://djanes.net/dj/someone", "djanes"],
+      ["https://www.1001tracklists.com/dj/someone/", "1001tracklists"],
     ];
     for (const [url, platform] of cases) {
       expect(classifyPlatformUrl(url), url).toBe(platform);
