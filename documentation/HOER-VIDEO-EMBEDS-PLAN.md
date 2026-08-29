@@ -1,17 +1,23 @@
 # HÖR video embeds — implementation plan
 
-How to put one YouTube-embedded HÖR set on each artist page. The *why* lives in
-[PROPOSAL-hoer-video-embeds.md](PROPOSAL-hoer-video-embeds.md), which records
-the measurements this plan depends on; this document is the build order and
-does not restate them.
+How to put one YouTube-embedded HÖR set on each artist page, and the
+`artist_releases` table that ended up carrying it. The *why* behind the HÖR
+half lives in [PROPOSAL-hoer-video-embeds.md](PROPOSAL-hoer-video-embeds.md),
+which records the measurements this plan depends on; this document is the
+build order and does not restate them.
+
+The filename is narrower than the contents — the shared table pulled Bandcamp
+and SoundCloud in. Renaming it is fine; `.env.local.example` is the only
+reference to update.
 
 **Scope.** One embed per artist page — the artist's most recent HÖR set that
 actually has a working video. Not a grid, not a playlist, not a channel feed.
 
 Storage is a **generalised `artist_releases` table** (platform, release type,
 URL, external id, release date, embed details) rather than a HÖR-specific one.
-It absorbs today's `artist_bandcamp_albums`, so moving Bandcamp onto it is
-part of this work — see [Two parts](#two-parts).
+It absorbs today's `artist_bandcamp_albums` **and** the SoundCloud content the
+artist page currently renders without storing, so those cutovers are part of
+this work — see [Three parts](#three-parts).
 
 ---
 
@@ -37,16 +43,22 @@ to rediscover, so they are stated once, here, as rules.
 
 ---
 
-## Two parts
+## Three parts
 
 The storage is a **generalised `artist_releases` table**, not a HÖR-specific
-one. That absorbs the existing `artist_bandcamp_albums`, so the work splits:
+one. It absorbs the existing `artist_bandcamp_albums` and gives SoundCloud a
+home it currently lacks, so the work splits:
 
 - **Part A (steps 1–2)** — create `artist_releases`, move Bandcamp onto it,
   retire the old table. No user-visible change; independently shippable, and
-  worth landing on its own before anything HÖR-shaped touches it.
+  worth landing on its own before anything else touches it.
 - **Part B (steps 3–10)** — the HÖR video feature, writing into the table
   Part A built.
+- **Part C (steps 11–13)** — SoundCloud tracks and playlists, which today are
+  either not fetched at all or stored in a column nothing populates.
+
+**B and C are independent of each other.** Both depend only on A, so they can
+ship in either order or in parallel. A must land first.
 
 ---
 
@@ -545,6 +557,146 @@ action.
 
 ---
 
+# Part C — SoundCloud
+
+## What happens today
+
+Worth stating plainly, because the current behaviour is not what the code
+reads like.
+
+`sync-soundcloud.mjs` makes **two** API calls per artist: the user resource
+(`/resolve?url=…` on first sync, `/users/{id}` thereafter) for
+follower/track counts, bio, avatar and numeric id; and
+`/users/{urn}/web-profiles` for the links section. A **third** call,
+`/users/{id}/playlists`, fires **only when `track_count === 0`**.
+
+**`/users/{id}/tracks` is never called.** No track data is fetched, ever.
+`track_count` is just an integer copied off the user resource.
+
+So the artist page has three cases:
+
+| Condition | What renders |
+|---|---|
+| `track_count > 0` | The **profile** embedded under a "Tracks" heading — SoundCloud's own player then lists the artist's uploads |
+| `track_count === 0` | Up to 3 **playlist** widgets, biggest first, under "Playlists" |
+| No usable SoundCloud link | Nothing |
+
+The first row is the one to understand. [`page.tsx`](../src/app/artist/[id]/page.tsx)
+looks like it prefers a *specific* track and falls back to the profile:
+
+```ts
+const soundcloudTrack = artist.enrichment
+  ?.flatMap((e) => e.recent_tracks ?? [])
+  ?.find((t) => t.url?.includes("soundcloud.com"));
+```
+
+It never does. `artist_enrichment.recent_tracks` has **never been populated by
+any code in this repository's history** — every writer sets it to `null`
+explicitly, and `git log -S recent_tracks --all` turns up no non-null
+assignment ever. So `soundcloudTrack` is always `undefined` and the profile
+branch always wins. The specific-track path has not executed once.
+
+Nothing is visibly broken by this — SoundCloud's profile player is a
+reasonable thing to show. But we hold no data about an artist's tracks, so we
+cannot choose which one to feature, order them, or tell a live one from a dead
+one; and `recent_tracks` is a typed, read, entirely empty column.
+
+`playlists` is different: it **is** written, and the zero-upload fallback
+genuinely renders. It is real data in the wrong shape — a jsonb blob rather
+than rows.
+
+---
+
+## Step 11 — Fetch tracks
+
+Add a conditional call to `sync-soundcloud.mjs`, mirroring the existing
+playlists branch:
+
+```
+GET /users/{id}/tracks?limit=50&linked_partitioning=1   (when track_count > 0)
+```
+
+Keep from each track: `id`, `title`, `permalink_url`, `created_at`, and
+`release_date` where present.
+
+**This raises the per-artist cost.** The module header currently states that
+two calls is the floor for a full sync; for most artists this makes it three,
+and unlike the playlists call — which only fires for the rare zero-upload
+account — this one fires for the common case. Mitigations, in order of
+preference:
+
+- Fetch tracks for **approved artists only**, as the harvesters already do
+  for other optional work.
+- Fetch on first sync and on an explicit refresh, **not** on every convergence
+  loop round. Track lists change far more slowly than the loop runs.
+- Cap at 50. The page renders one widget; the rest is only there so a dead
+  track can be skipped.
+
+---
+
+## Step 12 — Project tracks and playlists into `artist_releases`
+
+Same write, two release types:
+
+| Source | `platform` | `release_type` | `external_id` | `embed_provider` | `embed_id` |
+|---|---|---|---|---|---|
+| `/users/{id}/tracks` | `soundcloud` | `track` | track id | `soundcloud` | track id |
+| `/users/{id}/playlists` | `soundcloud` | `playlist` | playlist id | `soundcloud` | playlist id |
+
+`url` is the `permalink_url`; `released_at` is `release_date ?? created_at`;
+`sort_order` is the position in the response.
+
+`playlist` is deliberately **not** `dj_set`. A HÖR set is one continuous
+recorded performance; a SoundCloud playlist is a container of other people's
+tracks as often as the artist's own. Collapsing them would make
+`release_type` useless for choosing what to render.
+
+### The embed contract
+
+`release_type` is not decoration — it is a parameter of the embed URL for two
+of the three providers, which is why it belongs in the table rather than in a
+widget:
+
+| `embed_provider` | Embed URL |
+|---|---|
+| `bandcamp` | `bandcamp.com/EmbeddedPlayer/<release_type>=<embed_id>/…` |
+| `soundcloud` | `w.soundcloud.com/player/?url=https://api.soundcloud.com/<endpoint>/<embed_id>` |
+| `youtube` | `youtube-nocookie.com/embed/<embed_id>` |
+
+Map SoundCloud's `<endpoint>` explicitly — `track → tracks`,
+`playlist → playlists`. **Do not pluralise `release_type` naively**: it works
+for these two and breaks the moment a type whose plural is irregular is added,
+and a silently wrong endpoint yields an empty player rather than an error.
+
+Keep the API-resource form (`api.soundcloud.com/tracks/<id>`) rather than the
+permalink. It survives an artist renaming their profile or a track slug, which
+the permalink does not — the same reasoning that already makes the sync fetch
+by stored numeric id rather than by URL on re-runs.
+
+---
+
+## Step 13 — Switch the widget, retire the old columns
+
+1. `SoundCloudWidget` takes `releases` filtered to `platform === "soundcloud"`,
+   picks the newest `track`, and falls back to the newest `playlist` when the
+   artist has no tracks. That reproduces today's two cases from one ordered
+   list, and finally makes the "feature a specific track" behaviour real.
+2. Once nothing reads them, drop `artist_enrichment.recent_tracks` (never
+   populated) and `.playlists` (superseded by rows) in a follow-up migration —
+   **not** in the same one, so a rollback cannot lose the playlist data.
+3. Delete the dead `soundcloudTrack` block in
+   [`page.tsx`](../src/app/artist/[id]/page.tsx).
+4. Correct the note at `documentation/PIPELINE.md:2557`. It records a
+   2026-07-10 decision to keep `recent_tracks` and `playlists` out of
+   `api_response_cache` because both are "product data rendered on the artist
+   page". True of `playlists`; false of `recent_tracks`, which is rendered by
+   code that cannot fire.
+
+`track_count` stays on `artist_enrichment`. It is a property of the *account*,
+not of any release, and the zero-uploads branch still needs it.
+
+---
+
 ## Verification
 
 Before merging:
@@ -571,6 +723,15 @@ Before merging:
 - [ ] A HÖR harvester bug cannot withdraw Bandcamp rows — the delete is
       scoped to `platform = 'hoer'` (step 7).
 - [ ] `supabase_check_public_role_exposure.sql` passes with `artist_releases`.
+
+**Part C.**
+
+- [ ] An artist with uploads shows a track widget; one with `track_count === 0`
+      still shows playlists. Both cases compared against today's rendering.
+- [ ] The SoundCloud embed URL uses the mapped endpoint, not a pluralised
+      `release_type` (a wrong endpoint renders an empty player, not an error).
+- [ ] Per-artist API call count is what step 11 intends — tracks are not
+      re-fetched on every convergence loop round.
 - [ ] Console shows no CSP violation on an artist page with an embed.
 
 ---
@@ -581,9 +742,11 @@ Before merging:
 - Backfilling `released_at` for Bandcamp rows. The old table never captured a
   release date and the widget sorts by `sort_order`; adding real dates is
   optional and independent.
-- Any other platform's releases. `artist_releases` is built to take
-  SoundCloud, Discogs and the rest later; this plan populates Bandcamp (by
-  migration) and HÖR (by harvest) only.
+- Platforms beyond the three parts. `artist_releases` is built to take
+  Discogs and the rest later; this plan populates Bandcamp (by migration),
+  HÖR (by harvest) and SoundCloud (by harvest) only.
+- Backfilling SoundCloud tracks for non-approved artists. Step 11 fetches for
+  approved artists only; widening that is a cost decision, not a code one.
 - Backfilling video IDs for unbound terms — no artist page renders them, so
   the crawl would be wasted.
 - Promoting HÖR set videos into `artist_links`. The skip rule in
