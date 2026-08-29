@@ -4,7 +4,6 @@ import { useState, useRef, FormEvent } from "react";
 import Link from "next/link";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type {
-  LinkPlatform,
   OrganisationFormRow,
   OrganisationSummary,
   Platform,
@@ -13,7 +12,13 @@ import TextList from "./form/TextList";
 import OrganisationList from "./form/OrganisationList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
-import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
+import ProfileLinksList from "./form/ProfileLinksList";
+import {
+  hasLinkErrors,
+  newLinkRow,
+  serializeLinkRows,
+  type LinkEditorState,
+} from "@/lib/link-rows";
 import Field from "./form/Field";
 
 interface Props {
@@ -38,13 +43,14 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
   const [locations, setLocations] = useState<LocationRow[]>([{ city: "", country: "" }]);
   const [labelList, setLabelList] = useState<OrganisationFormRow[]>([{ id: null, name: "" }]);
   const [aliasNames, setAliasNames] = useState<string[]>([""]);
-  const [linkUrls, setLinkUrls] = useState<Record<string, string>>({});
+  const [links, setLinks] = useState<LinkEditorState>(() => ({
+    rows: [newLinkRow()],
+    homepage: "",
+    notFound: [],
+  }));
+  const linkErrors = hasLinkErrors(links);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-
-  function updateLinkUrl(platform: LinkPlatform, url: string) {
-    setLinkUrls((prev) => ({ ...prev, [platform]: url }));
-  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -54,12 +60,6 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
 
     const form = e.currentTarget;
     const data = new FormData(form);
-
-    const links: Partial<Record<LinkPlatform, string>> = {};
-    for (const p of platforms) {
-      const value = linkUrls[p.key]?.trim();
-      if (value) links[p.key] = value;
-    }
 
     const payload = {
       name: data.get("name"),
@@ -71,7 +71,7 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
       // Internal notes are only collected from logged-in admins.
       notes: isAdmin ? data.get("notes") : undefined,
       submittedByEmail: data.get("submittedByEmail"),
-      links,
+      links: serializeLinkRows(links),
       turnstileToken,
       // honeypot — the value of this field; bots fill it, humans don't
       honeypot: data.get("_hp"),
@@ -155,7 +155,7 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
-        <ProfileLinksFieldset platforms={platforms} values={linkUrls} onChange={updateLinkUrl} />
+        <ProfileLinksList platforms={platforms} value={links} onChange={setLinks} />
       </fieldset>
 
       {isAdmin && (
@@ -221,7 +221,9 @@ export default function SubmissionForm({ genreOptions, organisationOptions, plat
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
             type="submit"
-            disabled={status === "submitting" || (!isAdmin && !!siteKey && !turnstileToken)}
+            disabled={
+              status === "submitting" || linkErrors || (!isAdmin && !!siteKey && !turnstileToken)
+            }
             className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {status === "submitting" ? "Submitting…" : "Submit"}

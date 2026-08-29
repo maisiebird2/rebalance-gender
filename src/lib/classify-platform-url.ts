@@ -51,6 +51,15 @@ const DOMAIN_PLATFORM_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/(^|\.)lastfm\.[a-z]+$/i, "lastfm"],
   [/(^|\.)musicbrainz\.org$/i, "musicbrainz"],
   [/(^|\.)wikipedia\.org$/i, "wikipedia"],
+  // Tracked platform keys that had no entry here until the paste-to-detect
+  // work (documentation/PROPOSAL-platform-links-v2.md §3): without them a
+  // pasted hoer.live/djanes.net/1001tracklists.com URL would fall through to
+  // "other" even though the platform is one this project displays. The HOER
+  // harvester still skips hoer.* — CLASSIFY_CONFIGS.hoer's skip list is
+  // consulted before this table.
+  [/(^|\.)hoer\.(live|berlin)$/i, "hoer"],
+  [/(^|\.)djanes\.net$/i, "djanes"],
+  [/(^|\.)1001tracklists\.com$/i, "1001tracklists"],
   // Mixcloud is a real music platform but deliberately NOT a tracked platform
   // key, so it lands in "other" by default. sync-linktree overrides it to a
   // bare "mixcloud" so those links stay staged rather than being promoted.
@@ -137,8 +146,8 @@ export type ReclassifyOutcome =
  *     smuggle in a link the project excludes.
  *   - No rule matched ("other" — the classifier's FALLBACK, not a finding) ->
  *     keep whatever the row already had. Overriding would downgrade keys that
- *     live outside DOMAIN_PLATFORM_MAP (homepage, djanes, 1001tracklists,
- *     hoer, and sync-linktree's bare-domain staging keys).
+ *     live outside DOMAIN_PLATFORM_MAP (homepage, which is not host-
+ *     detectable at all, and sync-linktree's bare-domain staging keys).
  *   - A positive identification -> use it. This is the case that matters: a
  *     soundcloud.app.goo.gl row sits under "other" only BECAUSE classification
  *     ran on the shortener host before anything could resolve it.

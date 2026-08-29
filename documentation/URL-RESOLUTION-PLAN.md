@@ -13,6 +13,15 @@ backfill run" below), and the work is documented in `PIPELINE.md`.
 running it is a separate decision from this work — see the open questions, since
 that run also reported a very large unpromoted backlog.
 
+> **Superseded in one respect (2026-08-29).** `platform-collision` — a resolved
+> URL landing on a platform the artist already holds, with a different link in
+> it — is no longer produced. There was nowhere to put a second link when this
+> was written; `supabase_migration_artist_links_overflow.sql` opened the
+> `other` bucket, so the row now keeps its URL rewrite and moves there instead
+> of waiting for a person to choose. Everything below describes the behaviour
+> as it was, and `--delete-duplicates` is unchanged: an exact copy is still not
+> overflow. See `PROPOSAL-platform-links-v2.md`.
+
 This document is the **history**: why each decision was made, what the live
 probing found, and which of the original assumptions turned out to be wrong.
 `PIPELINE.md` is the operational reference — go there for the host table and

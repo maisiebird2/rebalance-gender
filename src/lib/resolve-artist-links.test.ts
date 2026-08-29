@@ -382,9 +382,11 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
   });
 
-  it("skips a row that would collide with a platform the artist already has", async () => {
-    // artist_links carries UNIQUE (artist_id, platform). Picking a winner
-    // between two links isn't this module's call to make silently.
+  it("files a row onto an occupied slot as overflow, keeping the URL rewrite", async () => {
+    // The artist already has a YouTube link, so this one can't take that slot
+    // — but there is somewhere for it to go now that "other" is unlimited, and
+    // resolving it was worth doing either way: the point was to stop storing
+    // an opaque shortener.
     mockNetwork({ "https://goo.gl/ugfBAL": { location: "https://www.youtube.com/channel/UC_dO" } });
     const { client, updates } = fakeClient({
       platforms: ALL_PLATFORMS,
@@ -395,14 +397,19 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
 
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
-    expect(updates).toHaveLength(0);
-    expect(report.skipped[0]).toMatchObject({ reason: "platform-collision", newPlatform: "youtube" });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].patch).toMatchObject({
+      platform: "other",
+      url: "https://www.youtube.com/channel/UC_dO",
+    });
+    expect(report.updated[0]).toMatchObject({ id: 1, newPlatform: "other" });
+    expect(report.skipped).toHaveLength(0);
   });
 
-  it("reports both competing links on a collision", async () => {
-    // "These two links want one slot" is not actionable without both of them,
-    // so the outcome carries the incumbent's id and URL, and the proposed URL
-    // in its final canonical form — like compared with like.
+  it("still names the link that took the slot when a row overflows", async () => {
+    // The row no longer needs a human to arbitrate, but a report is much
+    // easier to read when it can say WHICH link holds the platform — so the
+    // incumbent's id and URL are still carried on the outcome.
     mockNetwork({ "https://goo.gl/ugfBAL": { location: "https://www.youtube.com/channel/UC_dO" } });
     const { client } = fakeClient({
       platforms: ALL_PLATFORMS,
@@ -413,19 +420,20 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
 
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
-    expect(report.skipped[0]).toMatchObject({
-      reason: "platform-collision",
-      url: "https://goo.gl/ugfBAL", // what the row holds now
-      newUrl: "https://www.youtube.com/channel/UC_dO", // what it would become
+    expect(report.updated[0]).toMatchObject({
+      url: "https://goo.gl/ugfBAL", // what the row held before
+      newPlatform: "other", // the overflow bucket
+      newUrl: "https://www.youtube.com/channel/UC_dO", // what it became
       conflictLinkId: 2,
-      conflictUrl: "https://www.youtube.com/channel/EXISTING", // what blocks it
+      conflictUrl: "https://www.youtube.com/channel/EXISTING", // what holds the slot
     });
   });
 
-  it("separates an exact duplicate from a genuine collision", async () => {
+  it("separates an exact copy from a genuinely different link", async () => {
     // A shortened row resolving to precisely what the artist's existing link
-    // holds is redundant, not contested. Mechanical cleanup versus a judgement
-    // call, so they must not share a reason code.
+    // holds is a redundant copy, and copies are not overflow — it stays
+    // skipped, and only the opt-in flag removes it. A DIFFERENT link on the
+    // same taken slot is kept, as overflow.
     mockNetwork({
       "https://bit.ly/dupe": { location: "https://soundcloud.com/lolsnake" },
       "https://bit.ly/rival": { location: "https://soundcloud.com/someone-else" },
@@ -441,15 +449,17 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
 
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
-    const byId = new Map(report.skipped.map((o) => [o.id, o]));
-    expect(byId.get(1)).toMatchObject({
+    const skippedById = new Map(report.skipped.map((o) => [o.id, o]));
+    const updatedById = new Map(report.updated.map((o) => [o.id, o]));
+    expect(skippedById.get(1)).toMatchObject({
       reason: "duplicate-of-existing",
       conflictLinkId: 2,
       conflictUrl: "https://soundcloud.com/lolsnake",
       newUrl: "https://soundcloud.com/lolsnake",
     });
-    expect(byId.get(3)).toMatchObject({
-      reason: "platform-collision",
+    expect(skippedById.has(3)).toBe(false);
+    expect(updatedById.get(3)).toMatchObject({
+      newPlatform: "other",
       conflictUrl: "https://soundcloud.com/incumbent",
       newUrl: "https://soundcloud.com/someone-else",
     });
@@ -491,9 +501,9 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     expect(on.deletes).toEqual([1]);
   });
 
-  it("never deletes a genuine collision, even with the flag on", async () => {
-    // Two DIFFERENT links competing for one slot is a person's call. The flag
-    // must not quietly resolve it by throwing one away.
+  it("never deletes a genuinely different link, even with the flag on", async () => {
+    // The flag only ever removes an exact copy. A different link on a taken
+    // slot is kept — as overflow — not thrown away.
     mockNetwork({ "https://bit.ly/rival": { location: "https://soundcloud.com/someone-else" } });
     const { client, deletes } = fakeClient({
       platforms: ALL_PLATFORMS,
@@ -509,7 +519,11 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
     expect(deletes).toHaveLength(0);
     expect(report.deleted).toHaveLength(0);
-    expect(report.skipped[0]).toMatchObject({ reason: "platform-collision" });
+    expect(report.updated[0]).toMatchObject({
+      id: 1,
+      newPlatform: "other",
+      newUrl: "https://soundcloud.com/someone-else",
+    });
   });
 
   it("reports a deletion in a dry run without performing it", async () => {
@@ -571,11 +585,12 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
 
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
-    expect(updates).toHaveLength(1);
+    expect(updates).toHaveLength(2);
     expect(updates[0].id).toBe(1);
-    expect(report.skipped[0]).toMatchObject({
+    expect(report.updated[1]).toMatchObject({
       id: 2,
-      reason: "platform-collision",
+      newPlatform: "other", // overflow, because row 1 still holds soundcloud
+      newUrl: "https://soundcloud.com/second",
       conflictLinkId: 1,
       conflictUrl: "https://soundcloud.com/first", // the just-written value
     });
@@ -601,7 +616,7 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     expect(updates).toHaveLength(2);
   });
 
-  it("claims a slot within the run so two rows can't both take it", async () => {
+  it("claims a slot within the run so the second row overflows instead", async () => {
     mockNetwork({
       "https://goo.gl/one": { location: "https://www.youtube.com/channel/UC_a" },
       "https://bit.ly/two": { location: "https://www.youtube.com/channel/UC_b" },
@@ -615,8 +630,11 @@ describe("resolveArtistLinks — tier B reclassification", () => {
     });
 
     const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
-    expect(updates).toHaveLength(1);
-    expect(report.skipped[0]).toMatchObject({ id: 2, reason: "platform-collision" });
+    expect(updates).toHaveLength(2);
+    // Row 1 takes youtube; row 2 resolves to youtube too and is filed as
+    // overflow rather than being told the slot is free and failing at the DB.
+    expect(report.updated[0]).toMatchObject({ id: 1, newPlatform: "youtube" });
+    expect(report.updated[1]).toMatchObject({ id: 2, newPlatform: "other", conflictLinkId: 1 });
   });
 
   it("skips a platform key that isn't in the platforms table", async () => {

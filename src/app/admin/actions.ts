@@ -8,6 +8,12 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { isAdminUser } from "@/lib/admin-auth";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 import {
+  canonicalLinkUrl,
+  parseLinkPayload,
+  resolveLinkPayload,
+  type LinkPayloadRow,
+} from "@/lib/link-payload";
+import {
   DEFAULT_ROLE,
   attachOrganisations,
   promoteArtistLabelsToOrganisations,
@@ -291,7 +297,12 @@ export async function approveRevision(
     labels?: string[];
     organisations?: { id?: string | null; name: string }[];
     aliases?: string[];
-    links?: Record<string, string>;
+    /**
+     * BACK-COMPAT, same reasoning as `labels` above: this is a stored payload,
+     * so the queue holds BOTH the old per-platform map and the ordered list
+     * the forms post now. parseLinkPayload reads either.
+     */
+    links?: unknown;
   };
 
   const artistId = revision.artist_id as string;
@@ -405,19 +416,112 @@ export async function approveRevision(
     }
   }
 
-  // Merge links (upsert — don't delete links not mentioned in revision).
-  if (rd.links && Object.keys(rd.links).length) {
-    const { resolveProfileLinkUrl } = await import("@/lib/profile-links");
-    const rows = Object.entries(rd.links)
-      .filter(([, url]) => url?.trim())
-      .map(([platform, url]) => ({
+  // Merge links — read-modify-write, not an upsert.
+  //
+  // The INTENT is unchanged: a revision adds links and never deletes the ones
+  // it doesn't mention. The MECHANISM had to change. This used to upsert with
+  // onConflict "artist_id,platform", and that constraint no longer exists —
+  // supabase_migration_artist_links_overflow.sql replaced it with a partial
+  // unique index, which PostgREST cannot name as a conflict target, and
+  // "other" rows have no conflict target at all now that there can be many.
+  //
+  // So: load what the artist has, append what the revision proposes, and let
+  // assignPlatforms settle the combined ordered set. Existing links come
+  // FIRST, which is what decides the contested cases — an artist's own links
+  // keep their slots, and a revision's competing link on the same host lands
+  // in the overflow bucket rather than displacing one.
+  const revisionLinks = parseLinkPayload(rd.links);
+  if (revisionLinks.length) {
+    const { data: existingLinks } = await admin
+      .from("artist_links")
+      .select("id, platform, url, not_found")
+      .eq("artist_id", artistId)
+      .order("id");
+
+    // Position doubles as the correlation key back to each row's source, since
+    // resolveLinkPayload preserves it but drops everything else.
+    const existingByPosition = new Map<number, { id: number; platform: string; not_found: boolean }>();
+    const proposedByPosition = new Map<number, { url: string; original_url: string }>();
+    const payload: LinkPayloadRow[] = [];
+    let position = 0;
+
+    for (const link of existingLinks ?? []) {
+      existingByPosition.set(position, {
+        id: link.id as number,
+        platform: link.platform as string,
+        not_found: (link.not_found as boolean) ?? false,
+      });
+      payload.push({
+        platform: link.platform as string,
+        url: link.url as string | null,
+        not_found: (link.not_found as boolean) ?? false,
+        position: position++,
+      });
+    }
+
+    for (const proposed of revisionLinks) {
+      const original_url = (proposed.url ?? "").trim();
+      // Canonicalised BEFORE the fold, so the "is this link already here?"
+      // comparison holds a revision's raw URL against the stored canonical
+      // form of the same link rather than against a different spelling of it.
+      const url = original_url ? canonicalLinkUrl(original_url) : "";
+      proposedByPosition.set(position, { url, original_url });
+      payload.push({
+        platform: proposed.platform,
+        url: url || null,
+        not_found: proposed.not_found,
+        position: position++,
+      });
+    }
+
+    const { rows: resolved } = resolveLinkPayload(payload);
+
+    const inserts: Record<string, unknown>[] = [];
+    const platformUpdates: { id: number; platform: string }[] = [];
+    const survivingPositions = new Set<number>();
+
+    for (const row of resolved) {
+      survivingPositions.add(row.position);
+      const existing = existingByPosition.get(row.position);
+      if (existing) {
+        // An existing row is never rewritten by a merge, except where the fold
+        // moved it — a link that was overflow can become a platform's primary
+        // once the row that held the slot is gone.
+        if (existing.platform !== row.platform) {
+          platformUpdates.push({ id: existing.id, platform: row.platform });
+        }
+        continue;
+      }
+      const proposed = proposedByPosition.get(row.position);
+      if (!proposed) continue;
+      inserts.push({
         artist_id: artistId,
-        platform,
-        original_url: url.trim(),
-        url: resolveProfileLinkUrl(platform, url.trim()),
-      }));
-    if (rows.length) {
-      await admin.from("artist_links").upsert(rows, { onConflict: "artist_id,platform" });
+        platform: row.platform,
+        url: row.not_found ? null : proposed.url,
+        original_url: row.not_found ? null : proposed.original_url,
+        not_found: row.not_found,
+      });
+    }
+
+    // The one case where a merge does remove a row: an existing "not found"
+    // marker for a platform this revision supplies a real link for. The old
+    // upsert overwrote it in place (same conflict key); now the marker has to
+    // go explicitly, or the partial unique index rejects the whole insert.
+    const supersededMarkers = [...existingByPosition.entries()]
+      .filter(([pos, link]) => link.not_found && !survivingPositions.has(pos))
+      .map(([, link]) => link.id);
+
+    if (supersededMarkers.length) {
+      await admin.from("artist_links").delete().in("id", supersededMarkers);
+    }
+    for (const update of platformUpdates) {
+      await admin.from("artist_links").update({ platform: update.platform }).eq("id", update.id);
+    }
+    if (inserts.length) {
+      await admin.from("artist_links").insert(inserts);
+    }
+
+    if (inserts.length || platformUpdates.length) {
       // Shortener/share links are followed after the response — see
       // scheduleLinkResolution. This is where a *revision's* links land: the
       // revise route only stores revision_data, so an approved revision is

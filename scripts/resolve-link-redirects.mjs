@@ -207,9 +207,10 @@ const CSV_COLUMNS = [
   "url",
   "new_url",
   "new_handle",
-  // On a platform-collision, the link already sitting in the slot this row
-  // wanted. Without it the report says "these two compete" while showing only
-  // one of them, which is not something a person can act on.
+  // When a row overflows into "other", the link already sitting in the slot it
+  // would otherwise have taken. Nothing has to be decided about it any more,
+  // but a report that says "this went to other" without saying what holds the
+  // platform is a report nobody can check.
   "conflicting_link_id",
   "conflicting_url",
   "destination_seen",
@@ -298,6 +299,9 @@ async function main() {
         console.log(`${DRY_RUN ? "would update" : "updated"} #${o.id}  ${o.platform} -> ${o.newPlatform}`);
         console.log(`    ${o.url}`);
         console.log(` -> ${o.newUrl}${o.newHandle ? `   handle=${o.newHandle}` : ""}`);
+        if (o.conflictLinkId) {
+          console.log(`    overflow: #${o.conflictLinkId} already holds ${o.conflictUrl}`);
+        }
       } else if (o.status === "deleted") {
         // Always logged, never hidden behind --debug: a deletion is the one
         // thing here that removes data, so it should be visible by default.
@@ -306,9 +310,8 @@ async function main() {
       } else if (DEBUG) {
         console.log(`skipped #${o.id}  ${o.reason}  ${o.url}`);
         if (o.destination) console.log(`    saw ${o.destination} [${o.finalStatus ?? "?"}]`);
-        if (o.reason === "platform-collision") {
-          console.log(`    wants ${o.newPlatform}: ${o.newUrl}`);
-          console.log(`    but #${o.conflictLinkId} already holds: ${o.conflictUrl}`);
+        if (o.reason === "duplicate-of-existing") {
+          console.log(`    redundant: #${o.conflictLinkId} already holds: ${o.conflictUrl}`);
         }
       }
     },
@@ -356,12 +359,17 @@ async function main() {
     );
   }
 
-  const collisions = report.skipped.filter((s) => s.reason === "platform-collision");
-  if (collisions.length > 0) {
+  // Not an action item any more, just a count worth seeing. A row resolving to
+  // a DIFFERENT link than the one the artist already has for that platform
+  // used to need a human to pick a winner; since the overflow bucket opened up
+  // (supabase_migration_artist_links_overflow.sql) both links are simply kept,
+  // the incumbent as the primary and this one under "other".
+  const overflowed = report.updated.filter((u) => u.newPlatform === "other" && u.conflictLinkId);
+  if (overflowed.length > 0) {
     console.log(
-      `\n${collisions.length} row(s) resolve to a DIFFERENT link than the one the artist ` +
-        `already has for that platform. These need a human to pick a winner — see the ` +
-        `new_url and conflicting_url columns in the CSV.`
+      `\n${overflowed.length} row(s) resolved to a platform the artist already has, so they ` +
+        `were kept as "other" links rather than taking the slot. See the new_platform and ` +
+        `conflicting_url columns in the CSV.`
     );
   }
 

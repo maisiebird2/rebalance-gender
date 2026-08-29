@@ -6,7 +6,12 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
-import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { deriveHandle } from "@/lib/profile-links";
+import {
+  canonicalLinkUrl,
+  parseLinkPayload,
+  resolveLinkPayload,
+} from "@/lib/link-payload";
 import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import { sanitizeAndLinkifyBio } from "@/lib/sanitize-bio";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
@@ -16,19 +21,13 @@ import {
 } from "@/lib/images/failures";
 import { parseArtistIdInput } from "@/lib/duplicate-of";
 import type { DuplicateTargetResult } from "@/lib/duplicate-of";
-import type { LinkPlatform, ArtistStatus } from "@/lib/types";
+import type { ArtistStatus } from "@/lib/types";
 import {
   attachOrganisations,
   promoteArtistLabelsToOrganisations,
   resolveOrganisationInputs,
   type OrganisationInput,
 } from "@/lib/organisation-writes";
-
-interface LinkInput {
-  platform: LinkPlatform;
-  url: string | null;
-  not_found?: boolean;
-}
 
 /**
  * Every action in this file writes (or reads any-status data) through the
@@ -146,11 +145,32 @@ export async function saveArtist(
     return { error: "Invalid types data" };
   }
 
-  let links: LinkInput[] = [];
+  let links: ReturnType<typeof parseLinkPayload> = [];
   try {
-    links = JSON.parse(linksRaw || "[]");
+    links = parseLinkPayload(JSON.parse(linksRaw || "[]"));
   } catch {
     return { error: "Invalid links data" };
+  }
+
+  // Settle each row's platform from its URL before anything is written: the
+  // FIRST link on a known host is that platform's primary, later ones overflow
+  // to "other". Done server-side even though the editor derives the same thing
+  // live, because the editor is not the only client of this action and the
+  // derivation is what the partial unique index assumes.
+  const { rows: resolvedLinks, rejected: rejectedLinks } = resolveLinkPayload(links);
+
+  // A link that cannot be stored is reported, never quietly dropped or refiled
+  // under "other" — filing a policy-refused host there would smuggle an
+  // excluded link in through the front door.
+  if (rejectedLinks.length > 0) {
+    const detail = rejectedLinks
+      .map((r) =>
+        r.kind === "refused"
+          ? `${r.url} (links to X/Twitter are not accepted)`
+          : `${r.url} (enter the full profile URL, starting with https://)`
+      )
+      .join("; ");
+    return { error: `Links not saved: ${detail}` };
   }
 
   let organisationInputs: OrganisationInput[] = [];
@@ -380,59 +400,60 @@ export async function saveArtist(
 
   await admin.from("artist_links").delete().eq("artist_id", artistId);
 
-  // Canonicalize each link's stored URL once, keyed by the link object so both
-  // the insert below and the new-image-URL check reuse the same value.
+  // Canonicalize each link's stored URL once, keyed by position so both the
+  // insert below and the new-image-URL check reuse the same value.
+  //
+  // Canonicalized by what the URL IS, not by the slot it landed in — see
+  // canonicalLinkUrl. An overflow SoundCloud link is stored under "other" but
+  // is still cleaned as a SoundCloud URL.
   //
   // Synchronous: this used to await a redirect-follow for SoundCloud mobile
   // share links, which was affordable when it was one network call on one
   // field. Now that every shortener host resolves, doing it here would put a
   // round-trip per link between the editor and their saved form, so it happens
   // after the response instead — see scheduleLinkResolution below.
-  const resolvedUrls = new Map<(typeof links)[number], string>();
-  for (const l of links) {
-    if (!l.not_found && l.url?.trim()) {
-      resolvedUrls.set(l, resolveProfileLinkUrl(l.platform, l.url.trim()));
-    }
+  const resolvedUrls = new Map<number, string>();
+  for (const l of resolvedLinks) {
+    if (!l.not_found && l.url) resolvedUrls.set(l.position, canonicalLinkUrl(l.url));
   }
 
-  if (links.length > 0) {
-    const validLinks = links.filter((l) => l.not_found || l.url?.trim());
-    if (validLinks.length > 0) {
-      const { error: lErr } = await admin.from("artist_links").insert(
-        validLinks.map((l) => {
-          if (l.not_found) {
-            return {
-              artist_id: artistId,
-              platform: l.platform,
-              handle: null,
-              url: null,
-              not_found: true,
-            };
-          }
-          const original_url = l.url!.trim();
-          const url = resolvedUrls.get(l)!;
+  if (resolvedLinks.length > 0) {
+    const { error: lErr } = await admin.from("artist_links").insert(
+      resolvedLinks.map((l) => {
+        if (l.not_found) {
           return {
             artist_id: artistId,
             platform: l.platform,
-            handle: deriveHandle(l.platform, url),
-            url,
-            original_url,
-            not_found: false,
+            handle: null,
+            url: null,
+            not_found: true,
           };
-        })
-      );
-      if (lErr) return { error: `Links save error: ${lErr.message}` };
-      scheduleLinkResolution(admin, artistId);
-    }
+        }
+        const original_url = l.url!.trim();
+        const url = resolvedUrls.get(l.position)!;
+        return {
+          artist_id: artistId,
+          platform: l.platform,
+          // Derived from the row's STORED platform, so handle and platform
+          // never disagree: an overflow row sits under "other" and carries no
+          // handle, exactly as "other" rows always have.
+          handle: deriveHandle(l.platform, url),
+          url,
+          original_url,
+          not_found: false,
+        };
+      })
+    );
+    if (lErr) return { error: `Links save error: ${lErr.message}` };
+    scheduleLinkResolution(admin, artistId);
   }
 
   // Check whether any new image-capable URLs were introduced.
-  const hasNewImageUrls = links.some(
+  const hasNewImageUrls = resolvedLinks.some(
     (l) =>
       !l.not_found &&
-      l.url?.trim() &&
       imagePlatforms.has(l.platform) &&
-      !existingImageUrls.has(resolvedUrls.get(l)!)
+      !existingImageUrls.has(resolvedUrls.get(l.position)!)
   );
 
   // ── 7b. Prune images for platforms whose link was removed ─────
@@ -440,13 +461,20 @@ export async function saveArtist(
   // any profile image harvested from that platform — otherwise a stale
   // photo from a now-removed profile keeps showing, since pickArtistImage
   // rotates over whatever artist_images rows exist regardless of links.
-  // The form submits an entry for every platform, so a platform absent
-  // from the surviving links genuinely means it was cleared. Mirror
-  // scripts/prune-artist-images.mjs: remove the re-hosted Storage object,
-  // delete the row, then clear that platform's image-harvest failures so
-  // a later re-added link isn't treated as pre-failed.
+  //
+  // The form no longer submits an entry per platform — it submits the whole
+  // link list — but the premise survives the change, and for a stronger
+  // reason: this save REPLACES the artist's entire set of links (the delete
+  // above), so a platform absent from the surviving links genuinely was
+  // cleared. Note "surviving" is by stored platform, so a link demoted to the
+  // overflow bucket counts as its platform being cleared, which is right: the
+  // image belonged to the profile that no longer holds the slot.
+  //
+  // Mirror scripts/prune-artist-images.mjs: remove the re-hosted Storage
+  // object, delete the row, then clear that platform's image-harvest failures
+  // so a later re-added link isn't treated as pre-failed.
   const survivingLinkPlatforms = new Set(
-    links.filter((l) => !l.not_found && l.url?.trim()).map((l) => l.platform)
+    resolvedLinks.filter((l) => !l.not_found).map((l) => l.platform)
   );
 
   const { data: currentImages } = await admin

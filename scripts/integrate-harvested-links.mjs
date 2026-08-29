@@ -30,13 +30,28 @@
 //     overwritten — this script never edits or removes a row that's
 //     already in artist_links.
 //
+//     The candidate is no longer DROPPED, though. A genuinely
+//     different link on a platform the artist already has is inserted
+//     under "other" — the overflow bucket that
+//     supabase_migration_artist_links_overflow.sql opened up, and the
+//     same answer assignPlatforms gives the forms when someone pastes
+//     a second link on a host they already have. A label's Instagram
+//     alongside the artist's own is kept rather than lost.
+//
+//     A COPY is not overflow: a candidate matching a URL the artist
+//     already holds under any platform inserts nothing. That check is
+//     also what makes the overflow insert idempotent — an "other" row
+//     is invisible to the (artist, platform) lookup above, so without
+//     it a re-run would add a fresh copy every time.
+//
 //   - Special case: that existing artist_links row can have a NULL
 //     url — a human marked the platform "not found" (the edit form
 //     and mark-mismatch-not-found.py write { url: null,
-//     not_found: true }). The row still occupies the (artist_id,
-//     platform) unique slot, so inserting the harvested candidate
-//     would violate artist_links_artist_platform_unique. These pairs
-//     are skipped entirely: no insert, no flag, no terminal error.
+//     not_found: true }). Such a row still holds that platform's one
+//     slot under the partial unique index, and it records a human
+//     decision this script must not talk over. These pairs are skipped
+//     entirely: no insert (not even as overflow), no flag, no
+//     terminal error.
 //     Instead each is recorded to a datetime-stamped CSV written to the
 //     output folder at the end of the run (columns:
 //     artist name, artist edit-page URL, platform, harvested URL), so
@@ -554,20 +569,43 @@ async function main() {
   // the URL and the not_found flag. The distinction matters: a row can
   // exist with url = null when a human has marked "not found" for that
   // platform (the edit form and mark-mismatch-not-found.py both write
-  // { url: null, not_found: true }). Such a row still occupies the
-  // (artist_id, platform) unique slot, so we must NOT try to insert
-  // over it — that's the collision this script used to crash on. We
-  // key on presence, not URL truthiness.
+  // { url: null, not_found: true }). Such a row still holds that
+  // platform's one slot under the partial unique index, so we must NOT
+  // try to insert over it — that's the collision this script used to
+  // crash on. We key on presence, not URL truthiness.
   //
-  // If an artist somehow has more than one existing row for the same
-  // platform (the artist_links_artist_id_platform_url_key constraint
-  // allows distinct URLs), the lowest-id one wins — arbitrary but
-  // deterministic (existingLinks is ordered by id ascending).
+  // Where an artist has more than one existing row for the same
+  // platform, the lowest-id one wins — arbitrary but deterministic
+  // (existingLinks is ordered by id ascending). That is the NORMAL case
+  // for "other", which holds as many rows as it needs to; every other
+  // platform is still held to one by the partial unique index.
   const existingMap = new Map();
+  // Every URL an artist already holds, under ANY platform. This is what makes
+  // the overflow insert below idempotent: an overflow row is stored under
+  // "other", so the (artist, platform) lookup above will never find it again,
+  // and without this a re-run would insert a fresh copy every time.
+  const existingUrlsByArtist = new Map();
   for (const row of existingLinks) {
     const key = `${row.artist_id}|${row.platform}`;
     if (!existingMap.has(key)) existingMap.set(key, { url: row.url, notFound: row.not_found });
+    if (row.url) {
+      if (!existingUrlsByArtist.has(row.artist_id)) existingUrlsByArtist.set(row.artist_id, []);
+      existingUrlsByArtist.get(row.artist_id).push(row.url);
+    }
   }
+
+  /** True when the artist already holds this link, whatever platform it sits
+   *  under. Uses the same comparison as the mismatch check, so "already have
+   *  it" means the same thing in both places. */
+  const artistAlreadyHasUrl = (artistId, url) =>
+    (existingUrlsByArtist.get(artistId) ?? []).some((held) => urlsMatch(held, url));
+
+  /** Records a URL as held, so two harvested candidates resolving to the same
+   *  link within one run can't both be inserted. */
+  const rememberUrl = (artistId, url) => {
+    if (!existingUrlsByArtist.has(artistId)) existingUrlsByArtist.set(artistId, []);
+    existingUrlsByArtist.get(artistId).push(url);
+  };
 
   // Group harvested rows by (artist_id, parsed_platform).
   const groups = new Map();
@@ -597,6 +635,7 @@ async function main() {
   const notFoundCollisions = [];
   let pairsAlreadyLinked = 0;
   let pairsNewlyLinked = 0;
+  let pairsOverflowed = 0;
   let excludedExtraCandidates = 0;
   let flaggedCount = 0;
   let clearedCount = 0;
@@ -669,12 +708,35 @@ async function main() {
 
     if (canonicalUrl) {
       pairsAlreadyLinked++;
+
+      // The platform's slot is taken, but a DIFFERENT link on it is no longer
+      // something to drop. Since the overflow bucket opened up
+      // (supabase_migration_artist_links_overflow.sql) it is kept under
+      // "other" — the same answer assignPlatforms gives the forms when someone
+      // pastes a second link on a host they already have. A label's Instagram
+      // beside the artist's own is the case this exists for.
+      //
+      // Copies are NOT overflow: a candidate the artist already holds inserts
+      // nothing, whichever platform holds it. Checking first rather than
+      // catching the unique violation keeps the intent readable; the
+      // (artist_id, platform, url) constraint is the backstop.
+      if (!artistAlreadyHasUrl(artistId, candidateUrl)) {
+        toInsert.push({ artist_id: artistId, platform: "other", handle: null, url: candidateUrl });
+        rememberUrl(artistId, candidateUrl);
+        pairsOverflowed++;
+        if (DEBUG) {
+          console.log(
+            `+ ${key}: ${candidateUrl} kept as "other" — ${canonicalUrl} already holds ${platform}`
+          );
+        }
+      }
     } else {
       // No existing artist_links row for this pair — promote the
       // surviving candidate.
       canonicalUrl = candidateUrl;
       pairsNewlyLinked++;
       toInsert.push({ artist_id: artistId, platform, handle: null, url: canonicalUrl });
+      rememberUrl(artistId, canonicalUrl);
       if (DEBUG) console.log(`+ ${key}: inserting ${canonicalUrl} (from harvested row #${winner.id})`);
     }
 
@@ -701,6 +763,7 @@ async function main() {
 
   console.log(`Pairs already linked in artist_links: ${pairsAlreadyLinked}`);
   console.log(`Pairs newly inserted into artist_links: ${pairsNewlyLinked}`);
+  console.log(`Different links kept as "other" (platform already taken): ${pairsOverflowed}`);
   console.log(`Additional candidates excluded (2nd+ link for same artist+platform): ${excludedExtraCandidates}`);
   console.log(`Harvested rows flagged as mismatched:  ${flaggedCount}`);
   console.log(`Harvested rows cleared (now matching or excluded): ${clearedCount}`);

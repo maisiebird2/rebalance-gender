@@ -1,12 +1,31 @@
 # Proposal — paste-to-detect platform links (v2)
 
-> **Status: proposal, not accepted.** v2 written 2026-08-29, superseding
-> [PROPOSAL-platform-links.md](PROPOSAL-platform-links.md) (v1, 2026-07-16).
-> The core design is unchanged — one paste-a-URL list, platform derived, first
-> link per host wins, overflow filed as `other` — but the repo moved underneath
-> v1 in ways that change how it would be built and what it would cost. As with
-> v1, the [open questions](#open-questions-to-evaluate) are the point of the
-> document: read them first and decide whether the plan is worth doing at all.
+> **Status: BUILT, 2026-08-29** (branch `platform-links-paste-detect`),
+> superseding [PROPOSAL-platform-links.md](PROPOSAL-platform-links.md) (v1,
+> 2026-07-16). The design below is what shipped; the notes under each open
+> question record how it was decided. The migration
+> `supabase_migration_artist_links_overflow.sql` must be applied by hand in the
+> Supabase SQL editor **before** the code is deployed — the revision-apply
+> merge stops working the moment the old upsert meets the new index.
+>
+> Two rules the plan left implicit turned out to be needed, and are worth
+> knowing about because neither is obvious from the sections below:
+>
+> - **A repeated link is not a second link.** Without an identity check,
+>   pasting the same URL twice produced a primary and an `other` duplicate of
+>   it, and the revision merge created a fresh one on every approval.
+>   `assignPlatforms` reports a `duplicate` and keeps the link once.
+> - **A URL is canonicalised by what it IS, not by the slot it lands in.** An
+>   overflow SoundCloud link is stored under `other` but still cleaned as a
+>   SoundCloud URL; `cleanGenericUrl("other", …)` would have left the tracking
+>   query on it. The stored `handle` stays keyed to the STORED platform, so a
+>   row's handle and platform never disagree.
+>
+> One thing §2 gets wrong about the schema: `artist_links` carried **two**
+> unique constraints, not one. `artist_links_artist_platform_unique` was
+> replaced as planned; `artist_links_artist_id_platform_url_key`
+> (`artist_id, platform, url`) was deliberately kept — it is what stops the
+> overflow bucket filling with byte-identical copies.
 
 ---
 
@@ -356,6 +375,8 @@ Two rows need updating:
 
 ## Open questions to evaluate
 
+> **Decided: yes, build it.**
+
 **The big one, still: is this worth doing at all?** The forcing scenario
 (~100 platforms) remains hypothetical; the visible platform list is ~20 keys.
 Since v1 the plan's blast radius grew (four forms, five writers, a constraint
@@ -364,7 +385,15 @@ surface: the fieldset now burdens the organisation form too, and every new
 platform key makes all four forms longer. Weigh both sides with current
 numbers, not v1's.
 
-1. **The "why does this say Other" surface.** Unchanged from v1, plus the new
+1. *(Built.)* Every outcome that isn't "this is your SoundCloud link" carries
+   an inline reason: overflow, unrecognised host, repeated link, and the two
+   that can't be stored. The last kind blocks the save rather than being
+   dropped — a link that silently vanishes is worse than one that refuses to.
+   A bare handle became a **fourth** case the plan didn't anticipate: the old
+   per-platform fields could build a URL from `techno_blondy` because they knew
+   the platform up front, and a paste list cannot.
+
+   **The "why does this say Other" surface.** Unchanged from v1, plus the new
    sibling state "not accepted" for refused hosts (§1). Both need inline
    explanations or they read as bugs.
 
@@ -391,11 +420,18 @@ numbers, not v1's.
    re-parse hosts from stored URLs when that lands); richer "Other" display
    labels.
 
-7. **Merge the staging table while you're here?** The v1 recommendation
+7. *(Decided: NO, as recommended.)* `artist_harvested_links` stays separate.
+
+   **Merge the staging table while you're here?** The v1 recommendation
    stands — decide it *with* the go/no-go, not after — but the FK/bare-key
    wrinkle above tilts it further toward "no, use the `source` column".
 
-8. **Organisations: in or out?** *(new)* The shared fieldset means the
+8. *(Decided: OUT, as recommended.)* `organisation_links` keeps its full
+   unique constraint, and the admin organisation form keeps the old
+   `ProfileLinksFieldset`, which now exists solely for it. No strict mode was
+   needed on the new list.
+
+   **Organisations: in or out?** *(new)* The shared fieldset means the
    organisation form changes UI either way. In: `organisation_links` gets the
    same constraint replacement and save-path work (its save is already
    whole-set replace). Out: the list component needs a strict
@@ -404,14 +440,25 @@ numbers, not v1's.
    overflow links and the admin audience tolerates a second-pass migration —
    but make it an explicit decision.
 
-9. **What happens to `homepage`?** *(new)* A first-class, first-displayed
+9. *(Decided: dedicated field, as recommended.)* A homepage input sits beside
+   the paste list and serialises first. The server honours a client's platform
+   claim only where detection has no answer of its own — the same policy
+   `reclassifyResolvedUrl` applies — which is what lets `homepage` survive a
+   round trip without letting a client relabel an obvious SoundCloud URL.
+
+   **What happens to `homepage`?** *(new)* A first-class, first-displayed
    platform that host-detection can never assign. Recommended: a dedicated
    homepage input beside the paste list (platform-first, like `not_found`).
    Alternatives: an editable-platform exception for unrecognised URLs only,
    or accepting that homepages file as `other`. This needs an answer before
    the UI is designed, not after.
 
-10. **The revision-queue compatibility window.** *(new)* How long must the
+10. *(Built: read both, indefinitely.)* `parseLinkPayload` reads either shape,
+    so no migration of stored payloads and no window to close. The admin
+    revision preview reads through it too, so a queued revision of either
+    vintage renders the same way.
+
+    **The revision-queue compatibility window.** *(new)* How long must the
     apply path read old-shape `revision_data` — until the queue drains, or is
     a one-off migration of stored payloads cleaner? Small either way; decide
     so it doesn't linger forever.

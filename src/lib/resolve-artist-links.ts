@@ -31,6 +31,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { reclassifyResolvedUrl } from "./classify-platform-url";
+import { OVERFLOW_PLATFORM } from "./assign-platforms";
 import { canonicalizeResidentAdvisorUrl, deriveHandle, resolveProfileLinkUrl } from "./profile-links";
 import { cleanLinkUrl } from "./platforms";
 import {
@@ -47,8 +48,12 @@ export type SkipReason =
   | ResolveFailureReason
   /** Resolved, canonicalized, and came out identical to what's already stored. */
   | "unchanged"
-  /** Reclassification would move the row onto a (artist_id, platform) slot the
-   *  artist already occupies, with a DIFFERENT link in it. Needs a human. */
+  /** No longer produced. Reclassification onto an occupied slot with a
+   *  DIFFERENT link in it used to be reported here for a human to arbitrate;
+   *  it is now an ordinary overflow — the row keeps its URL rewrite and moves
+   *  to "other", the same answer assignPlatforms gives everywhere else. Kept
+   *  in the union because stored reports and the backfill's CSV columns still
+   *  name it. */
   | "platform-collision"
   /** Same as above, except the resolved URL is exactly what the occupying link
    *  already holds — so this row is a redundant copy of it, not a competing
@@ -244,10 +249,16 @@ export async function resolveArtistLinks(
       // Claim the slot so a later row in this same run can't be told the
       // platform is free when this row just took it, and release the one it
       // vacated so a later row can legitimately move in.
-      takenSlots.set(slotKey(row.artist_id, outcome.newPlatform!), {
-        id: row.id,
-        url: outcome.newUrl!,
-      });
+      //
+      // "other" is never claimed: it is the overflow bucket, which holds as
+      // many rows as it needs to, so treating it as a slot would make the
+      // second overflow row in a run collide with the first.
+      if (outcome.newPlatform !== OVERFLOW_PLATFORM) {
+        takenSlots.set(slotKey(row.artist_id, outcome.newPlatform!), {
+          id: row.id,
+          url: outcome.newUrl!,
+        });
+      }
       if (outcome.newPlatform !== row.platform) {
         takenSlots.delete(slotKey(row.artist_id, row.platform));
       }
@@ -380,23 +391,59 @@ async function decideRow(
     };
   }
 
-  // artist_links carries UNIQUE (artist_id, platform), so moving a row to a
-  // platform the artist already has would violate it. Which of the two links is
-  // the better one isn't a call this module should make silently, so the row is
-  // reported for a human instead — with the incumbent's id and URL, since
-  // "these two links compete for one slot" is useless without both of them.
+  // The artist already holds the platform this row resolved to. There are two
+  // quite different situations behind that, and they are told apart by plain
+  // equality — both URLs have been through resolveProfileLinkUrl, so equal
+  // ones are genuinely identical.
   const incumbent =
     newPlatform !== row.platform ? takenSlots.get(slotKey(row.artist_id, newPlatform)) : undefined;
   if (incumbent) {
+    // A redundant copy of a link the artist already has. Still not a link
+    // worth keeping twice — overflow is for DIFFERENT links, not copies — so
+    // this outcome is unchanged.
+    if (incumbent.url === newUrl) {
+      return {
+        ...base,
+        status: "skipped",
+        reason: "duplicate-of-existing",
+        newPlatform,
+        newUrl,
+        conflictLinkId: incumbent.id,
+        conflictUrl: incumbent.url,
+        destination: result.destination,
+        finalStatus: result.finalStatus,
+      };
+    }
+
+    // A genuinely different link on a slot the artist already holds. This used
+    // to be reported as "platform-collision" for a human to arbitrate, because
+    // UNIQUE (artist_id, platform) left nowhere to put it. There is somewhere
+    // now: supabase_migration_artist_links_overflow.sql freed the "other"
+    // bucket, and filing it there is the same rule assignPlatforms applies to
+    // the form and to ingestion — the first link on a host is the primary,
+    // anything after it overflows. The URL rewrite is kept either way: the
+    // whole point of resolving was to stop storing an opaque shortener.
+    //
+    // The incumbent is still reported alongside, so a report can show which
+    // link took the slot.
+    const overflowUnchanged = row.platform === OVERFLOW_PLATFORM && newUrl === row.url;
+    if (overflowUnchanged) {
+      return {
+        ...base,
+        status: "skipped",
+        reason: "unchanged",
+        destination: result.destination,
+        finalStatus: result.finalStatus,
+      };
+    }
     return {
       ...base,
-      status: "skipped",
-      // Plain equality rather than a fuzzy match: both URLs have been through
-      // resolveProfileLinkUrl, so equal ones are genuinely identical, and
-      // erring toward "needs a human" is the safe direction to be wrong in.
-      reason: incumbent.url === newUrl ? "duplicate-of-existing" : "platform-collision",
-      newPlatform,
+      status: "updated",
+      newPlatform: OVERFLOW_PLATFORM,
       newUrl,
+      // By the stored platform, so handle and platform never disagree — an
+      // "other" row carries no handle.
+      newHandle: deriveHandle(OVERFLOW_PLATFORM, newUrl),
       conflictLinkId: incumbent.id,
       conflictUrl: incumbent.url,
       destination: result.destination,
