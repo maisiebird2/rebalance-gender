@@ -102,7 +102,8 @@ export default function ProfileLinksList({
 
       {/* ── The paste list ──────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Profile links</span>
+        {/* No heading of its own: every caller wraps this in a fieldset whose
+            legend already says "Profile links". */}
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Paste a full profile URL on each line. We work out which platform it&apos;s for.
         </p>

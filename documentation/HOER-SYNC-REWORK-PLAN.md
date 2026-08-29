@@ -466,7 +466,7 @@ inferring status from "appeared on HÖR" would be actively wrong.
 | Case | Action |
 |---|---|
 | Exactly one artist matched | **Bind.** Set `hoer_terms.artist_id`, `bind_method='social_match'`. Insert `artist_links` `platform='hoer'` with the HÖR URL + slug **if the artist has no HÖR link**. |
-| Matched artist already has a *different* HÖR link | **Conflict.** `artist_links_artist_platform_unique (artist_id, platform)` permits only one. Do not force. Bind the term, log to `hoer-bind-conflicts-<stamp>.csv`. |
+| Matched artist already has a *different* HÖR link | **Conflict.** The partial unique index `(artist_id, platform) where platform <> 'other'` permits only one HÖR link. Do not force. Bind the term, log to `hoer-bind-conflicts-<stamp>.csv`. *(Since `supabase_migration_artist_links_overflow.sql` there is a third option — keep the second link under `other`, as the forms and `integrate-harvested-links` now do. Whether a second HÖR URL is worth keeping is a decision for whoever builds this, not a change made on their behalf.)* |
 | More than one artist matched | **Ambiguous.** No bind, no seed. Log to `hoer-bind-ambiguous-<stamp>.csv` and leave for the separate dedup process. |
 | No match | → 4b |
 
