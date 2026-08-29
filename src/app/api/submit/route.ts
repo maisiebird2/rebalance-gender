@@ -3,7 +3,11 @@ import { getSupabaseAdminClient } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 import { isAdminUser } from "@/lib/admin-auth";
 import { getPlatforms } from "@/lib/platforms";
-import { resolveProfileLinkUrl } from "@/lib/profile-links";
+import {
+  canonicalLinkUrl,
+  parseLinkPayload,
+  resolveLinkPayload,
+} from "@/lib/link-payload";
 import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import {
   checkBotProtection,
@@ -12,7 +16,6 @@ import {
   createTokenAndSendEmail,
 } from "@/lib/submission-helpers";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import type { LinkPlatform } from "@/lib/types";
 import {
   resolveOrganisationInputs,
   attachOrganisations,
@@ -40,7 +43,12 @@ interface SubmitBody {
   aliases?: string[];
   notes?: string;
   submittedByEmail?: string;
-  links?: Partial<Record<LinkPlatform, string>>;
+  /**
+   * The ordered link list the form posts now. The old per-platform map is
+   * still accepted — parseLinkPayload reads either shape — because this is a
+   * public endpoint and nothing forces a client to update in step.
+   */
+  links?: unknown;
   // Bot protection
   turnstileToken?: string;
   honeypot?: string;  // must be empty; bots fill it
@@ -121,9 +129,30 @@ export async function POST(request: NextRequest) {
   // link matching an existing artist) are allowed through. When we do block,
   // return the matching entries so the client can link the submitter to the
   // existing record(s) that caused the block.
-  const submittedLinks = Object.entries(body.links ?? {})
-    .filter(([, url]) => typeof url === "string" && url.trim())
-    .map(([platform, url]) => ({ platform, url: (url as string).trim() }));
+  const submittedLinkRows = parseLinkPayload(body.links);
+  const { rows: resolvedLinks, rejected: rejectedLinks } = resolveLinkPayload(submittedLinkRows);
+  const submittedLinks = resolvedLinks
+    .filter((l) => !l.not_found && l.url)
+    .map((l) => ({ platform: l.platform, url: l.url!.trim() }));
+
+  // A link that cannot be stored is refused outright rather than quietly
+  // dropped or refiled under "other". Silently discarding it would leave the
+  // submitter believing they had supplied it; filing a policy-refused host
+  // under "other" would smuggle an excluded link in through the front door.
+  if (rejectedLinks.length > 0) {
+    return NextResponse.json(
+      {
+        error: rejectedLinks
+          .map((r) =>
+            r.kind === "refused"
+              ? `We don't accept X/Twitter links (${r.url}).`
+              : `${r.url} isn't a full profile URL — it needs to start with https://`
+          )
+          .join(" "),
+      },
+      { status: 400 }
+    );
+  }
 
   const duplicates = await findDuplicateArtists(supabase, submittedLinks);
   if (duplicates.length > 0) {
@@ -276,32 +305,34 @@ export async function POST(request: NextRequest) {
   }
 
   // ── 10. Links ───────────────────────────────────────────────────────────────
-  if (body.links) {
+  // Platforms were settled back at the duplicate check (resolvedLinks), which
+  // needed them too — the first link on a known host is that platform's
+  // primary, later ones and unrecognised hosts land in "other".
+  if (resolvedLinks.length > 0) {
     const platforms = await getPlatforms(supabase);
     const validKeys = new Set(platforms.map((p) => p.key));
 
-    const rows = (Object.keys(body.links) as LinkPlatform[])
-      .filter((platform) => validKeys.has(platform) && body.links?.[platform]?.trim())
-      .map((platform) => {
-        const original_url = body.links![platform]!.trim();
+    const rows = resolvedLinks
+      // A key with no row in `platforms` would be rejected by
+      // artist_links_platform_fkey anyway; dropping it here keeps one bad
+      // link from costing the submitter every other one.
+      .filter((l) => validKeys.has(l.platform) && !l.not_found && l.url)
+      .map((l) => {
+        const original_url = l.url!.trim();
         return {
           artist_id: artistId,
-          platform,
+          platform: l.platform,
           original_url,
-          // Bare handles for templated platforms (soundcloud, instagram,
-          // bandcamp, resident_advisor) get built into a full URL here too —
-          // this is a safety net in case the client-side normalization in
-          // ProfileLinkField didn't run (e.g. JS disabled, Enter-to-submit
-          // without a blur event). Everything else falls back to generic
-          // trimming/query-stripping (cleanGenericUrl, the default fallback
-          // cleaner).
+          // Canonicalized by what the URL is rather than by the slot it landed
+          // in (canonicalLinkUrl), so an overflow link stored under "other" is
+          // still cleaned as the platform it actually belongs to.
           //
           // Purely synchronous now: shortener and share links
           // (on.soundcloud.com/..., bit.ly/..., soundcloud.app.goo.gl/...)
           // used to be expanded by a redirect-follow right here, which cost
           // the submitter a network round-trip per link. That moved to
           // after() below.
-          url: resolveProfileLinkUrl(platform, original_url),
+          url: canonicalLinkUrl(original_url),
         };
       });
 

@@ -20,6 +20,7 @@ import {
   type LinkAssignmentKind,
 } from "./assign-platforms";
 import { classifyPlatformUrl } from "./classify-platform-url";
+import { resolveProfileLinkUrl } from "./profile-links";
 
 export interface LinkPayloadRow {
   /**
@@ -184,4 +185,29 @@ function trustedClientPlatform(row: LinkPayloadRow): string | null {
   const url = (row.url ?? "").trim();
   if (!url) return null;
   return classifyPlatformUrl(url) === OVERFLOW_PLATFORM ? claimed : null;
+}
+
+/**
+ * Canonicalises a pasted URL for storage, by what the URL IS rather than by
+ * the slot it lands in.
+ *
+ * The distinction only shows up for overflow rows. A label's SoundCloud page
+ * is stored under "other" because the artist's own SoundCloud already holds
+ * that slot — but it is still a SoundCloud URL, and canonicalising it as one
+ * (stripping the tracking query, rebuilding it from the handle) is right,
+ * where cleanGenericUrl("other", …) would leave it as pasted. This is also
+ * how resolve-artist-links.ts canonicalises a link it has just resolved: by
+ * the platform the URL turned out to be.
+ *
+ * The stored `handle`, by contrast, is derived from the row's STORED platform,
+ * so that a row's handle and platform never disagree.
+ */
+export function canonicalLinkUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return trimmed;
+  const detected = classifyPlatformUrl(trimmed);
+  // A refused or unparseable URL is never stored, so its canonical form is
+  // academic — return it untouched rather than inventing one.
+  if (detected === null) return trimmed;
+  return resolveProfileLinkUrl(detected, trimmed);
 }

@@ -219,3 +219,55 @@ describe("kind predicates", () => {
     expect(isLinkError("overflow")).toBe(false);
   });
 });
+
+describe("assignPlatforms — repeated links", () => {
+  it("keeps a repeated link once", () => {
+    expect(
+      assign(["https://soundcloud.com/the-artist", "https://soundcloud.com/the-artist"])
+    ).toEqual([
+      ["soundcloud", "primary"],
+      [null, "duplicate"],
+    ]);
+  });
+
+  it("ignores scheme, www, trailing slash and case when comparing", () => {
+    expect(
+      assign([
+        "https://soundcloud.com/the-artist",
+        "http://www.soundcloud.com/The-Artist/",
+      ])[1]
+    ).toEqual([null, "duplicate"]);
+  });
+
+  it("keeps a different link on the same host as overflow, not a duplicate", () => {
+    expect(
+      assign(["https://soundcloud.com/the-artist", "https://soundcloud.com/their-label"])[1]
+    ).toEqual(["other", "overflow"]);
+  });
+
+  it("treats a differing query string as a different link", () => {
+    expect(
+      assign(["https://www.youtube.com/watch?v=aaa", "https://www.youtube.com/watch?v=bbb"])[1]
+    ).toEqual(["other", "overflow"]);
+  });
+
+  it("does not let a copy displace the original's slot", () => {
+    const rows = assign([
+      "https://soundcloud.com/the-artist",
+      "https://soundcloud.com/the-artist",
+      "https://soundcloud.com/their-label",
+    ]);
+    expect(rows).toEqual([
+      ["soundcloud", "primary"],
+      [null, "duplicate"],
+      ["other", "overflow"],
+    ]);
+  });
+
+  it("reports both copies of a refused link as refused", () => {
+    expect(assign(["https://x.com/a", "https://x.com/a"])).toEqual([
+      [null, "refused"],
+      [null, "refused"],
+    ]);
+  });
+});

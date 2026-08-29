@@ -5,6 +5,8 @@ import { after } from "next/server";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
+import { classifyPlatformUrl } from "@/lib/classify-platform-url";
+import { OVERFLOW_PLATFORM } from "@/lib/assign-platforms";
 import { scheduleLinkResolution } from "@/lib/schedule-link-resolution";
 import { scrapeArtistImages, SCRAPE_ONLY_PLATFORMS } from "@/lib/scrape-images";
 
@@ -26,6 +28,18 @@ async function requireUser(): Promise<boolean> {
  * existing row for (artist, platform) so it's safe to retry, and kicks
  * off image enrichment when the platform can provide a profile image.
  *
+ * DELIBERATELY platform-first, unlike the paste-to-detect link editor: this
+ * page asks "does this artist have a SoundCloud?" and the admin answers that
+ * question, so the platform comes from the row they clicked, not from the URL.
+ * Replace-not-overflow follows from the same framing — the slot is empty by
+ * definition (that is why the row is on this page), and a retry should correct
+ * the link rather than stack a second one behind it.
+ *
+ * What detection IS used for is catching a URL that contradicts the slot: a
+ * link pasted into the wrong row would otherwise be stored under a platform it
+ * plainly isn't, which is precisely the mislabelling deriving the platform is
+ * meant to end.
+ *
  * A shortener or share link is followed to its real destination after the
  * response, not before it — see scheduleLinkResolution.
  */
@@ -39,9 +53,25 @@ export async function saveArtistPlatformLink(
     return { error: "Missing fields" };
   }
 
+  const original_url = rawUrl.trim();
+
+  const detected = classifyPlatformUrl(original_url);
+  if (detected === null) {
+    // Either a policy-refused host or not an http(s) URL at all. Both are
+    // things we must not store, and both are worth naming.
+    return /^https?:\/\//i.test(original_url)
+      ? { error: "We don't accept links to X/Twitter." }
+      : { error: "Enter the full profile URL, starting with https://" };
+  }
+  // "other" is the classifier's fallback, not a finding, so it never
+  // contradicts anything — it is what a homepage or any unrecognised host
+  // looks like, and those are legitimate answers on this page.
+  if (detected !== OVERFLOW_PLATFORM && detected !== platform) {
+    return { error: `That looks like a ${detected} link, not ${platform}.` };
+  }
+
   const admin = getSupabaseAdminClient();
 
-  const original_url = rawUrl.trim();
   const url = resolveProfileLinkUrl(platform, original_url);
 
   // Replace-then-insert keeps this idempotent (double-click, stale tab).

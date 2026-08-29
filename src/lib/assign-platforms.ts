@@ -46,6 +46,10 @@ export const OVERFLOW_PLATFORM = "other";
  *   - `refused`      a real http(s) URL on a host the project excludes
  *                    (twitter/x/t.co). NOT filed under "other" — doing so
  *                    would smuggle an excluded link in through the front door.
+ *   - `duplicate`    the same link as an earlier row in the list. Not the
+ *                    same as overflow: overflow is a DIFFERENT link on a host
+ *                    that is already spoken for (a label's SoundCloud beside
+ *                    the artist's), and it is kept. A copy is kept once.
  *   - `blank`        empty row; dropped on serialise.
  */
 export type LinkAssignmentKind =
@@ -53,6 +57,7 @@ export type LinkAssignmentKind =
   | "primary"
   | "overflow"
   | "unrecognised"
+  | "duplicate"
   | "not-a-url"
   | "refused";
 
@@ -82,6 +87,33 @@ export interface LinkAssignment {
   occupiedPlatform?: string;
 }
 
+/**
+ * A comparison key for "these two rows are the same link".
+ *
+ * Deliberately loose in the ways that never change where a link points —
+ * scheme, a leading www., a trailing slash, host case — and strict everywhere
+ * else. The query string is KEPT: it carries the identity of the link on
+ * plenty of hosts (a /watch?v=… video, a platform search page), so dropping it
+ * would merge links that are genuinely different. Erring toward "not a
+ * duplicate" is the safe direction: the cost is one redundant row someone can
+ * delete, against silently discarding a link they meant to add.
+ *
+ * Falls back to the trimmed text for anything unparseable, so two identical
+ * bad rows still compare equal.
+ */
+export function linkIdentityKey(rawUrl: string): string {
+  const text = rawUrl.trim();
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return text.toLowerCase();
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const path = url.pathname.replace(/\/+$/, "");
+  return `${host}${path}${url.search}`.toLowerCase();
+}
+
 /** True when `text` parses as an http(s) URL — the shape classification needs. */
 function isHttpUrl(text: string): boolean {
   try {
@@ -104,14 +136,20 @@ export function assignPlatforms<T extends AssignPlatformsInput>(
   // Known platforms already claimed by an earlier row. "other" is never in
   // here — that is the point of the overflow bucket.
   const claimed = new Set<string>();
+  // Links already present, so a row repeated in the list is not stored twice.
+  const seen = new Set<string>();
 
   return rows.map((row) => {
-    const assignment = assignOne(row, claimed);
+    const assignment = assignOne(row, claimed, seen);
     return { ...row, ...assignment };
   });
 }
 
-function assignOne(row: AssignPlatformsInput, claimed: Set<string>): LinkAssignment {
+function assignOne(
+  row: AssignPlatformsInput,
+  claimed: Set<string>,
+  seen: Set<string>
+): LinkAssignment {
   const text = (row.url ?? "").trim();
   if (!text) return { platform: null, kind: "blank" };
 
@@ -124,8 +162,17 @@ function assignOne(row: AssignPlatformsInput, claimed: Set<string>): LinkAssignm
 
   const detected = classifyPlatformUrl(unwrapped);
   // null is the policy refusal (twitter/x/t.co), which the shape check above
-  // has already separated from "not a URL at all".
+  // has already separated from "not a URL at all". Decided before the
+  // duplicate check so that two copies of a refused link both say why they
+  // are refused, rather than the second reporting the less useful "duplicate".
   if (detected === null) return { platform: null, kind: "refused" };
+
+  // Before anything claims a slot: a repeat of a link already in the list is
+  // not a second link. Checked here so the copy cannot displace the original
+  // or push a genuinely different link into the overflow bucket.
+  const identity = linkIdentityKey(unwrapped);
+  if (seen.has(identity)) return { platform: null, kind: "duplicate" };
+  seen.add(identity);
 
   // A stored row keeps its platform whatever detection now says — but it still
   // occupies its slot, so a later row on the same host correctly overflows.
@@ -162,7 +209,9 @@ function assignOne(row: AssignPlatformsInput, claimed: Set<string>): LinkAssignm
 
 /** True when the row must not be written to the database. */
 export function isUnstorable(kind: LinkAssignmentKind): boolean {
-  return kind === "blank" || kind === "not-a-url" || kind === "refused";
+  return (
+    kind === "blank" || kind === "duplicate" || kind === "not-a-url" || kind === "refused"
+  );
 }
 
 /**
