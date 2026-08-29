@@ -4,7 +4,6 @@ import { useRef, useState, useTransition } from "react";
 import { saveArtist, deleteArtist, checkDuplicateTarget } from "./actions";
 import type {
   ArtistWithRelations,
-  LinkPlatform,
   ArtistStatus,
   ArtistAlias,
   OrganisationFormRow,
@@ -17,7 +16,12 @@ import GenreList from "@/components/form/GenreList";
 import OrganisationList from "@/components/form/OrganisationList";
 import { initialOrganisationRowsWithRoles } from "@/lib/organisations";
 import LocationList, { type LocationRow } from "@/components/form/LocationList";
-import ProfileLinksFieldset from "@/components/form/ProfileLinksFieldset";
+import ProfileLinksList from "@/components/form/ProfileLinksList";
+import {
+  hasLinkErrors,
+  linkEditorStateFromLinks,
+  serializeLinkRows,
+} from "@/lib/link-rows";
 import Field from "@/components/form/Field";
 import TextArea from "@/components/form/TextArea";
 import { mergeGenreOptions } from "@/lib/genre-options";
@@ -113,40 +117,14 @@ export default function EditForm({
   }
 
   // ── Link state ────────────────────────────────────────────────
-  const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
-    const map: Record<string, string> = {};
-    for (const p of platforms) {
-      map[p.key] = artist.links?.find((l) => l.platform === p.key && !l.not_found)?.url ?? "";
-    }
-    return map;
-  });
-
-  const [linkNotFound, setLinkNotFound] = useState<Record<string, boolean>>(() => {
-    const map: Record<string, boolean> = {};
-    for (const p of platforms) {
-      map[p.key] = artist.links?.some((l) => l.platform === p.key && l.not_found) ?? false;
-    }
-    return map;
-  });
-
-  function updateLinkUrl(platform: LinkPlatform, url: string) {
-    setLinkUrls((prev) => ({ ...prev, [platform]: url }));
-  }
-
-  function toggleLinkNotFound(platform: LinkPlatform, checked: boolean) {
-    setLinkNotFound((prev) => ({ ...prev, [platform]: checked }));
-    if (checked) setLinkUrls((prev) => ({ ...prev, [platform]: "" }));
-  }
+  // Shows the canonical stored `url` rather than what was originally typed:
+  // this form edits the record, so it should show the record.
+  const [links, setLinks] = useState(() => linkEditorStateFromLinks(artist.links, "url"));
+  const linkErrors = hasLinkErrors(links);
 
   // ── Submit ────────────────────────────────────────────────────
   function serializedLinks() {
-    return platforms
-      .filter((p) => linkUrls[p.key]?.trim() || linkNotFound[p.key])
-      .map((p) => ({
-        platform: p.key,
-        url: linkNotFound[p.key] ? null : linkUrls[p.key].trim(),
-        not_found: linkNotFound[p.key] ?? false,
-      }));
+    return serializeLinkRows(links);
   }
 
   function buildFormData(forceApprove = false, forceNotEligible = false): FormData | null {
@@ -362,12 +340,11 @@ export default function EditForm({
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">
           Profile links
         </legend>
-        <ProfileLinksFieldset
+        <ProfileLinksList
           platforms={platforms}
-          values={linkUrls}
-          onChange={updateLinkUrl}
-          notFound={linkNotFound}
-          onNotFoundChange={toggleLinkNotFound}
+          value={links}
+          onChange={setLinks}
+          showNotFound
         />
       </fieldset>
 
@@ -413,11 +390,18 @@ export default function EditForm({
 
       {/* ── Floating action bar ────────────────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-950">
+        {/* Saving is blocked, not silently partial: a link that can't be stored
+            would otherwise vanish without the editor ever being told. */}
+        {linkErrors && (
+          <p className="mx-auto mb-2 max-w-3xl text-sm text-red-600 dark:text-red-400">
+            One of the profile links can&apos;t be saved — see the message under it.
+          </p>
+        )}
         <div className="mx-auto flex max-w-3xl items-center justify-between">
           <div className="flex gap-3">
             <button
               type="submit"
-              disabled={isPending}
+              disabled={isPending || linkErrors}
               className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
             >
               {pendingAction === "save" ? "Saving…" : "Save changes"}
@@ -426,7 +410,7 @@ export default function EditForm({
               <button
                 type="button"
                 onClick={handleSaveAndApprove}
-                disabled={isPending}
+                disabled={isPending || linkErrors}
                 className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 {pendingAction === "approve" ? "Approving…" : "Save and approve"}
@@ -449,7 +433,7 @@ export default function EditForm({
                   </span>
                   <button
                     type="button"
-                    disabled={isPending}
+                    disabled={isPending || linkErrors}
                     onClick={handleSaveAndMarkNotEligible}
                     className="rounded-md bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
                   >

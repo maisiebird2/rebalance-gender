@@ -9,6 +9,7 @@ import {
   approveRevision,
   rejectRevision,
 } from "./actions";
+import { parseLinkPayload } from "@/lib/link-payload";
 import type { ArtistWithRelations, ArtistRevision } from "@/lib/types";
 
 type RevisionWithArtist = ArtistRevision & { artist: { id: string; name: string } };
@@ -375,6 +376,10 @@ function RevisionCard({
   onReject: () => void;
 }) {
   const rd = revision.revision_data;
+  // Read through parseLinkPayload so a revision written before the
+  // paste-to-detect editor (a per-platform map) and one written after it (an
+  // ordered list) both preview the same way — the queue holds both.
+  const proposedLinks = parseLinkPayload(rd.links);
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
       <div className="flex flex-col gap-3">
@@ -409,9 +414,13 @@ function RevisionCard({
           )}
           {rd.labels?.length && (<><dt className="text-gray-500">Labels</dt><dd>{rd.labels.join(", ")}</dd></>)}
           {rd.aliases?.length && (<><dt className="text-gray-500">Aliases</dt><dd>{rd.aliases.join(", ")}</dd></>)}
-          {rd.links && Object.keys(rd.links).length > 0 && (
+          {proposedLinks.length > 0 && (
             <><dt className="text-gray-500">Links</dt>
-            <dd className="break-all">{Object.entries(rd.links).map(([k, v]) => `${k}: ${v}`).join("; ")}</dd></>
+            <dd className="break-all">
+              {proposedLinks
+                .map((l) => (l.not_found ? `${l.platform}: not found` : l.url))
+                .join("; ")}
+            </dd></>
           )}
           {revision.submitter_notes && (
             <><dt className="text-gray-500">Notes</dt>

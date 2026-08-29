@@ -45,7 +45,14 @@ export interface RevisionData {
   labels?: string[];
   organisations?: OrganisationFormRow[];
   aliases?: string[];
-  links?: Partial<Record<string, string>>;
+  /**
+   * BACK-COMPAT, for the same reason as `labels` above: this is a STORED
+   * payload, so both shapes reach approveRevision(). Newer revisions carry the
+   * ordered LinkPayloadRow[] the paste-to-detect editor posts; ones already in
+   * the queue carry the old per-platform map, written by a form that no longer
+   * exists. parseLinkPayload reads either.
+   */
+  links?: unknown;
 }
 
 export interface ArtistRevision {

@@ -4,7 +4,6 @@ import { useState, useRef, FormEvent } from "react";
 import { Turnstile } from "@marsidev/react-turnstile";
 import type {
   ArtistWithRelations,
-  LinkPlatform,
   OrganisationFormRow,
   OrganisationSummary,
   Platform,
@@ -12,7 +11,12 @@ import type {
 import TextList from "./form/TextList";
 import GenreList from "./form/GenreList";
 import LocationList, { type LocationRow } from "./form/LocationList";
-import ProfileLinksFieldset from "./form/ProfileLinksFieldset";
+import ProfileLinksList from "./form/ProfileLinksList";
+import {
+  hasLinkErrors,
+  linkEditorStateFromLinks,
+  serializeLinkRows,
+} from "@/lib/link-rows";
 import Field from "./form/Field";
 import TextArea from "./form/TextArea";
 import { mergeGenreOptions } from "@/lib/genre-options";
@@ -44,24 +48,17 @@ export default function RevisionForm({ artist, genreOptions, organisationOptions
   const [aliasNames, setAliasNames] = useState<string[]>(
     artist.aliases?.length ? artist.aliases.map((a) => a.name) : [""]
   );
-  const [linkUrls, setLinkUrls] = useState<Record<string, string>>(() => {
-    const map: Record<string, string> = {};
-    for (const link of artist.links ?? []) {
-      if (link.url && !link.not_found) {
-        map[link.platform] = link.original_url ?? link.url ?? "";
-      }
-    }
-    return map;
-  });
+  // Shows `original_url` where there is one, so a visitor sees each link as it
+  // was given rather than a rewritten form of it — as this form always has.
+  const [links, setLinks] = useState(() =>
+    linkEditorStateFromLinks(artist.links, "original")
+  );
+  const linkErrors = hasLinkErrors(links);
 
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-
-  function updateLinkUrl(platform: LinkPlatform, url: string) {
-    setLinkUrls((prev) => ({ ...prev, [platform]: url }));
-  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -71,11 +68,7 @@ export default function RevisionForm({ artist, genreOptions, organisationOptions
     const form = e.currentTarget;
     const data = new FormData(form);
 
-    const links: Partial<Record<LinkPlatform, string>> = {};
-    for (const p of platforms) {
-      const value = linkUrls[p.key]?.trim();
-      if (value) links[p.key] = value;
-    }
+    const linkPayload = serializeLinkRows(links);
 
     const revisionData = {
       name: (data.get("name") as string | null)?.trim() || undefined,
@@ -88,7 +81,7 @@ export default function RevisionForm({ artist, genreOptions, organisationOptions
         ? labelList.filter((row) => row.name.trim() !== "")
         : undefined,
       aliases: aliasNames.filter(Boolean).length ? aliasNames.filter(Boolean) : undefined,
-      links: Object.keys(links).length ? links : undefined,
+      links: linkPayload.length ? linkPayload : undefined,
     };
 
     const payload = {
@@ -181,7 +174,7 @@ export default function RevisionForm({ artist, genreOptions, organisationOptions
 
       <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
         <legend className="px-1 text-sm font-medium text-gray-600 dark:text-gray-400">Profile links</legend>
-        <ProfileLinksFieldset platforms={platforms} values={linkUrls} onChange={updateLinkUrl} />
+        <ProfileLinksList platforms={platforms} value={links} onChange={setLinks} />
       </fieldset>
 
       <TextArea
@@ -218,7 +211,7 @@ export default function RevisionForm({ artist, genreOptions, organisationOptions
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
             type="submit"
-            disabled={status === "submitting" || (!!siteKey && !turnstileToken)}
+            disabled={status === "submitting" || linkErrors || (!!siteKey && !turnstileToken)}
             className="rounded-md bg-violet-600 px-5 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60"
           >
             {status === "submitting" ? "Submitting…" : "Submit revision"}
