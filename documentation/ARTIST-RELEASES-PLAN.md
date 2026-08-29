@@ -1,53 +1,27 @@
-# HÖR video embeds — implementation plan
+# `artist_releases` — implementation plan
 
-How to put one YouTube-embedded HÖR set on each artist page, and the
-`artist_releases` table that ended up carrying it. The *why* behind the HÖR
-half lives in [PROPOSAL-hoer-video-embeds.md](PROPOSAL-hoer-video-embeds.md),
-which records the measurements this plan depends on; this document is the
-build order and does not restate them.
+One table for an artist's releases across every platform, and the three
+cutovers that populate it: Bandcamp (already stored, in its own table),
+HÖR sets (not stored at all), and SoundCloud (partly stored, in a column
+nothing writes).
 
-The filename is narrower than the contents — the shared table pulled Bandcamp
-and SoundCloud in. Renaming it is fine; `.env.local.example` is the only
-reference to update.
+The feature that prompted it is the HÖR one — **one embedded video per artist
+page, their most recent HÖR set that actually has a working video**. Its *why*,
+and the measurements the HÖR steps depend on, live in
+[PROPOSAL-hoer-video-embeds.md](PROPOSAL-hoer-video-embeds.md); this document
+is the build order and does not restate them.
 
-**Scope.** One embed per artist page — the artist's most recent HÖR set that
-actually has a working video. Not a grid, not a playlist, not a channel feed.
-
-Storage is a **generalised `artist_releases` table** (platform, release type,
-URL, external id, release date, embed details) rather than a HÖR-specific one.
-It absorbs today's `artist_bandcamp_albums` **and** the SoundCloud content the
-artist page currently renders without storing, so those cutovers are part of
-this work — see [Three parts](#three-parts).
-
----
-
-## The five invariants
-
-Everything below follows from these. They are the findings that cost the most
-to rediscover, so they are stated once, here, as rules.
-
-1. **Never frame hoer.live.** It sends `X-Frame-Options: SAMEORIGIN`. YouTube
-   is the only route.
-2. **Never read `videoId:` from an artist page.** That belongs to the
-   site-wide "Now Playing" sticky player and is a different artist's set. The
-   artist's own sets are the `show-card` blocks under `#artist-shows`.
-3. **Always request `hqdefault.jpg`.** `maxresdefault.jpg` 404s on ~9% of the
-   archive; that is exactly what makes HÖR's own cards look broken.
-4. **A set is not a video.** A set can have `youtube_id = 0`, a page that
-   `302`s to `/404/`, or a video that later dies. Any of these can hit an
-   artist's *newest* set, so the fallback to the next-newest is required, not
-   optional.
-5. **`hoer_sets` is the authority on whose set it is.** HÖR's markup tells us
-   `post_id → video_id`; our own `term_ids` tell us who played. Never infer
-   attribution from the page.
+**Why a shared table.** The HÖR work needed somewhere to put
+`post_id → video_id`, and every option that was HÖR-shaped duplicated
+structure `artist_bandcamp_albums` already had. `artist_releases` carries
+platform, release type, title, URL, external id, release date and embed
+details, so Bandcamp, HÖR and SoundCloud all become rows rather than three
+private schemas. It also makes "show the newest working release" one ordered
+query instead of a per-platform special case.
 
 ---
 
 ## Three parts
-
-The storage is a **generalised `artist_releases` table**, not a HÖR-specific
-one. It absorbs the existing `artist_bandcamp_albums` and gives SoundCloud a
-home it currently lacks, so the work splits:
 
 - **Part A (steps 1–2)** — create `artist_releases`, move Bandcamp onto it,
   retire the old table. No user-visible change; independently shippable, and
