@@ -583,28 +583,96 @@ than rows.
 
 ## Step 11 — Fetch tracks
 
-Add a conditional call to `sync-soundcloud.mjs`, mirroring the existing
-playlists branch:
+One call per **approved** artist, added to `sync-soundcloud.mjs` beside the
+existing playlists branch:
 
 ```
-GET /users/{id}/tracks?limit=50&linked_partitioning=1   (when track_count > 0)
+GET /users/{id}/tracks?limit=50&linked_partitioning=1
 ```
 
-Keep from each track: `id`, `title`, `permalink_url`, `created_at`, and
-`release_date` where present.
+No `/resolve` is needed — the numeric user id is already in
+`artist_enrichment.external_id`, and the sync already prefers fetching by it.
 
-**This raises the per-artist cost.** The module header currently states that
-two calls is the floor for a full sync; for most artists this makes it three,
-and unlike the playlists call — which only fires for the rare zero-upload
-account — this one fires for the common case. Mitigations, in order of
-preference:
+**`directory_status = 'approved'` is a correctness filter, not a cost saving.**
+The `artists` table also holds `sc_followee` rows from the follower graph, and
+those are radio stations and labels — the busiest is Rinse FM with 35,580
+tracks, whose uploads are other people's music. Harvesting them as artist
+releases would be wrong before it was expensive.
 
-- Fetch tracks for **approved artists only**, as the harvesters already do
-  for other optional work.
-- Fetch on first sync and on an explicit refresh, **not** on every convergence
-  loop round. Track lists change far more slowly than the loop runs.
-- Cap at 50. The page renders one widget; the rest is only there so a dead
-  track can be skipped.
+Measured against 20 approved artists on 2026-08-29 (629 tracks): the busiest
+approved artist has **1,055** tracks, and at `limit=50` every artist was
+satisfied in **exactly one call**.
+
+### What comes back
+
+`GET /users/{id}/tracks` returns ~45 fields per track. Fill rates across those
+629 tracks:
+
+| Field | Populated | |
+|---|---|---|
+| `created_at` | **100%** | server-set upload timestamp |
+| `title`, `permalink_url`, `duration` | 100% | |
+| `artwork_url` | 100% | 628/629 |
+| `bpm` | 100% | 626/629 |
+| `genre` | 91% | |
+| `tag_list` | 68% | |
+| `description` | 60% | |
+| `label_name` | 44% | user-entered |
+| `release_year` | 42% | user-entered |
+| `isrc` | 40% | |
+| `download_url` | 2% | |
+
+`created_at` is universal because SoundCloud sets it server-side on upload.
+Everything at 44% or below is typed in by the artist and must be treated as
+optional.
+
+Keep `id`, `title`, `permalink_url`, `created_at` and `artwork_url`. The rest
+is available if a richer widget ever wants it; none of it is needed to render
+a player.
+
+### Ordering and pagination
+
+**Newest-first is the default** — confirmed against timestamps, no `order`
+parameter required. That is what makes `limit=50` sufficient: the tail is
+never the thing we want to show.
+
+At `limit=50` this is one call and pagination never arises. Two traps are
+recorded here anyway, because they only bite if someone later raises the cap
+and both fail silently:
+
+- **`next_href` is always present**, including on the final page. Its absence
+  is not a terminator.
+- **A short page does not mean the end.** At `limit=200` real pages came back
+  as 196, 200, 196, 200, 199, 200 with more to follow. A
+  `page.length < limit → done` check truncates silently.
+
+Terminate on an **empty page** or a hard cap — the same loop shape the HÖR
+crawler already uses.
+
+### Two calls not to make
+
+- **`/tracks/{id}` adds nothing.** Diffed against the list form: zero extra
+  fields, zero missing. There is never a reason to call it per track.
+- **No embeddability check is needed.** `sharing`, `embeddable_by`,
+  `streamable`, `access` and `policy` all arrive inline in the list response.
+  This is the opposite of the HÖR/YouTube case in step 6, where oEmbed cannot
+  report embeddability and a second API is required. SoundCloud needs no
+  validation layer at all — set `embed_status` straight from these fields.
+
+### An empty response is normal
+
+2 of the 20 sampled artists returned **no tracks** despite a stored
+`track_count` above zero — a stale count, or an account gone private or
+deleted since the last sync. Treat it as an ordinary outcome: write no
+releases, withdraw any existing SoundCloud rows for that artist, and do **not**
+write `sync_error`. It is not a failed sync.
+
+### Cost
+
+This is a third API call per approved artist, where the module header
+currently states two is the floor for a full sync. Bound it by fetching on
+first sync and on an explicit refresh, **not** on every convergence loop
+round — track lists change far more slowly than the loop runs.
 
 ---
 
@@ -617,8 +685,20 @@ Same write, two release types:
 | `/users/{id}/tracks` | `soundcloud` | `track` | track id | `soundcloud` | track id |
 | `/users/{id}/playlists` | `soundcloud` | `playlist` | playlist id | `soundcloud` | playlist id |
 
-`url` is the `permalink_url`; `released_at` is `release_date ?? created_at`;
-`sort_order` is the position in the response.
+`url` is the `permalink_url`; `sort_order` is the position in the response;
+and `released_at` is **`created_at`, always**.
+
+Not `release_year ?? created_at`. The two mean different things: `created_at`
+is when the track was uploaded, `release_year` is when the artist says the
+music came out. Preferring the latter would sort a back-catalogue track
+uploaded last week but tagged 2015 as a 2015 release, so "their newest track"
+would quietly skip it. `release_year` is also year-granular and present on
+only 42% of tracks (step 11), which makes it unusable as a sort key, whereas
+`created_at` is universal — so `released_at` is never null and the
+newest-first ordering in step 8 always has something to sort on.
+
+If the artistic release date is wanted later it belongs in its own nullable
+column, not blended into the ordering key.
 
 `playlist` is deliberately **not** `dj_set`. A HÖR set is one continuous
 recorded performance; a SoundCloud playlist is a container of other people's
@@ -704,8 +784,16 @@ Before merging:
       still shows playlists. Both cases compared against today's rendering.
 - [ ] The SoundCloud embed URL uses the mapped endpoint, not a pluralised
       `release_type` (a wrong endpoint renders an empty player, not an error).
-- [ ] Per-artist API call count is what step 11 intends — tracks are not
-      re-fetched on every convergence loop round.
+- [ ] Per-artist API call count is what step 11 intends — one call per
+      approved artist, and tracks are not re-fetched on every convergence
+      loop round.
+- [ ] **Only approved artists are fetched.** No `sc_followee` row gains
+      releases — spot-check that Rinse FM (35,580 tracks) has none.
+- [ ] `released_at` equals `created_at`: a back-catalogue track uploaded
+      recently but tagged with an older `release_year` still sorts as recent.
+- [ ] An artist whose account returns no tracks despite `track_count > 0`
+      writes no `sync_error`, and any stale SoundCloud rows for them are
+      withdrawn.
 - [ ] Console shows no CSP violation on an artist page with an embed.
 
 ---
@@ -719,8 +807,10 @@ Before merging:
 - Platforms beyond the three parts. `artist_releases` is built to take
   Discogs and the rest later; this plan populates Bandcamp (by migration),
   HÖR (by harvest) and SoundCloud (by harvest) only.
-- Backfilling SoundCloud tracks for non-approved artists. Step 11 fetches for
-  approved artists only; widening that is a cost decision, not a code one.
+- SoundCloud tracks for non-approved artists. Step 11 fetches for approved
+  artists only, and that is a **correctness** boundary rather than a budget
+  one — `sc_followee` rows are radio stations and labels whose uploads are
+  other people's music.
 - Backfilling video IDs for unbound terms — no artist page renders them, so
   the crawl would be wasted.
 - Promoting HÖR set videos into `artist_links`. The skip rule in
