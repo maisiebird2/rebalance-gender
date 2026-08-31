@@ -143,7 +143,9 @@ describe("assignPlatforms — rows that cannot be stored", () => {
 
   it("detects the platform keys that only got domains with this work", () => {
     expect(assign(["https://hoer.live/artist/someone"])).toEqual([["hoer", "primary"]]);
-    expect(assign(["https://djanes.net/dj/someone"])).toEqual([["djanes", "primary"]]);
+    expect(assign(["https://djanes.world-clubs.com/en/djanes/uncle-waffles"])).toEqual([
+      ["djanes", "primary"],
+    ]);
     expect(assign(["https://www.1001tracklists.com/dj/someone/"])).toEqual([
       ["1001tracklists", "primary"],
     ]);

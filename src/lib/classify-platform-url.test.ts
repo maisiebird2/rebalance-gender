@@ -22,7 +22,7 @@ describe("classifyPlatformUrl — shared table", () => {
       ["https://musicbrainz.org/artist/abc", "musicbrainz"],
       ["https://hoer.live/artist/someone", "hoer"],
       ["https://hoer.berlin/artist/someone", "hoer"],
-      ["https://djanes.net/dj/someone", "djanes"],
+      ["https://djanes.world-clubs.com/en/djanes/uncle-waffles", "djanes"],
       ["https://www.1001tracklists.com/dj/someone/", "1001tracklists"],
     ];
     for (const [url, platform] of cases) {
@@ -48,6 +48,18 @@ describe("classifyPlatformUrl — shared table", () => {
     expect(classifyPlatformUrl("https://itunes.apple.com/us/artist/x")).toBe("apple_music");
     expect(classifyPlatformUrl("https://last.fm/music/X")).toBe("lastfm");
     expect(classifyPlatformUrl("https://www.lastfm.de/music/X")).toBe("lastfm");
+  });
+
+  it("matches DJanes on its subdomain without claiming the site it sits on", () => {
+    // djanes.world-clubs.com is a section of a general clubs directory, so the
+    // pattern has to stop at that subdomain: world-clubs.com at large is not
+    // DJanes, and filing it there would mislabel every unrelated page on it.
+    expect(classifyPlatformUrl("https://djanes.world-clubs.com/en/djanes/uncle-waffles")).toBe(
+      "djanes"
+    );
+    expect(classifyPlatformUrl("https://www.djanes.world-clubs.com/en/djanes/x")).toBe("djanes");
+    expect(classifyPlatformUrl("https://world-clubs.com/en/clubs/berghain")).toBe("other");
+    expect(classifyPlatformUrl("https://clubs.world-clubs.com/en/x")).toBe("other");
   });
 
   it("does not false-positive on lookalike domains", () => {
