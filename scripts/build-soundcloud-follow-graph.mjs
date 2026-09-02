@@ -12,13 +12,20 @@
 //      sc_follow_edges.
 //   2. For any followed account not already in the `artists` table
 //      (matched by their SoundCloud profile URL), creates a new
-//      artist row with directory_status = 'sc_followee' and a
-//      `soundcloud` artist_links row — this is the primary mechanism
-//      by which non-directory artists (e.g. male DJs, or potential
-//      future directory members not yet discovered) enter the graph.
-//      'sc_followee' marks "discovered via the follow graph, never
-//      reviewed" — distinct from 'not_eligible', which is reserved for
-//      artists a human has actually looked at and ruled out.
+//      artist row and a `soundcloud` artist_links row — this is the
+//      primary mechanism by which non-directory artists (e.g. male DJs,
+//      or potential future directory members not yet discovered) enter
+//      the graph. The new row's directory_status depends on the
+//      followee's own SoundCloud follower count:
+//        - fewer than OBSCURE_FOLLOWER_THRESHOLD (500) followers →
+//          'obscure', i.e. intentionally hidden from the directory and
+//          not worth a reviewer's time. Everything else about the row
+//          is identical, so these artists still carry their link,
+//          enrichment, bio and follow edges into the graph.
+//        - 500 or more (or an unknown count) → 'sc_followee', which
+//          marks "discovered via the follow graph, never reviewed" —
+//          distinct from 'not_eligible', which is reserved for artists
+//          a human has actually looked at and ruled out.
 //
 // Source directory artists are NOT enriched here (as of 2026-07-11):
 // sync-soundcloud.mjs (Phase 2a) owns the full SoundCloud pull for
@@ -99,6 +106,12 @@ const maxFollowingsArg = args.find((a) => a.startsWith("--max-followings="));
 const MAX_FOLLOWINGS = maxFollowingsArg ? parseInt(maxFollowingsArg.split("=")[1], 10) : 500;
 // 0 means unlimited
 const FOLLOWINGS_CAP = MAX_FOLLOWINGS === 0 ? Infinity : MAX_FOLLOWINGS;
+
+// A newly-discovered followee with fewer than this many SoundCloud followers is
+// created as 'obscure' rather than 'sc_followee' — see the header comment.
+// A followee whose follower count is missing keeps 'sc_followee': an absent
+// count is unknown, not small, and 'sc_followee' is the reviewable status.
+const OBSCURE_FOLLOWER_THRESHOLD = 500;
 
 // ------------------------------------------------------------
 // Load .env.local
@@ -375,6 +388,7 @@ async function main() {
   let resolveFailed = 0;
   let followingsFetched = 0;
   let newArtistsCreated = 0;
+  let newObscureCreated = 0; // subset of newArtistsCreated, below the follower threshold
   let edgesWritten = 0;
   let truncatedCount = 0;
   let enrichmentUpserted = 0;
@@ -448,7 +462,7 @@ async function main() {
     // toCreate  — new accounts not yet in the DB, in followings order
     // followedMeta — all valid followed accounts, in followings order
     //               (used for edge-pair construction in pass 3)
-    const toCreate = [];   // { followed, normalized, name }
+    const toCreate = [];   // { followed, normalized, name, status }
     const followedMeta = []; // { followed, normalized }
 
     for (const followed of users) {
@@ -470,8 +484,20 @@ async function main() {
           cleanArtistName(typeof followed.username === "string" ? followed.username : "") ||
           "Unknown SoundCloud artist";
 
-        if (DEBUG) console.log(`  [debug] new artist: ${name} (${permalinkUrl})`);
-        toCreate.push({ followed, normalized, name });
+        // Followees with a small following are created as 'obscure' — hidden
+        // from the directory and not queued for review — rather than
+        // 'sc_followee'. They still get their link, enrichment, bio and follow
+        // edges, so the recommendation graph keeps them; only the status
+        // differs. A missing follower count is not treated as small.
+        const followerCount =
+          typeof followed.followers_count === "number" ? followed.followers_count : null;
+        const status =
+          followerCount !== null && followerCount < OBSCURE_FOLLOWER_THRESHOLD
+            ? "obscure"
+            : "sc_followee";
+
+        if (DEBUG) console.log(`  [debug] new artist: ${name} (${permalinkUrl}) [${status}, ${followerCount ?? "?"} followers]`);
+        toCreate.push({ followed, normalized, name, status });
       }
     }
 
@@ -494,7 +520,7 @@ async function main() {
           const { data: insertedArtists, error: insertArtistsError } = await supabaseWithRetry(() =>
             supabase
               .from("artists")
-              .insert(chunk.map((a) => ({ name: a.name, directory_status: "sc_followee" })))
+              .insert(chunk.map((a) => ({ name: a.name, directory_status: a.status })))
               .select("id")
           );
 
@@ -511,10 +537,11 @@ async function main() {
           const newCacheRows = [];
 
           for (let i = 0; i < chunk.length; i++) {
-            const { followed, normalized } = chunk[i];
+            const { followed, normalized, status } = chunk[i];
             const artistId = insertedArtists[i].id;
             scUrlToArtistId.set(normalized, artistId);
             artistsCreatedForThisSource++;
+            if (status === "obscure") newObscureCreated++;
 
             newLinks.push({
               artist_id: artistId,
@@ -616,9 +643,10 @@ async function main() {
         }
       } else {
         // DRY_RUN: synthesize placeholder ids so edge-counting still works.
-        for (const { normalized } of toCreate) {
+        for (const { normalized, status } of toCreate) {
           scUrlToArtistId.set(normalized, `dry-run:${normalized}`);
           artistsCreatedForThisSource++;
+          if (status === "obscure") newObscureCreated++;
         }
       }
 
@@ -691,6 +719,7 @@ async function main() {
   console.log(`  followings fetched:       ${followingsFetched}`);
   console.log(`  capped (more remain):     ${truncatedCount}`);
   console.log(`  new artists created:      ${newArtistsCreated}`);
+  console.log(`    of which obscure:       ${newObscureCreated} (< ${OBSCURE_FOLLOWER_THRESHOLD} followers)`);
   console.log(`  follow edges ${DRY_RUN ? "(would be) written" : "written"}:    ${edgesWritten}`);
   console.log(`  followee enrichment:      ${DRY_RUN ? "(dry run — no writes)" : enrichmentUpserted}`);
   console.log(`  followee bios:            ${DRY_RUN ? "(dry run — no writes)" : biosWritten}`);

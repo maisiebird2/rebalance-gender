@@ -1177,9 +1177,17 @@ engine. Run after Phase 3 so MusicBrainz IDs are available.
 For each approved directory artist with a SoundCloud link, fetches
 their followings (who *they* follow, never who follows them) and writes
 directed edges to `sc_follow_edges`. Also adds new artists discovered
-via followings to the `artists` table with `directory_status =
-'sc_followee'`. This is the only handler of non-directory SoundCloud
-nodes — the Phase 2a sync is directory-only.
+via followings to the `artists` table. This is the only handler of
+non-directory SoundCloud nodes — the Phase 2a sync is directory-only.
+
+**A new followee's status depends on its follower count.** Fewer than
+500 SoundCloud followers (`OBSCURE_FOLLOWER_THRESHOLD` in the script)
+means `directory_status = 'obscure'` — hidden from the directory and
+not worth a reviewer's time; 500 or more, or an unknown count, means
+`'sc_followee'`, "discovered via the follow graph, never reviewed".
+Nothing else about the row differs, so an `obscure` followee still
+carries its link, enrichment, bio and follow edges into the
+recommendation graph.
 
 **Does not enrich source (directory) artists (since 2026-07-11).** It
 resolves each source artist only to get their `urn` (for the followings
@@ -2174,7 +2182,7 @@ harvested platform is found some other way.
 
 ### Bio-based cross-source dedup
 
-`build-soundcloud-follow-graph.mjs` (7a) now stores `sc_followee` bios
+`build-soundcloud-follow-graph.mjs` (7a) now stores followee bios
 in the `biographies` table (`platform = 'soundcloud'`), alongside
 directory-artist / Discogs / Linktree bios. The motivating use case:
 HÖR imports (seeded by `integrate-hoer-artists.mjs`) often arrive
