@@ -11,7 +11,7 @@
 // Errors are returned as objects rather than thrown, so the client
 // components can surface them inline.
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { deriveHandle, resolveProfileLinkUrl } from "@/lib/profile-links";
@@ -43,10 +43,18 @@ async function requireAdminForAction(): Promise<{ error: string } | null> {
   return null;
 }
 
-// Every write touches the list, and most touch one detail page. Public
-// pages don't read organisations yet (that is phase 4), so nothing else
-// needs busting.
+// Every write touches the list, and most touch one detail page.
+//
+// The tag matters as much as the paths: getOrganisationPickerOptions() in
+// src/lib/queries.ts caches the approved-organisation list under the
+// "organisations" tag for the /submit, /artist/[id]/edit and
+// /artist/[id]/revise pickers. Without the bust, a freshly approved
+// organisation stays missing from the type-ahead for up to the cache's
+// 600-second window — and, since the cache serves stale while it
+// revalidates, one request longer again. revalidatePath() on the admin
+// routes does not reach it; only the tag does.
 function revalidateOrganisation(id?: string) {
+  revalidateTag("organisations", "max");
   revalidatePath("/admin/organisations");
   if (id) revalidatePath(`/admin/organisations/${id}`);
 }
