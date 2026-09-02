@@ -364,3 +364,71 @@ hook starts in. In rough order of preference:
 
 Whichever way it goes, [BRANCH-SAFETY.md](BRANCH-SAFETY.md) describes the
 `Bash` arm as judged "by cwd" and should say what that means for worktrees.
+
+---
+
+## 5. The `sc_followee` helpers no longer see every follow-graph node
+
+**Status:** open, and deliberately so. Created 2026-09-02, alongside the change
+that caused it.
+
+### What changed
+
+`build-soundcloud-follow-graph.mjs` used to create every newly-discovered
+followee with `directory_status = 'sc_followee'`. As of the
+`sc-followee-obscure-threshold` branch it splits them by follower count:
+fewer than 500 SoundCloud followers (`OBSCURE_FOLLOWER_THRESHOLD` in the
+script) gets `'obscure'`, and 500 or more — or an unknown count — keeps
+`'sc_followee'`.
+
+Nothing else about those rows differs. An `obscure` followee still gets its
+`soundcloud` `artist_links` row, its minimal `artist_enrichment`, its
+`biographies` row, its `api_response_cache` payload and its `sc_follow_edges`,
+so the recommendation graph is untouched. Only the status moved.
+
+### Why it needs following up
+
+Four places filter on `directory_status = 'sc_followee'` to mean "a node the
+follow graph discovered". Each now silently covers a shrinking share of them,
+since every future low-follower followee lands outside the filter:
+
+| Site | What it does | What it now misses |
+|---|---|---|
+| `scripts/find-sc-followee-duplicates.sql:38` | Finds followees whose SoundCloud permalink matches an approved artist's link — i.e. the same artist entered twice | Duplicates where the follow-graph copy is `obscure` |
+| `src/lib/reports.ts:61` | The same query again, embedded for the admin report | As above, in the live app |
+| `scripts/resolve-sc-followee-duplicates.mjs:205,436` | Merges the duplicates that report surfaces, and guards the delete on the status at line 436 | The merge skips `obscure` duplicates; the guard would refuse them even if they were passed in |
+| `scripts/backfill-sc-followee-names.mjs:125` | Repairs followee names that captured `full_name` instead of `username` | Nothing today — the underlying bug is fixed, so this is a historical repair over existing rows, all of which predate the split |
+
+The duplicate pair is the one that matters. A low-follower account is *more*
+likely to be a duplicate of an approved artist, not less — a directory artist's
+secondary or regional profile is exactly the kind of account that sits under
+500 followers. So the split pushes precisely the interesting cases out of the
+report that exists to catch them.
+
+`scripts/export-hoer-sc-followees.mjs:74` carries the same filter but needs
+nothing: it backed a one-off HÖR review that has since been applied.
+`scripts/orchestrate-platform-enrichment.mjs:99` only mentions the status in
+prose, describing what dominates the non-`--approved` set; that stays true.
+
+### What a fix would have to do
+
+Decide once what "a follow-graph node" means in a query, then apply it in all
+four places rather than one at a time. The candidates:
+
+- **Widen the filter to `in ('sc_followee', 'obscure')`.** Smallest change, and
+  right for the duplicate work, where `obscure` rows are wanted. Note that
+  `obscure` is not exclusively a follow-graph status — it predates this change
+  and is also set by hand during review — so a widened filter picks up
+  human-marked artists too. Harmless for duplicate detection; think again
+  before reusing the same predicate elsewhere.
+- **Filter on the evidence instead of the status.** A follow-graph node is one
+  with an `api_response_cache` row in namespace `soundcloud_user`, which is
+  what `find-sc-followee-duplicates.sql` already joins to. That makes the
+  status irrelevant to the question and is the more honest predicate, at the
+  cost of a slightly heavier query.
+- **Leave `resolve-sc-followee-duplicates.mjs:436` narrow either way.** That
+  line is a delete guard, not a selector. Whatever the search widens to, the
+  guard should stay as tight as the rows actually being merged.
+
+None of it is urgent: the count of affected rows is zero until the builder next
+runs against unprocessed source artists, and it grows only from there.
