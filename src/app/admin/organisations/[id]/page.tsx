@@ -17,6 +17,26 @@ import MergeOrganisationForm from "../MergeOrganisationForm";
 
 export const dynamic = "force-dynamic";
 
+// Same treatment the artist admin page gives its tab title: a service-role
+// read of just the name, so the tab says which organisation this is rather
+// than repeating the site name on every admin page.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const { data } = await getSupabaseAdminClient()
+    .from("organisations")
+    .select("name")
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return {};
+  return {
+    title: `${data.name} | Rebalance Gender`,
+  };
+}
+
 export default async function AdminOrganisationPage({
   params,
 }: {
