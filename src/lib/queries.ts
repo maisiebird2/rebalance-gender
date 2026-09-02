@@ -797,6 +797,12 @@ export async function getOrganisationById(
  * writing, ~240 once the backfill queue is worked through), which is how the
  * genre picker does it too — so there is no autocomplete endpoint to build,
  * rate-limit or protect.
+ *
+ * The "organisations" tag is what makes an approval show up in the pickers
+ * straight away; every write in src/app/admin/organisations/actions.ts busts
+ * it through revalidateOrganisation(). The `revalidate` window below is only
+ * the backstop for changes made outside the app, such as SQL run by hand in
+ * the Supabase editor.
  */
 async function computeOrganisationPickerOptions(): Promise<OrganisationSummary[]> {
   const { data, error } = await getSupabaseClient()
