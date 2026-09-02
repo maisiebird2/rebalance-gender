@@ -63,6 +63,7 @@
 //   npm run resolve-link-redirects                      # rewrite live rows
 //   npm run resolve-link-redirects -- --delete-duplicates  # also drop redundant copies
 //   npm run resolve-link-redirects -- --host=goo.gl     # one host only
+//   npm run resolve-link-redirects -- --approved        # live directory artists only
 //   npm run resolve-link-redirects -- --artist=<uuid>   # one artist
 //   npm run resolve-link-redirects -- --ids=12,34       # specific artist_links rows
 //   npm run resolve-link-redirects -- --limit=20        # cap rows examined
@@ -102,6 +103,16 @@ const DRY_RUN = args.includes("--dry-run") || process.env.DRY_RUN === "1";
 // right platform. Opt-in because everything else here rewrites rather than
 // removes, and that difference should be visible in the command you typed.
 const DELETE_DUPLICATES = args.includes("--delete-duplicates");
+// Restricts the scan to links belonging to artists in the live directory
+// (directory_status = 'approved', not soft-deleted) — the same flag name
+// sync-linktree.mjs and scrape-images.ts use for the same restriction.
+//
+// Every row costs a network round trip, and most of artist_links hangs off
+// artists no page renders yet. When the point of the run is the links people
+// can actually click, this is the cheap version of it. It is a narrowing, not
+// a correctness fix: the unfiltered run remains the one that drains every
+// after() that never ran, so it is still worth running eventually.
+const APPROVED_ONLY = args.includes("--approved");
 
 const valueArg = (name) => {
   const found = args.find((a) => a.startsWith(`--${name}=`));
@@ -282,6 +293,9 @@ async function main() {
     scope = { ids };
     console.log(`--ids: restricting to ${ids.length} row(s)`);
   }
+  if (APPROVED_ONLY) {
+    console.log("--approved: restricting to artists in the live directory (directory_status='approved').");
+  }
   if (HOST) console.log(`--host: restricting to URLs containing "${HOST}"`);
   if (LIMIT) console.log(`--limit: examining at most ${LIMIT} row(s)`);
   console.log("");
@@ -290,6 +304,7 @@ async function main() {
   const report = await resolveArtistLinks(supabase, scope, {
     dryRun: DRY_RUN,
     host: HOST ?? undefined,
+    approvedOnly: APPROVED_ONLY,
     limit: LIMIT ?? undefined,
     delayMs: DELAY_MS,
     deleteDuplicates: DELETE_DUPLICATES,
