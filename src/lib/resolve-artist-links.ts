@@ -106,6 +106,18 @@ export interface ResolveArtistLinksOptions {
   dryRun?: boolean;
   /** Only rows whose URL contains this host. Backfill convenience. */
   host?: string;
+  /**
+   * Only rows belonging to an artist in the live directory
+   * (`directory_status = 'approved'`, not soft-deleted).
+   *
+   * A backfill convenience, not a policy: resolution is just as correct for a
+   * pending or `sc_followee` artist, and the unfiltered run is still the one
+   * that drains every after() that never ran. But most of artist_links hangs
+   * off artists nobody can see yet, and each row costs a network round trip —
+   * so when the point of the run is "fix the links on the pages people
+   * actually load", this cuts the work to those rows.
+   */
+  approvedOnly?: boolean;
   /** Cap on rows examined, for testing against production data. */
   limit?: number;
   /** Pause between network calls. Defaults to 150ms, matching the throttle the
@@ -191,12 +203,13 @@ export async function resolveArtistLinks(
     delayMs = DEFAULT_DELAY_MS,
     limit,
     host,
+    approvedOnly = false,
     resolve,
     deleteDuplicates = false,
     onProgress,
   } = opts;
 
-  const candidates = await fetchCandidates(client, scope, { host, limit });
+  const candidates = await fetchCandidates(client, scope, { host, limit, approvedOnly });
   const updated: RowOutcome[] = [];
   const skipped: RowOutcome[] = [];
   const deleted: RowOutcome[] = [];
@@ -474,16 +487,25 @@ const slotKey = (artistId: string, platform: string) => `${artistId}|${platform}
 async function fetchCandidates(
   client: SupabaseClient,
   scope: ResolveScope,
-  opts: { host?: string; limit?: number }
+  opts: { host?: string; limit?: number; approvedOnly?: boolean }
 ): Promise<ArtistLinkRow[]> {
   const hosts = opts.host ? [opts.host] : resolvableHosts();
   const orFilter = hosts.map((h) => `url.ilike.%${h}%`).join(",");
+  // The embedded artists row is only there to be filtered on, so it is joined
+  // in solely when asked — an unconditional !inner would change the default
+  // scan's shape (and its cost) for every caller to serve one flag.
+  // Typed as a plain string rather than a literal: supabase-js parses literal
+  // column lists at the type level and rejects a union of two of them, so the
+  // row type is recovered by the cast below (the same trade queries.ts makes).
+  const columns: string = opts.approvedOnly
+    ? "id, artist_id, platform, url, original_url, artists!inner(directory_status, deleted)"
+    : "id, artist_id, platform, url, original_url";
 
   const rows: ArtistLinkRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     let query = client
       .from("artist_links")
-      .select("id, artist_id, platform, url, original_url")
+      .select(columns)
       .not("url", "is", null)
       .or(orFilter)
       .order("id")
@@ -491,11 +513,17 @@ async function fetchCandidates(
 
     if ("artistId" in scope) query = query.eq("artist_id", scope.artistId);
     else if ("ids" in scope) query = query.in("id", scope.ids);
+    // Soft-deleted artists are excluded alongside the status check: a deleted
+    // row keeps whatever directory_status it had, so approved-and-deleted is a
+    // real combination, and it is not on the site either.
+    if (opts.approvedOnly) {
+      query = query.eq("artists.directory_status", "approved").eq("artists.deleted", false);
+    }
 
     const { data, error } = await query;
     if (error) throw new Error(`Could not read artist_links: ${error.message}`);
 
-    rows.push(...(data as ArtistLinkRow[]));
+    rows.push(...((data ?? []) as unknown as ArtistLinkRow[]));
     if (data.length < PAGE_SIZE) break;
   }
 

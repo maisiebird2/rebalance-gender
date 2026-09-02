@@ -34,9 +34,18 @@ interface FakeRow {
   original_url: string | null;
 }
 
+interface FakeArtist {
+  directory_status: string;
+  deleted: boolean;
+}
+
 interface FakeDb {
   links: FakeRow[];
   platforms: string[];
+  /** Only consulted by the artists!inner join --approved builds. An artist with
+   *  no entry here is treated as approved and undeleted, so the tests that
+   *  don't care about directory status don't have to declare one. */
+  artists?: Record<string, FakeArtist>;
   updateError?: string;
   deleteError?: string;
 }
@@ -145,7 +154,24 @@ function fakeClient(db: FakeDb) {
       if (this.orHosts.length) {
         rows = rows.filter((r) => this.orHosts.some((h) => r.url.toLowerCase().includes(h)));
       }
-      for (const [col, val] of this.eqs) rows = rows.filter((r) => r[col as keyof FakeRow] === val);
+      for (const [col, val] of this.eqs) {
+        // "artists.directory_status" and friends filter the EMBEDDED row, and
+        // PostgREST only lets them drop the parent when the join is !inner.
+        // Asserting that here is the point of modelling the join at all: a
+        // filter on a non-inner embed silently keeps every row.
+        if (col.startsWith("artists.")) {
+          if (!this.cols.includes("artists!inner")) {
+            throw new Error(`filtered on ${col} without an !inner join on artists`);
+          }
+          const field = col.slice("artists.".length) as keyof FakeArtist;
+          rows = rows.filter((r) => {
+            const artist = db.artists?.[r.artist_id] ?? { directory_status: "approved", deleted: false };
+            return artist[field] === val;
+          });
+          continue;
+        }
+        rows = rows.filter((r) => r[col as keyof FakeRow] === val);
+      }
       for (const [col, vals] of this.ins) {
         rows = rows.filter((r) => vals.includes(r[col as keyof FakeRow]));
       }
@@ -238,6 +264,57 @@ describe("resolveArtistLinks — scanning", () => {
     });
     expect((await resolveArtistLinks(client, { ids: [2] }, NO_DELAY)).examined).toBe(1);
     expect((await resolveArtistLinks(client, { all: true }, { ...NO_DELAY, limit: 1 })).examined).toBe(1);
+  });
+
+  it("examines every artist's links by default", async () => {
+    mockNetwork({
+      "https://on.soundcloud.com/aaa": { location: "https://soundcloud.com/a" },
+      "https://on.soundcloud.com/bbb": { location: "https://soundcloud.com/b" },
+      "https://on.soundcloud.com/ccc": { location: "https://soundcloud.com/c" },
+    });
+    const { client } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      artists: {
+        "artist-live": { directory_status: "approved", deleted: false },
+        "artist-pending": { directory_status: "pending", deleted: false },
+        "artist-gone": { directory_status: "approved", deleted: true },
+      },
+      links: [
+        link({ id: 1, artist_id: "artist-live", platform: "soundcloud", url: "https://on.soundcloud.com/aaa" }),
+        link({ id: 2, artist_id: "artist-pending", platform: "soundcloud", url: "https://on.soundcloud.com/bbb" }),
+        link({ id: 3, artist_id: "artist-gone", platform: "soundcloud", url: "https://on.soundcloud.com/ccc" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, NO_DELAY);
+    expect(report.examined).toBe(3);
+  });
+
+  it("honours approvedOnly, skipping pending and soft-deleted artists", async () => {
+    mockNetwork({
+      "https://on.soundcloud.com/aaa": { location: "https://soundcloud.com/a" },
+      "https://on.soundcloud.com/bbb": { location: "https://soundcloud.com/b" },
+      "https://on.soundcloud.com/ccc": { location: "https://soundcloud.com/c" },
+    });
+    const { client, updates } = fakeClient({
+      platforms: ALL_PLATFORMS,
+      artists: {
+        "artist-live": { directory_status: "approved", deleted: false },
+        "artist-pending": { directory_status: "pending", deleted: false },
+        // Approved but soft-deleted: off the site, so off this run too.
+        "artist-gone": { directory_status: "approved", deleted: true },
+      },
+      links: [
+        link({ id: 1, artist_id: "artist-live", platform: "soundcloud", url: "https://on.soundcloud.com/aaa" }),
+        link({ id: 2, artist_id: "artist-pending", platform: "soundcloud", url: "https://on.soundcloud.com/bbb" }),
+        link({ id: 3, artist_id: "artist-gone", platform: "soundcloud", url: "https://on.soundcloud.com/ccc" }),
+      ],
+    });
+
+    const report = await resolveArtistLinks(client, { all: true }, { ...NO_DELAY, approvedOnly: true });
+    expect(report.examined).toBe(1);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(1);
   });
 });
 

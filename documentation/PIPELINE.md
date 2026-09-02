@@ -825,9 +825,19 @@ npm run resolve-link-redirects -- --dry-run            # report only
 npm run resolve-link-redirects                         # rewrite live rows
 npm run resolve-link-redirects -- --delete-duplicates  # also drop redundant copies
 npm run resolve-link-redirects -- --host=goo.gl        # one host only
+npm run resolve-link-redirects -- --approved           # live directory artists only
 npm run resolve-link-redirects -- --artist=<uuid>      # one artist
 npm run resolve-link-redirects -- --ids=12,34          # specific rows
 ```
+
+`--approved` restricts the scan to links whose artist is in the live
+directory (`directory_status = 'approved'` and not soft-deleted), the
+same meaning the flag has in `sync-linktree.mjs` and `scrape-images.ts`.
+Every row costs a network round trip and most of `artist_links` hangs
+off artists no page renders yet, so this is the cheap run when the point
+is the links people can actually click. It narrows the scan, it does not
+change any decision — the unfiltered run is still the one that drains
+every `after()` that never fired, so it stays worth running eventually.
 
 **There is no queue table**, and that is the point: the set of rows
 needing resolution is exactly "rows whose host is in the tier table",

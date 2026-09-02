@@ -517,6 +517,7 @@ argument parsing, scope selection, reporting. All logic lives in Module 2.
 npm run resolve-link-redirects -- --dry-run         # report only, no writes
 npm run resolve-link-redirects                      # rewrite live rows
 npm run resolve-link-redirects -- --host=goo.gl     # one host only
+npm run resolve-link-redirects -- --approved        # live directory artists only
 npm run resolve-link-redirects -- --artist=<uuid>   # one artist
 npm run resolve-link-redirects -- --ids=12,34       # specific artist_links rows
 npm run resolve-link-redirects -- --limit=20        # cap rows examined
