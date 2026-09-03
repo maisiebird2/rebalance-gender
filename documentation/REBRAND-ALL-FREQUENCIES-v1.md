@@ -1,4 +1,8 @@
-# Rebrand plan — Rebalance Gender → All Frequencies
+# Rebrand plan — Rebalance Gender → All Frequencies (v1)
+
+> **Status: superseded by [REBRAND-ALL-FREQUENCIES-v2.md](REBRAND-ALL-FREQUENCIES-v2.md)**
+> (2026-09-03). Kept unchanged for the record; nothing below has been
+> executed. The v2 header lists what it corrects and adds.
 
 Moving the site from **Rebalance Gender** at `rebalance-gender.app` to
 **All Frequencies** at `allfrequencies.app`: the name, the logo, the domain,
