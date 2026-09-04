@@ -101,6 +101,18 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 // ------------------------------------------------------------
 const PAGE_SIZE = 1000
 
+// Max IDs to inline into a single PostgREST filter. The directory has grown
+// past 2000 approved artists; passing every ID in one `.in(...)`/`.or(...)`
+// filter builds a URL long enough that PostgREST rejects it ("Bad Request")
+// or the request fails outright. Chunking the ID list keeps each URL short.
+const ID_CHUNK = 100
+
+function chunkArray(arr, size) {
+  const out = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 async function fetchAllPages(buildQuery) {
   const rows = []
   let from = 0
@@ -110,6 +122,25 @@ async function fetchAllPages(buildQuery) {
     rows.push(...data)
     if (data.length < PAGE_SIZE) break
     from += PAGE_SIZE
+  }
+  return rows
+}
+
+// Fetch every row of `table` (selecting `columns`) where `column` ∈ ids,
+// batching ids into ID_CHUNK-sized groups so no single request URL grows too
+// long. Each chunk is independently paginated via fetchAllPages.
+async function fetchByIdBatches(table, columns, column, ids) {
+  const rows = []
+  for (const chunk of chunkArray([...ids], ID_CHUNK)) {
+    const part = await fetchAllPages(from =>
+      supabase
+        .from(table)
+        .select(columns)
+        .in(column, chunk)
+        .order(column)
+        .range(from, from + PAGE_SIZE - 1)
+    )
+    rows.push(...part)
   }
   return rows
 }
@@ -149,31 +180,19 @@ async function loadDirectoryArtists() {
 }
 
 async function loadArtistGenres(dirIds) {
-  const rows = await fetchAllPages(from =>
-    supabase
-      .from('artist_genres')
-      .select('artist_id, genre')
-      .in('artist_id', [...dirIds])
-      .order('artist_id')
-      .range(from, from + PAGE_SIZE - 1)
-  )
+  // artist_genres stores genre_id (FK to genres), not a genre name. The id is a
+  // stable per-genre identifier, which is all Jaccard set-intersection needs.
+  const rows = await fetchByIdBatches('artist_genres', 'artist_id, genre_id', 'artist_id', dirIds)
   const map = new Map()
-  for (const { artist_id, genre } of rows) {
+  for (const { artist_id, genre_id } of rows) {
     if (!map.has(artist_id)) map.set(artist_id, new Set())
-    map.get(artist_id).add(genre)
+    map.get(artist_id).add(genre_id)
   }
   return map
 }
 
 async function loadMbTags(dirIds) {
-  const rows = await fetchAllPages(from =>
-    supabase
-      .from('mb_tags')
-      .select('artist_id, tag')
-      .in('artist_id', [...dirIds])
-      .order('artist_id')
-      .range(from, from + PAGE_SIZE - 1)
-  )
+  const rows = await fetchByIdBatches('mb_tags', 'artist_id, tag', 'artist_id', dirIds)
   const map = new Map()
   for (const { artist_id, tag } of rows) {
     if (!map.has(artist_id)) map.set(artist_id, new Set())
@@ -187,28 +206,43 @@ async function loadMbCollabs(dirIds) {
   // artist_id_a < artist_id_b means rows are already canonical). The
   // `collaborations` table now unions MusicBrainz and Discogs edges; a
   // pair present under either source collapses into the same set entry.
-  const rows = await fetchAllPages(from =>
-    supabase
-      .from('collaborations')
-      .select('artist_id_a, artist_id_b')
-      .or(`artist_id_a.in.(${[...dirIds].join(',')}),artist_id_b.in.(${[...dirIds].join(',')})`)
-      .order('artist_id_a')
-      .range(from, from + PAGE_SIZE - 1)
-  )
-  return new Set(rows.map(r => pairKey(r.artist_id_a, r.artist_id_b)))
+  // Chunk the ID list to keep each `.or(...)` URL short. A pair straddling two
+  // chunks is fetched in both, but the pairKey Set dedups it; no pair is missed.
+  const pairs = new Set()
+  for (const chunk of chunkArray([...dirIds], ID_CHUNK)) {
+    const list = chunk.join(',')
+    const part = await fetchAllPages(from =>
+      supabase
+        .from('collaborations')
+        .select('artist_id_a, artist_id_b')
+        .or(`artist_id_a.in.(${list}),artist_id_b.in.(${list})`)
+        .order('artist_id_a')
+        .range(from, from + PAGE_SIZE - 1)
+    )
+    for (const r of part) pairs.add(pairKey(r.artist_id_a, r.artist_id_b))
+  }
+  return pairs
 }
 
 async function loadScFollowEdges(dirIds) {
-  // follower_artist_id is always a directory artist; we filter followed to dir artists too
-  const rows = await fetchAllPages(from =>
-    supabase
-      .from('sc_follow_edges')
-      .select('follower_artist_id, followed_artist_id')
-      .in('follower_artist_id', [...dirIds])
-      .in('followed_artist_id', [...dirIds])
-      .order('follower_artist_id')
-      .range(from, from + PAGE_SIZE - 1)
-  )
+  // Chunk the follower filter to keep URLs short. The followed side can't also
+  // be an inline `.in(...)` (2000+ IDs is too long), so we filter it in JS
+  // against the dirIds Set — keeping only edges between two directory artists.
+  const dirSet = dirIds instanceof Set ? dirIds : new Set(dirIds)
+  const rows = []
+  for (const chunk of chunkArray([...dirIds], ID_CHUNK)) {
+    const part = await fetchAllPages(from =>
+      supabase
+        .from('sc_follow_edges')
+        .select('follower_artist_id, followed_artist_id')
+        .in('follower_artist_id', chunk)
+        .order('follower_artist_id')
+        .range(from, from + PAGE_SIZE - 1)
+    )
+    for (const r of part) {
+      if (dirSet.has(r.followed_artist_id)) rows.push(r)
+    }
+  }
 
   // Direct follow edges as a Set of "follower|followed"
   const dirEdges = new Set(rows.map(r => `${r.follower_artist_id}|${r.followed_artist_id}`))
