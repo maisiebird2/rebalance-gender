@@ -25,7 +25,9 @@ describe("linkEditorStateFromLinks", () => {
   });
 
   it("carries the stored platform, so a loaded row keeps it", () => {
-    const s = linkEditorStateFromLinks([{ platform: "djanes", url: "https://djanes.net/dj/x" }]);
+    const s = linkEditorStateFromLinks([
+      { platform: "djanes", url: "https://djanes.world-clubs.com/en/djanes/x" },
+    ]);
     expect(s.rows[0].storedPlatform).toBe("djanes");
   });
 

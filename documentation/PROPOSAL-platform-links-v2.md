@@ -21,6 +21,11 @@
 >   query on it. The stored `handle` stays keyed to the STORED platform, so a
 >   row's handle and platform never disagree.
 >
+> **Corrected 2026-08-30:** the `djanes` domain added with this work was
+> wrong. DJanes lives at `djanes.world-clubs.com`, a subdomain of a general
+> clubs directory — not at `djanes.net`, which was a guess. The pattern is
+> anchored to that subdomain so it cannot claim `world-clubs.com` at large.
+>
 > One thing §2 gets wrong about the schema: `artist_links` carried **two**
 > unique constraints, not one. `artist_links_artist_platform_unique` was
 > replaced as planned; `artist_links_artist_id_platform_url_key`

@@ -53,12 +53,17 @@ const DOMAIN_PLATFORM_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/(^|\.)wikipedia\.org$/i, "wikipedia"],
   // Tracked platform keys that had no entry here until the paste-to-detect
   // work (documentation/PROPOSAL-platform-links-v2.md §3): without them a
-  // pasted hoer.live/djanes.net/1001tracklists.com URL would fall through to
-  // "other" even though the platform is one this project displays. The HOER
-  // harvester still skips hoer.* — CLASSIFY_CONFIGS.hoer's skip list is
-  // consulted before this table.
+  // pasted HÖR/DJanes/1001Tracklists URL would fall through to "other" even
+  // though the platform is one this project displays. The HÖR harvester still
+  // skips hoer.* — CLASSIFY_CONFIGS.hoer's skip list is consulted before this
+  // table.
+  //
+  // DJanes is the odd one out: it lives at djanes.world-clubs.com, a SUBDOMAIN
+  // of a general clubs directory. The pattern is anchored to that subdomain
+  // deliberately — matching world-clubs.com at large would file every unrelated
+  // page on that site under "djanes".
   [/(^|\.)hoer\.(live|berlin)$/i, "hoer"],
-  [/(^|\.)djanes\.net$/i, "djanes"],
+  [/(^|\.)djanes\.world-clubs\.com$/i, "djanes"],
   [/(^|\.)1001tracklists\.com$/i, "1001tracklists"],
   // Mixcloud is a real music platform but deliberately NOT a tracked platform
   // key, so it lands in "other" by default. sync-linktree overrides it to a
