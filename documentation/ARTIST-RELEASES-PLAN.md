@@ -170,10 +170,46 @@ Pure refactor. Nothing on the page should change.
 | `src/lib/types.ts` | Add `ArtistRelease`; keep `BandcampAlbum` until the last reader is gone |
 | `src/lib/queries.ts` | `releases:artist_releases(*)` in **`ARTIST_SELECT` only** — not `CARD_SELECT`, which deliberately omits heavy relations the grid never renders |
 | `src/components/BandcampWidget.tsx` | Take `releases` filtered to `platform === "bandcamp"`; build the embed from `release_type` + `embed_id` instead of `item_type` + `bandcamp_id` |
-| `scripts/sync-bandcamp.mjs` | Write `artist_releases` on conflict `(artist_id, platform, external_id)` |
+| `scripts/sync-bandcamp.mjs` | Write `artist_releases` on conflict `(artist_id, platform, external_id)`, and **stop writing `track_count`** (below) |
 
 Retire `artist_bandcamp_albums` only once nothing reads it: drop it in a
 follow-up migration, not this one, so a rollback does not lose data.
+
+### Drop the Bandcamp `track_count` write
+
+`sync-bandcamp.mjs` currently writes
+`track_count: albums.length || null` to `artist_enrichment`. **It is not a
+count of tracks, and not a count of albums either** — `parseMusicGrid` matches
+`data-item-id="(album|track)-(\d+)"`, so the variable named `albums` holds
+every discography grid item of both kinds, and the column ends up holding a
+count of *releases*. The script's own logging has it right (`N release(s)`,
+`total albums/tracks:`); only the column name is wrong.
+
+Three reasons not to carry it across:
+
+- **It undercounts tracks.** A 12-track album contributes 1.
+- **It is not comparable across platforms.** SoundCloud writes SoundCloud's own
+  `user.track_count`, which really is individual uploads. The same column
+  therefore means "releases" on one row and "tracks" on another.
+- **The two writers disagree about zero.** Bandcamp's `|| null` turns an empty
+  discography into `NULL`; SoundCloud's `?? null` preserves a real `0`. That
+  difference is load-bearing — [`page.tsx`](../src/app/artist/[id]/page.tsx)
+  keys the zero-upload playlist fallback on `track_count === 0`, a state the
+  Bandcamp row can never reach.
+
+Nothing reads the Bandcamp value today — every reader of `track_count` in the
+repo is SoundCloud-scoped — so removing the write is safe and changes no
+behaviour. Once releases are rows, the count is a query rather than a stored
+number, and it can no longer drift out of step with them:
+
+```sql
+SELECT release_type, count(*) FROM artist_releases
+WHERE artist_id = $1 AND platform = 'bandcamp' GROUP BY release_type;
+```
+
+`track_count` stays on `artist_enrichment` for SoundCloud, where it is a
+genuine property of the account rather than of its releases — same conclusion
+as step 13.
 
 **Ship and verify Part A before starting Part B.** An artist page with Bandcamp
 releases must look identical before and after.
@@ -762,7 +798,9 @@ Before merging:
 - [ ] `sync-bandcamp.mjs` re-run is idempotent: no duplicate rows on the
       `(artist_id, platform, external_id)` key.
 - [ ] Row counts match: `artist_releases WHERE platform = 'bandcamp'` equals
-      `artist_bandcamp_albums`.
+      `artist_bandcamp_albums`, and the album/track split matches `item_type`.
+- [ ] The Bandcamp `track_count` write is gone, and the SoundCloud one still
+      stores a real `0` — the zero-upload playlist fallback must still fire.
 
 **Part B.**
 
