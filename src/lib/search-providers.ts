@@ -18,6 +18,8 @@
 // by platforms.search_url_template.
 // ============================================================
 
+import { API_UA } from "./user-agent";
+
 export interface LinkCandidate {
   /** Display name of the profile on the external platform. */
   name: string;
@@ -33,9 +35,7 @@ const MAX_CANDIDATES = 3;
 const TIMEOUT_MS = 8000;
 
 // MusicBrainz (and politeness elsewhere) requires an identifying UA.
-const USER_AGENT = `RebalanceGenderDirectory/1.0 (${
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://rebalance-gender.app"
-})`;
+const USER_AGENT = API_UA;
 
 async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {

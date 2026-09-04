@@ -6,7 +6,7 @@
  *
  * Required env vars:
  *   RESEND_API_KEY        — Resend API key (server-only)
- *   NEXT_PUBLIC_SITE_URL  — full origin, e.g. https://womeninelectronicmusic.com
+ *   NEXT_PUBLIC_SITE_URL  — full origin, e.g. https://allfrequencies.app
  */
 
 import { Resend } from "resend";
@@ -51,8 +51,8 @@ export async function sendVerificationEmail(
 
   const intro =
     kind === "artist"
-      ? "Thanks for submitting an artist to the Women in Electronic Music directory."
-      : `Thanks for submitting a revision for <strong>${extra?.artistName ?? "an artist"}</strong> in the Women in Electronic Music directory.`;
+      ? "Thanks for submitting an artist to the All Frequencies directory."
+      : `Thanks for submitting a revision for <strong>${extra?.artistName ?? "an artist"}</strong> in the All Frequencies directory.`;
 
   const html = `
     <p>${intro}</p>
@@ -73,12 +73,15 @@ export async function sendVerificationEmail(
   `;
 
   const text =
-    `${kind === "artist" ? "Thanks for submitting an artist" : `Thanks for submitting a revision for ${extra?.artistName ?? "an artist"}`} to the Women in Electronic Music directory.\n\n` +
+    `${kind === "artist" ? "Thanks for submitting an artist" : `Thanks for submitting a revision for ${extra?.artistName ?? "an artist"}`} to the All Frequencies directory.\n\n` +
     `Please confirm your email by visiting this link (expires in 48 hours):\n${verifyUrl}\n\n` +
     `If you didn't submit anything, you can ignore this email.`;
 
+  // Display-name form, so mail clients show the site rather than "noreply".
+  // RESEND_FROM_ADDRESS itself stays a bare address: Supabase SMTP needs it
+  // bare (documentation/OPERATIONS.md).
   const { error } = await getResend().emails.send({
-    from: FROM_ADDRESS,
+    from: `All Frequencies <${FROM_ADDRESS}>`,
     to: email,
     subject,
     html,

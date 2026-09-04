@@ -88,6 +88,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { outputPath } from "./lib/output-path.mjs";
 import { resolveArtistLinks } from "../src/lib/resolve-artist-links.js";
+import { siteUrl } from "./lib/site-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -160,9 +161,9 @@ loadEnvLocal();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-// Base origin for the artist edit links written into the CSV. Mirrors the
-// fallback used across src/ (e.g. src/app/layout.tsx).
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+// Base origin for the artist edit links written into the CSV. Same env var
+// and fallback as the site (src/lib/site-url.ts).
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(

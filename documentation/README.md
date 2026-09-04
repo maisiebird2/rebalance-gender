@@ -27,7 +27,7 @@ too — see [CLAUDE.md](../CLAUDE.md) at the repo root.
 
 | Doc | What it covers |
 |---|---|
-| [REBRAND-ALL-FREQUENCIES-v2.md](REBRAND-ALL-FREQUENCIES-v2.md) | Rebranding the site to **All Frequencies** at `allfrequencies.app` — name, logo, domain, repo, and the external services that hold the old name. Current plan |
+| [REBRAND-ALL-FREQUENCIES-v2.md](REBRAND-ALL-FREQUENCIES-v2.md) | Rebranding the site to **All Frequencies** at `allfrequencies.app` — name, logo, domain, repo, and the external services that hold the old name. Current plan; the code steps are done and the steps outside the repo are listed under Progress |
 | [REBRAND-ALL-FREQUENCIES-v1.md](REBRAND-ALL-FREQUENCIES-v1.md) | First draft of the rebrand plan — superseded by v2, kept for the record |
 | [GROUPS.md](GROUPS.md) | Duos, bands and collectives as directory entries — a `group` artist type, a members list, and no pronouns field |
 | [HOER-SYNC-REWORK-PLAN.md](HOER-SYNC-REWORK-PLAN.md) | HÖR sync rework |

@@ -20,7 +20,7 @@ missing-links pages.
 - **Provider:** Supabase Auth (email + password). There is **no public
   sign-up** — the app has no registration flow. Users are provisioned by
   hand in the Supabase dashboard under **Authentication → Users**.
-- The app login at `https://www.rebalance-gender.app/login` authenticates
+- The app login at `https://allfrequencies.app/login` authenticates
   against a *user row in this project's Auth system*. That is **separate**
   from your Supabase **account** login at supabase.com (the dashboard). They
   are independent accounts that may happen to share a password — changing one
@@ -72,8 +72,8 @@ These make the recovery flow actually reach the app. All under
 
 | Setting | Value |
 |---|---|
-| **Site URL** | `https://www.rebalance-gender.app` (NOT `localhost:3000`) |
-| **Redirect URLs** | add `https://www.rebalance-gender.app/reset-password` (keep `http://localhost:3000/**` for local dev) |
+| **Site URL** | `https://allfrequencies.app` (NOT `localhost:3000`) |
+| **Redirect URLs** | add `https://allfrequencies.app/reset-password` (keep `http://localhost:3000/**` for local dev) |
 
 If Site URL is left on `localhost:3000`, recovery links redirect to your
 local machine and appear to "do nothing."
@@ -105,8 +105,8 @@ SMTP** under **Authentication → Emails → SMTP Settings** and enter:
 
 | Field | Value |
 |---|---|
-| Sender email | `noreply@rebalance-gender.app` (`RESEND_FROM_ADDRESS`; a verified Resend domain) |
-| Sender name | e.g. `Rebalance Gender` |
+| Sender email | `noreply@allfrequencies.app` (`RESEND_FROM_ADDRESS`; a verified Resend domain) |
+| Sender name | `All Frequencies` |
 | Host | `smtp.resend.com` |
 | Port | `465` (or `587` if 465 is blocked) |
 | Username | `resend` (literally — not an email address) |
@@ -125,4 +125,4 @@ See CONTEXT.md for the full table. Auth email specifically uses:
 | Variable | Notes |
 |---|---|
 | `RESEND_API_KEY` | Resend API key; doubles as the SMTP password. Server-only, never committed. |
-| `RESEND_FROM_ADDRESS` | Verified sender, e.g. `noreply@rebalance-gender.app`. Also the SMTP sender email. |
+| `RESEND_FROM_ADDRESS` | Verified sender, e.g. `noreply@allfrequencies.app`, kept a bare address (the display name is added in `src/lib/email.ts`). Also the SMTP sender email. |

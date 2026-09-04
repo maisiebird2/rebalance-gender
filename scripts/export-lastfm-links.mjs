@@ -40,6 +40,7 @@ import fs from "node:fs";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { buildOds } from "../src/lib/ods.ts";
 import { outputPath } from "./lib/output-path.mjs";
+import { siteUrl } from "./lib/site-url.mjs";
 
 // ── CLI args ────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -53,7 +54,7 @@ const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "")
 const OUT = argValue("out", `lastfm-links-${stamp}.ods`);
 
 loadEnvLocal();
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.rebalance-gender.app").replace(/\/+$/, "");
+const SITE_URL = siteUrl();
 const supabase = createSupabase();
 const fetchAll = makeFetchAll(supabase);
 

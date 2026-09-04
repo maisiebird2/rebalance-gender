@@ -65,7 +65,7 @@ having to infer it during review. Without this the group fields would never
 appear on a public form at all.
 
 **4. A member URL resolves to a real foreign key.** Pasting an artist's
-Rebalance Gender URL stores that artist's id, so the group page renders a
+All Frequencies URL stores that artist's id, so the group page renders a
 live link and the reverse "member of" view becomes possible later. A row with
 no URL — or one that resolves to nothing — is kept as a plain text name. The
 rejected alternative, storing the URL as typed, is smaller but leaves broken
@@ -181,7 +181,7 @@ editing.
 
 ### `src/components/form/MemberList.tsx` (new)
 
-A repeating list of rows, each *name* + *Rebalance Gender URL*. Build it like
+A repeating list of rows, each *name* + *All Frequencies URL*. Build it like
 `LocationList`, which is already a two-field repeating row with add/remove.
 The URL field's placeholder should make it plainly optional:
 `https://…/artist/… (optional)`.

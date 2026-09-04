@@ -9,7 +9,7 @@
 --   re-found by hand every time, and nothing could follow a duplicate to
 --   the row that supersedes it.
 --
---   duplicate_of holds that target: the id of the Rebalance Gender artist
+--   duplicate_of holds that target: the id of the All Frequencies artist
 --   this row duplicates. Nullable, because 'duplicate' can legitimately be
 --   set before the canonical entry has been identified (and because the
 --   harvest scripts that set the status don't populate a target).

@@ -30,7 +30,7 @@ export async function generateMetadata({ params }: PageProps) {
   const organisation = await getOrganisationById(id);
   if (!organisation) return { robots: { index: false, follow: false } };
   return {
-    title: `${organisation.name} | Rebalance Gender`,
+    title: organisation.name,
     robots: { index: false, follow: false },
   };
 }

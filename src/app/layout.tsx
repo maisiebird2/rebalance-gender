@@ -5,6 +5,7 @@ import { getViewer } from "@/lib/admin-auth";
 import { signOut } from "./auth-actions";
 import HeaderSearch from "@/components/HeaderSearch";
 import SmokeBackdrop from "@/components/SmokeBackdrop";
+import { siteUrl } from "@/lib/site-url";
 import "./globals.css";
 
 // Self-hosted at build time by next/font — no runtime network request.
@@ -27,26 +28,27 @@ const body = Inter({
   display: "swap",
 });
 
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://rebalance-gender.app";
+const SITE_URL = siteUrl();
 const DESCRIPTION =
   "A directory of women and gender-expansive producers and DJs in electronic music.";
 
 export const metadata: Metadata = {
   // Makes the file-based opengraph-image / twitter-image / icon URLs absolute.
   metadataBase: new URL(SITE_URL),
-  title: "Rebalance Gender",
+  // Every page supplies only its own part ("About", the artist's name); the
+  // suffix lives here and nowhere else.
+  title: { default: "All Frequencies", template: "%s | All Frequencies" },
   description: DESCRIPTION,
   openGraph: {
     type: "website",
-    siteName: "Rebalance Gender",
-    title: "Rebalance Gender",
+    siteName: "All Frequencies",
+    title: "All Frequencies",
     description: DESCRIPTION,
     url: "/",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Rebalance Gender",
+    title: "All Frequencies",
     description: DESCRIPTION,
   },
 };
@@ -93,21 +95,22 @@ export default async function RootLayout({
             <div className="flex items-center justify-between gap-4 py-4">
               <Link
                 href="/"
-                aria-label="Rebalance Gender — home"
+                aria-label="All Frequencies — home"
                 className="logo-link flex shrink-0 items-center gap-2.5"
               >
                 <svg
-                  className="fader-mark shrink-0"
-                  viewBox="0 0 30 34"
-                  width="27"
-                  height="31"
+                  className="spectrum-mark shrink-0"
+                  viewBox="0 0 32 32"
+                  width="28"
+                  height="28"
                   aria-hidden="true"
                 >
                   <defs>
                     <linearGradient
-                      id="fader-grad"
+                      id="spectrum-grad"
+                      gradientUnits="userSpaceOnUse"
                       x1="0"
-                      y1="1"
+                      y1="32"
                       x2="0"
                       y2="0"
                     >
@@ -115,46 +118,15 @@ export default async function RootLayout({
                       <stop offset="1" stopColor="#ff2d9b" />
                     </linearGradient>
                   </defs>
-                  <line
-                    x1="7"
-                    y1="2"
-                    x2="7"
-                    y2="32"
-                    stroke="#453d5e"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1="23"
-                    y1="2"
-                    x2="23"
-                    y2="32"
-                    stroke="#453d5e"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                  />
-                  <rect
-                    className="knob-hi"
-                    x="1.5"
-                    y="9"
-                    width="11"
-                    height="6"
-                    rx="3"
-                    fill="url(#fader-grad)"
-                  />
-                  <rect
-                    className="knob-lo"
-                    x="17.5"
-                    y="19"
-                    width="11"
-                    height="6"
-                    rx="3"
-                    fill="url(#fader-grad)"
-                  />
+                  <rect className="b1" x="0" y="19" width="4" height="13" rx="2" fill="url(#spectrum-grad)" />
+                  <rect className="b2" x="7" y="10" width="4" height="22" rx="2" fill="url(#spectrum-grad)" />
+                  <rect className="b3" x="14" y="0" width="4" height="32" rx="2" fill="url(#spectrum-grad)" />
+                  <rect className="b4" x="21" y="12" width="4" height="20" rx="2" fill="url(#spectrum-grad)" />
+                  <rect className="b5" x="28" y="17" width="4" height="15" rx="2" fill="url(#spectrum-grad)" />
                 </svg>
                 <span className="flex flex-col text-[19px] font-bold leading-[0.96] tracking-tight">
-                  <span>Rebalance</span>
-                  <span className="grad-text">Gender</span>
+                  <span>All</span>
+                  <span className="grad-text">Frequencies</span>
                 </span>
               </Link>
               <div className="hidden items-center gap-2 sm:flex">

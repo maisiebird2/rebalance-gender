@@ -52,7 +52,7 @@ every detail:
 | Destination validated | yes — must land on `soundcloud.com` | **no** |
 | On failure | returns original | returns `null` |
 | Reclassifies platform | no | yes |
-| User-Agent | default | `RebalanceGenderBot/1.0` |
+| User-Agent | default | `AllFrequenciesBot/1.0` |
 
 Two hosts covered between them. The census below found **fourteen** distinct
 redirect-style hosts in the data, most of them handled by neither.

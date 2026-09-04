@@ -83,6 +83,7 @@ import fs from "node:fs";
 import { createSupabase, loadEnvLocal, makeFetchAll } from "./lib/hoer-db.mjs";
 import { matchDiscogsArtists } from "./lib/discogs-artist-match.mjs";
 import { outputPath } from "./lib/output-path.mjs";
+import { API_UA } from "./lib/user-agent.mjs";
 
 // ------------------------------------------------------------
 // CLI args
@@ -131,7 +132,7 @@ if (!DISCOGS_TOKEN) {
 // Discogs API — same throttle and 429 handling as sync-discogs.mjs
 // ------------------------------------------------------------
 const THROTTLE_MS = 1100; // ~55 req/min, under the 60/min authenticated cap
-const USER_AGENT = "RebalanceGender/1.0 +https://rebalance-gender.com";
+const USER_AGENT = API_UA;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let lastCall = 0;
 

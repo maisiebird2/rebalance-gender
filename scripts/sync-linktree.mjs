@@ -114,6 +114,8 @@ import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger } from "./lib/progress-log.mjs";
 import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
+import { siteUrl } from "./lib/site-url.mjs";
+import { BOT_UA } from "./lib/user-agent.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -162,8 +164,8 @@ loadEnvLocal();
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 // Used only to build the artist-page URL in the failures CSV — same env
-// var and fallback the site itself uses (src/lib/email.ts).
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+// var and fallback the site itself uses (src/lib/site-url.ts).
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY in .env.local.");
@@ -199,7 +201,7 @@ async function throttle() {
   lastCall = Date.now();
 }
 
-const UA = "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile enrichment)";
+const UA = BOT_UA;
 
 async function linktreeFetch(url, { retried = false } = {}) {
   await throttle();
@@ -703,7 +705,7 @@ async function writeFailuresCsv() {
     from += PAGE_SIZE;
   }
 
-  const header = ["artist_name", "rebalance_gender_url", "status", "url", "occurred_at"];
+  const header = ["artist_name", "artist_page_url", "status", "url", "occurred_at"];
   const csv =
     [header.join(",")]
       .concat(

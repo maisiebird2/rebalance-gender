@@ -250,21 +250,22 @@ html:not(.dark) .smoke-layer {
   z-index: -1;
 }
 
-/* --- Signature fader motif (logo) --------------------------------------
-   The header lockup uses two channel faders (mixing-desk sliders), rendered
-   inline as SVG in layout.tsx: gradient knobs on gray tracks, sitting at
-   different levels. On hover the two knobs slide to the same level — a
-   literal "rebalance." Disabled under prefers-reduced-motion below. */
-.fader-mark .knob-hi,
-.fader-mark .knob-lo {
+/* --- Signature spectrum motif (logo) ------------------------------------
+   The header lockup is five bars of a spectrum display — a band of
+   frequencies at different levels — rendered inline as SVG in layout.tsx and
+   filled with the violet→magenta gradient across the full height. On hover
+   every bar rises to full height: all frequencies, all the way up. The hover
+   selectors use :where() so the prefers-reduced-motion block below can
+   override them. */
+.spectrum-mark rect {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
   transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.logo-link:hover .knob-hi {
-  transform: translateY(5px);
-}
-.logo-link:hover .knob-lo {
-  transform: translateY(-5px);
-}
+.logo-link:hover :where(.spectrum-mark .b1) { transform: scaleY(2.46); }
+.logo-link:hover :where(.spectrum-mark .b2) { transform: scaleY(1.45); }
+.logo-link:hover :where(.spectrum-mark .b4) { transform: scaleY(1.6); }
+.logo-link:hover :where(.spectrum-mark .b5) { transform: scaleY(2.13); }
 
 /* Small static equalizer icon (Discover pill) — inherits the button's
    text color via currentColor, no animation. */
@@ -290,10 +291,8 @@ html:not(.dark) .smoke-layer {
   .dark .glass-card:hover .avatar-ring::after {
     animation: none;
   }
-  .fader-mark .knob-hi,
-  .fader-mark .knob-lo,
-  .logo-link:hover .knob-hi,
-  .logo-link:hover .knob-lo {
+  .spectrum-mark rect,
+  .logo-link:hover .spectrum-mark rect {
     transition: none;
     transform: none;
   }

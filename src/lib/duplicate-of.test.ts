@@ -18,10 +18,10 @@ describe("parseArtistIdInput", () => {
 
   it("extracts the id from artist-page URLs", () => {
     const urls = [
-      `https://rebalancegender.com/artist/${ID}`,
-      `https://rebalancegender.com/artist/${ID}/`,
-      `https://rebalancegender.com/artist/${ID}/edit`,
-      `https://rebalancegender.com/artist/${ID}?from=admin`,
+      `https://allfrequencies.app/artist/${ID}`,
+      `https://allfrequencies.app/artist/${ID}/`,
+      `https://allfrequencies.app/artist/${ID}/edit`,
+      `https://allfrequencies.app/artist/${ID}?from=admin`,
       `http://localhost:3000/artist/${ID}/edit?from=admin`,
       `/artist/${ID}`,
     ];
@@ -34,7 +34,7 @@ describe("parseArtistIdInput", () => {
     expect(parseArtistIdInput("")).toBeNull();
     expect(parseArtistIdInput("   ")).toBeNull();
     expect(parseArtistIdInput("Aphex Twin")).toBeNull();
-    expect(parseArtistIdInput("https://rebalancegender.com/artist/")).toBeNull();
+    expect(parseArtistIdInput("https://allfrequencies.app/artist/")).toBeNull();
     // Truncated — a UUID missing its last block is not a UUID.
     expect(parseArtistIdInput("3fa85f64-5717-4562-b3fc")).toBeNull();
   });

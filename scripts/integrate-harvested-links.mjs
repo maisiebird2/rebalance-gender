@@ -144,6 +144,7 @@ import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from "../src/li
 import { cleanLinkUrl } from "../src/lib/platforms.js";
 import { reclassifyResolvedUrl } from "../src/lib/classify-platform-url.js";
 import { isResolvableHost, resolveRedirect } from "../src/lib/resolve-url-redirects.js";
+import { siteUrl } from "./lib/site-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -192,9 +193,9 @@ loadEnvLocal();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-// Base origin for artist page links written into the collision CSV.
-// Mirrors the fallback used across src/ (e.g. src/app/layout.tsx).
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+// Base origin for artist page links written into the collision CSV. Same
+// env var and fallback as the site (src/lib/site-url.ts).
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(

@@ -4,13 +4,11 @@
       <stop offset="0" stop-color="#6A4DFF"/>
       <stop offset="1" stop-color="#FF2D9B"/>
     </linearGradient>
-    <clipPath id="circle-clip">
-      <circle cx="48" cy="48" r="45"/>
-    </clipPath>
   </defs>
   <circle cx="48" cy="48" r="46" fill="url(#brand-grad)"/>
-  <path d="M 2 48 C 14 18 34 18 48 48 C 62 78 82 78 94 48"
-        stroke="white" stroke-width="8" fill="none"
-        clip-path="url(#circle-clip)"
-        stroke-linecap="round"/>
+  <rect x="18" y="53" width="8" height="22" rx="4" fill="white"/>
+  <rect x="31" y="37" width="8" height="38" rx="4" fill="white"/>
+  <rect x="44" y="21" width="8" height="54" rx="4" fill="white"/>
+  <rect x="57" y="41" width="8" height="34" rx="4" fill="white"/>
+  <rect x="70" y="49" width="8" height="26" rx="4" fill="white"/>
 </svg>

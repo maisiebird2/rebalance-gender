@@ -1,11 +1,14 @@
 import { ImageResponse } from "next/og";
 import type { CSSProperties } from "react";
 
-// Social share card (og:image). Mirrors the header lockup — the two-fader
-// mark plus the stacked "Rebalance / Gender" wordmark — on the After Dark
-// background, with the signature violet→magenta underglow along the bottom.
+// Social share card (og:image). Mirrors the header lockup — the five-bar
+// spectrum mark plus the stacked "All / Frequencies" wordmark — on the After
+// Dark background, with the signature violet→magenta underglow along the
+// bottom. "Frequencies" is long: at 128px it sits at roughly 740px beside a
+// 130px mark inside the 1008px of usable width, so check it after any change
+// to the size or tracking rather than letting it wrap.
 export const alt =
-  "Rebalance Gender — a directory of women and gender-expansive producers and DJs in electronic music";
+  "All Frequencies — a directory of women and gender-expansive producers and DJs in electronic music";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -36,19 +39,9 @@ export default async function OpengraphImage() {
     (f): f is FontDef => f !== null,
   );
 
-  const track: CSSProperties = {
-    position: "absolute",
-    top: 10,
-    width: 12,
-    height: 150,
-    borderRadius: 6,
-    background: "#453d5e",
-  };
-  const knob: CSSProperties = {
-    position: "absolute",
-    width: 56,
-    height: 30,
-    borderRadius: 15,
+  const bar: CSSProperties = {
+    width: 18,
+    borderRadius: 9,
     backgroundImage: "linear-gradient(0deg,#6a4dff,#ff2d9b)",
   };
 
@@ -67,11 +60,12 @@ export default async function OpengraphImage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 44 }}>
-          <div style={{ position: "relative", display: "flex", width: 130, height: 170 }}>
-            <div style={{ ...track, left: 29 }} />
-            <div style={{ ...track, left: 89 }} />
-            <div style={{ ...knob, left: 7, top: 45 }} />
-            <div style={{ ...knob, left: 67, top: 95 }} />
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, width: 130, height: 170 }}>
+            <div style={{ ...bar, height: 66 }} />
+            <div style={{ ...bar, height: 118 }} />
+            <div style={{ ...bar, height: 170 }} />
+            <div style={{ ...bar, height: 104 }} />
+            <div style={{ ...bar, height: 78 }} />
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span
@@ -83,7 +77,7 @@ export default async function OpengraphImage() {
                 color: "#f3f0fa",
               }}
             >
-              Rebalance
+              All
             </span>
             <span
               style={{
@@ -97,7 +91,7 @@ export default async function OpengraphImage() {
                 color: "transparent",
               }}
             >
-              Gender
+              Frequencies
             </span>
           </div>
         </div>

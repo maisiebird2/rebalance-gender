@@ -72,6 +72,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordFailure, clearFailure } from "./lib/harvest-failures.mjs";
+import { BOT_UA } from "./lib/user-agent.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -255,8 +256,7 @@ async function downloadImage(url, { retries = 3 } = {}) {
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile image storage)",
+          "User-Agent": BOT_UA,
         },
         redirect: "follow",
         dispatcher,

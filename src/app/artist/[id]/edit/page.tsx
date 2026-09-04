@@ -40,7 +40,7 @@ export async function generateMetadata({ params }: Pick<PageProps, "params">) {
     .maybeSingle();
   if (!data) return {};
   return {
-    title: `${data.name} | Rebalance Gender`,
+    title: data.name,
   };
 }
 

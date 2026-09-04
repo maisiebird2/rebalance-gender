@@ -1,4 +1,4 @@
-# Rebalance Gender
+# All Frequencies
 
 A Next.js + Supabase directory of women and gender-expansive people in
 electronic music--DJs, producers, and vocalists. 

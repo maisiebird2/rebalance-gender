@@ -98,8 +98,8 @@
 //
 // Failures CSV: every run (DRY_RUN or not) also writes a snapshot of
 // every current soundcloud-sync row in harvest_failures to a
-// timestamped CSV — artist name, the artist's Rebalance Gender page
-// URL, status, the failed url, and occurred_at — one level up from
+// timestamped CSV — artist name, the artist's page URL on the site,
+// status, the failed url, and occurred_at — one level up from
 // this repo (the "Rebalance Gender" folder), so re-running never
 // overwrites a previous run's report. See writeFailuresCsv().
 //
@@ -227,6 +227,7 @@ import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
 import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
+import { siteUrl } from "./lib/site-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -297,8 +298,8 @@ const SOUNDCLOUD_CLIENT_ID = process.env.SOUNDCLOUD_CLIENT_ID;
 const SOUNDCLOUD_CLIENT_SECRET = process.env.SOUNDCLOUD_CLIENT_SECRET;
 // Used only to build the artist-page URL in the failures CSV (see
 // writeFailuresCsv) — same env var and fallback the site itself uses
-// (src/lib/email.ts, src/app/layout.tsx).
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+// (src/lib/site-url.ts).
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(
@@ -1188,7 +1189,7 @@ function timestamp() {
 // appear). Written every run, DRY_RUN or not, since it reflects
 // whatever's actually in the table rather than what this run did.
 //
-// Columns: artist_name, rebalance_gender_url (the artist's live page
+// Columns: artist_name, artist_page_url (the artist's live page
 // on the site, so a reviewer can click straight through), status, url
 // (the SoundCloud link that failed), occurred_at.
 //
@@ -1215,7 +1216,7 @@ async function writeFailuresCsv() {
     from += PAGE_SIZE;
   }
 
-  const header = ["artist_name", "rebalance_gender_url", "status", "url", "occurred_at"];
+  const header = ["artist_name", "artist_page_url", "status", "url", "occurred_at"];
   const csv =
     [header.join(",")]
       .concat(

@@ -95,7 +95,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const BARE_URL = "https://hoer.live/artist";
 
 // "duplicate of" is either a bare artist UUID or a directory profile URL like
-// https://www.rebalance-gender.app/artist/<uuid> — accept both.
+// https://allfrequencies.app/artist/<uuid> — accept both. Only the trailing
+// UUID is read, so a link from any host the site has answered on works.
 function parseDupOf(raw) {
   const v = raw.trim().replace(/\/+$/, "");
   if (UUID_RE.test(v)) return v.toLowerCase();

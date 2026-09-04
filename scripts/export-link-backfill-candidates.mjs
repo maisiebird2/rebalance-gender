@@ -50,6 +50,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { siteUrl } from "./lib/site-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -90,7 +91,7 @@ loadEnvLocal();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.rebalance-gender.app").replace(/\/+$/, "");
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(

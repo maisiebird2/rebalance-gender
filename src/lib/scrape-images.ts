@@ -103,6 +103,7 @@ import {
   isPlaceholderImageUrl,
 } from "@/lib/images/placeholders";
 import { isSearchPageUrl } from "@/lib/profile-links";
+import { BOT_UA } from "./user-agent";
 
 // Platform priority: try these link types in this order. Every
 // candidate the artist has a link for gets tried (not just the
@@ -251,8 +252,7 @@ export async function fetchOgImage(url: string): Promise<OgImageResult> {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile picture enrichment)",
+        "User-Agent": BOT_UA,
         Accept: "text/html",
       },
       redirect: "follow",

@@ -43,6 +43,6 @@ grant select, insert, update, delete on table public.site_content to service_rol
 insert into public.site_content (key, value)
 values (
   'about',
-  E'<p>Rebalance Gender is a directory of women and gender-expansive producers and DJs in electronic music.</p>\n<p>Our goal is to make it easier to discover, book, and celebrate artists who have historically been under-represented on lineups and in studios.</p>\n<p>Edit this text anytime from the admin panel — you can use HTML.</p>'
+  E'<p>All Frequencies is a directory of women and gender-expansive producers and DJs in electronic music.</p>\n<p>Our goal is to make it easier to discover, book, and celebrate artists who have historically been under-represented on lineups and in studios.</p>\n<p>Edit this text anytime from the admin panel — you can use HTML.</p>'
 )
 on conflict (key) do nothing;

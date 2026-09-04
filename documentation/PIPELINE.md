@@ -365,7 +365,7 @@ the same "doesn't fix itself on retry" reason as a 404.)
 
 **Failures CSV:** every run (`DRY_RUN` or not) also writes a snapshot
 of every current `soundcloud-sync` row in `harvest_failures` to a CSV
-— `artist_name`, `rebalance_gender_url` (the artist's live page on the
+— `artist_name`, `artist_page_url` (the artist's live page on the
 site, `NEXT_PUBLIC_SITE_URL` + `/artist/{id}`, so a reviewer can click
 straight through), `status`, `url` (the SoundCloud link that failed),
 and `occurred_at`, sorted by status then most-recent-first. Written to

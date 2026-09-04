@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { canonicalizeResidentAdvisorUrl, resolveProfileLinkUrl } from '../src/lib/profile-links.js'
 import { cleanLinkUrl } from '../src/lib/platforms.js'
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from '../src/lib/classify-platform-url.js'
+import { API_UA } from './lib/user-agent.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -118,7 +119,7 @@ function cacheWrite(mbid, data) {
 // MusicBrainz API
 // ------------------------------------------------------------
 const MB_BASE      = 'https://musicbrainz.org/ws/2'
-const MB_USER_AGENT = 'WomenInElectronicMusicDirectory/1.0 (maisiemeson@gmail.com)'
+const MB_USER_AGENT = API_UA
 const MB_RATE_MS   = 1100   // strict 1 req/s; add 100ms headroom
 
 let lastMbRequest = 0

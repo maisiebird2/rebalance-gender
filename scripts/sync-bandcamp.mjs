@@ -169,6 +169,8 @@ import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
 import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
+import { siteUrl } from "./lib/site-url.mjs";
+import { BOT_UA } from "./lib/user-agent.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -218,7 +220,7 @@ loadEnvLocal();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.rebalance-gender.app";
+const SITE_URL = siteUrl();
 
 if (!SUPABASE_URL || !SECRET_KEY) {
   console.error(
@@ -546,8 +548,7 @@ async function fetchBandcampPage(artistUrl) {
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile enrichment)",
+          "User-Agent": BOT_UA,
           Accept: "text/html",
         },
         redirect: "follow",
@@ -961,7 +962,7 @@ async function writeFailuresCsv() {
     from += PAGE_SIZE;
   }
 
-  const header = ["artist_name", "rebalance_gender_url", "status", "url", "occurred_at"];
+  const header = ["artist_name", "artist_page_url", "status", "url", "occurred_at"];
   const csv =
     [header.join(",")]
       .concat(

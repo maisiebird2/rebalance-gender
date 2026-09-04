@@ -95,6 +95,7 @@ import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
 import { classifyPlatformUrl, CLASSIFY_CONFIGS } from "../src/lib/classify-platform-url.js";
 import { createStageLogger, preview } from "./lib/progress-log.mjs";
 import { onlyHarvestableLinks } from "./lib/harvestable-links.mjs";
+import { API_UA } from "./lib/user-agent.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -240,7 +241,7 @@ async function fetchDiscogsArtist(discogsId, { retried = false } = {}) {
   await throttle();
   const res = await fetch(`https://api.discogs.com/artists/${discogsId}`, {
     headers: {
-      "User-Agent": "RebalanceGender/1.0 +https://rebalance-gender.com",
+      "User-Agent": API_UA,
       Authorization: `Discogs token=${DISCOGS_TOKEN}`,
     },
   });
@@ -308,7 +309,7 @@ async function searchDiscogsArtistId(name) {
         `https://api.discogs.com/database/search?type=artist&per_page=100&q=${encodeURIComponent(q)}`,
         {
           headers: {
-            "User-Agent": "RebalanceGender/1.0 +https://rebalance-gender.com",
+            "User-Agent": API_UA,
             Authorization: `Discogs token=${DISCOGS_TOKEN}`,
           },
         }

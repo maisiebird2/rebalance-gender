@@ -52,6 +52,7 @@ import { fileURLToPath } from "node:url";
 import { extractLinktree } from "./lib/linktree.mjs";
 import { decodeEntities, isGenericDescription, parseDescription, decodeGateSc } from "./lib/soundcloud-bio.mjs";
 import { canonicalizeResidentAdvisorUrl } from "../src/lib/profile-links.js";
+import { BOT_UA } from "./lib/user-agent.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.env.DRY_RUN === "1";
@@ -248,8 +249,7 @@ async function fetchSoundCloudInfo(url) {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +bio enrichment)",
+        "User-Agent": BOT_UA,
         Accept: "text/html",
       },
       redirect: "follow",

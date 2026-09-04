@@ -1,9 +1,11 @@
 # Rebrand plan — Rebalance Gender → All Frequencies (v2)
 
-> **Status: current plan, 2026-09-03.** Supersedes
-> [REBRAND-ALL-FREQUENCIES-v1.md](REBRAND-ALL-FREQUENCIES-v1.md). Nothing
-> has been executed yet. v1 was checked against the codebase line by line;
-> this version corrects what it got wrong and adds what it missed.
+> **Status: in progress, 2026-09-04.** Supersedes
+> [REBRAND-ALL-FREQUENCIES-v1.md](REBRAND-ALL-FREQUENCIES-v1.md). The code
+> steps (§2.1 and §3) are done and sit on two branches — see
+> [Progress](#progress) — and everything that lives outside the repo (§4–§9)
+> is still to do. v1 was checked against the codebase line by line; this
+> version corrects what it got wrong and adds what it missed.
 
 Moving the site from **Rebalance Gender** at `rebalance-gender.app` to
 **All Frequencies** at `allfrequencies.app`: the name, the logo, the domain,
@@ -61,6 +63,66 @@ Done first, the site is dark for an afternoon rather than a weekend.
   Vercel and Supabase project names and the GitHub description field
   (§4, §6), the `www` → apex check and the width of "Frequencies" on the
   social card (§3.3, §8).
+
+## Progress
+
+### Done on 2026-09-04
+
+- **§3.0** needed nothing: the four worktrees had all been merged and
+  removed, and `main` was level with `origin/main`.
+- **§2.1** is on branch `holding-page-switch`, inert until `HOLDING_PAGE=1`
+  is set. Two departures from the sketch above. The holding page is a
+  self-contained document returned straight from `src/proxy.ts`
+  (`src/lib/holding-page.ts`) rather than a rewrite to a `/holding` route,
+  because a custom status on a middleware rewrite is not reliably honoured
+  through Vercel's routing layer and the 503 is the point; it also means the
+  page needs no layout, no data and no nonce, so it cannot fail. And an
+  optional `HOLDING_MESSAGE` env var replaces the one-line explanation, so
+  the same switch serves future maintenance windows. Checked locally: held
+  routes answer 503 with `Retry-After: 3600`, `Cache-Control: no-store` and
+  a locked-down CSP; every exempt route passes through with the normal CSP.
+- **§3.1–§3.9** are on branch `rebrand-code`. The §1 decisions were taken as
+  recommended: apex canonical (1.2), strapline unchanged (1.3), one mark
+  everywhere (1.4), the identifiers in 1.7. The mark is five bars of a
+  spectrum display in the violet→magenta gradient — header, favicon, Apple
+  icon and social card all use it — and on hover every bar rises to full
+  height. Two small departures: the shared site-URL module exports a
+  function, `siteUrl()`, not a constant, because the scripts load
+  `.env.local` after their imports and a constant would never see it; and
+  `documentation/OPERATIONS.md` was updated to the target values in the
+  branch rather than "as the steps are done", because §3.9 requires the grep
+  to be clean before merging. `npm run lint`, `npm test` and `npm run build`
+  pass, the §3.9 grep prints nothing, and the social card was rendered:
+  "Frequencies" fits at 128px with room to spare.
+
+### Still to do — everything outside the repo
+
+In the order of §12. Nothing below is code.
+
+1. §1.1 — check `allfrequencies.app` is available at Porkbun. If it is not,
+   the branch needs a one-line change in `src/lib/site-url.ts` and
+   `scripts/lib/site-url.mjs` (plus the docs) before it merges.
+2. §5 — register it; auto-renew, registrar lock, WHOIS privacy, 2FA.
+3. §7.2 step 1 — add the domain in Resend and its DNS records at Porkbun;
+   start this the same day, it is the slowest step.
+4. Merge `holding-page-switch` whenever convenient — it changes nothing
+   until the flag is set.
+5. §11.1 — take the snapshot.
+6. §2.2 — set `HOLDING_PAGE=1` (and, if wanted, `HOLDING_MESSAGE`) in
+   Vercel, redeploy.
+7. §6.1–6.3 — add both hostnames in Vercel, DNS at Porkbun, wait for the
+   certificate.
+8. §6.4 — set `NEXT_PUBLIC_SITE_URL=https://allfrequencies.app` in Vercel.
+9. §6.5 — merge `rebrand-code`. Update `.env.local` to match.
+10. §7 — Supabase Site URL and redirect URLs, email template subjects, the
+    Resend sender and Supabase SMTP sender, Turnstile hostnames.
+11. §3.4 — rewrite the About copy in `/admin/about`.
+12. §6.6 — remove `HOLDING_PAGE`, redeploy. Live.
+13. §9 — redirect the old domain. §4 — rename and privatise the repo, then
+    `git remote set-url origin` in the primary checkout.
+14. §8 — the verification pass; §7.4 — Search Console.
+
+---
 
 ---
 

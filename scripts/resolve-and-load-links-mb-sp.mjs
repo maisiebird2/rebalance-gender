@@ -41,6 +41,7 @@ import { fileURLToPath } from 'url'
 import { createClient } from '@supabase/supabase-js'
 import { isBlankArtistName } from './lib/name-utils.mjs'
 import { outputPath } from './lib/output-path.mjs'
+import { API_UA } from './lib/user-agent.mjs'
 // ── Environment ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 ;(function loadEnv() {
@@ -294,7 +295,7 @@ async function searchMusicBrainz(artistName, limit) {
   await throttleMb()
   const qs  = new URLSearchParams({ query: `artist:"${artistName}"`, limit: String(limit), fmt: 'json' })
   const res = await fetch(`https://musicbrainz.org/ws/2/artist?${qs}`, {
-    headers: { 'User-Agent': 'RebalanceGender/1.0 (contact via site)' },
+    headers: { 'User-Agent': API_UA },
   })
   if (!res.ok) throw new Error(`MusicBrainz HTTP ${res.status}`)
   const data = await res.json()

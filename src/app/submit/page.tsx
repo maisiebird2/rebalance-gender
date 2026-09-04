@@ -8,7 +8,7 @@ import { getPlatforms } from "@/lib/platforms";
 import { getGenrePickerOptions, getOrganisationPickerOptions } from "@/lib/queries"
 
 export const metadata = {
-  title: "Submit an artist — Rebalance Gender",
+  title: "Submit an artist",
 };
 
 export default async function SubmitPage() {

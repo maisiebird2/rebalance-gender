@@ -74,6 +74,8 @@
  *  - "reclassify": a generic shortener. The destination is unknowable by
  *    nature, so anything that isn't an error is accepted and the caller
  *    re-runs classifyPlatformUrl on it. */
+import { BOT_UA } from "./user-agent";
+
 export type HostTier = "validate" | "reclassify";
 
 interface HostRule {
@@ -223,7 +225,7 @@ export interface ResolveOptions {
 
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_HOPS = 5;
-const DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +link resolving)";
+const DEFAULT_USER_AGENT = BOT_UA;
 
 /** Bare hostname (lowercased, www-stripped), or null if `input` isn't a URL. */
 function bareHost(input: string): string | null {

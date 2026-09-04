@@ -12,9 +12,11 @@
 // hoer-resolve.mjs use).
 // ============================================================
 
+import { BOT_UA } from "./user-agent.mjs";
+
 export const HOER_ORIGIN = "https://hoer.live";
 
-const UA = "Mozilla/5.0 (compatible; RebalanceGenderBot/1.0; +profile enrichment)";
+const UA = BOT_UA;
 const THROTTLE_MS = 300;
 const TIMEOUT_MS = 20000;
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-// Duplicate candidate detection for the Rebalance Gender directory.
+// Duplicate candidate detection for the All Frequencies directory.
 //
 // Signals used (in roughly descending strength):
 //

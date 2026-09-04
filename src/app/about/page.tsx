@@ -2,16 +2,16 @@ import type { Metadata } from "next";
 import { getSiteContent } from "@/lib/queries";
 
 export const metadata: Metadata = {
-  title: "About · Rebalance Gender",
+  title: "About",
   description:
-    "About Rebalance Gender — a directory of women and gender-expansive producers and DJs in electronic music.",
+    "About All Frequencies — a directory of women and gender-expansive producers and DJs in electronic music.",
 };
 
 // Re-read on each request so edits from the admin panel show up promptly.
 export const dynamic = "force-dynamic";
 
 const FALLBACK =
-  "<p>Rebalance Gender is a directory of women and gender-expansive producers and DJs in electronic music.</p>";
+  "<p>All Frequencies is a directory of women and gender-expansive producers and DJs in electronic music.</p>";
 
 export default async function AboutPage() {
   // Content is admin-authored (only authenticated admins can write it), so

@@ -1,4 +1,4 @@
-# Project context — Women in Electronic Music directory
+# Project context — All Frequencies
 
 Read this file at the start of any chat session to orient yourself. For
 deeper detail, read the docs it points to.
@@ -8,7 +8,7 @@ deeper detail, read the docs it points to.
 ## What this is
 
 A Next.js + Supabase directory of women, femmes, and non-binary
-producers/DJs in electronic music, live at rebalance-gender.com. Visitors
+producers/DJs in electronic music, live at allfrequencies.app. Visitors
 can browse by genre and country, view individual artist pages, and submit
 new artists via a moderation queue. An AI-powered recommendation engine
 surfaces similar artists on each artist page.
@@ -21,7 +21,9 @@ surfaces similar artists on each artist page.
 - **Database:** Supabase (PostgREST API — never raw SQL connections from
   the app)
 - **Deployment:** Vercel
-- **Domain registrar:** Porkbun
+- **Domain:** `allfrequencies.app` (apex is canonical; `www` redirects to it),
+  registered at Porkbun. The move from the previous name is recorded in
+  [REBRAND-ALL-FREQUENCIES-v2.md](REBRAND-ALL-FREQUENCIES-v2.md).
 
 ---
 

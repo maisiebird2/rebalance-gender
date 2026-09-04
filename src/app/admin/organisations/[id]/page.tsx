@@ -33,7 +33,7 @@ export async function generateMetadata({
     .maybeSingle();
   if (!data) return {};
   return {
-    title: `${data.name} | Rebalance Gender`,
+    title: data.name,
   };
 }
 

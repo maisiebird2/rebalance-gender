@@ -2,13 +2,12 @@ import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/admin-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { buildOds, type Cell } from "@/lib/ods";
+import { siteUrl } from "@/lib/site-url";
 
 export const dynamic = "force-dynamic";
 
-// Absolute origin used to build links to each artist's edit page. Matches the
-// convention in src/lib/email.ts / layout.tsx.
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://rebalance-gender.app";
+// Absolute origin used to build links to each artist's edit page.
+const SITE_URL = siteUrl();
 
 // PostgREST caps a single select at ~1000 rows, so page through with .range()
 // to guarantee we export every failure regardless of table size.
