@@ -434,7 +434,9 @@ async function main() {
               {
                 artist_id: artist.id,
                 platform: "soundcloud",
-                bio: bio ? `SoundCloud bio: ${bio}` : bio,
+                // Unprefixed, matching sync-soundcloud.mjs (Phase 2a) — see
+                // supabase_migration_strip_soundcloud_bio_prefix.sql.
+                bio,
                 last_synced_at: new Date().toISOString(),
               },
               { onConflict: "artist_id,platform" }
