@@ -26,7 +26,7 @@
 > clubs directory — not at `djanes.net`, which was a guess. The pattern is
 > anchored to that subdomain so it cannot claim `world-clubs.com` at large.
 >
-> > One thing §2 gets wrong about the schema: `artist_links` carried **two**
+> One thing §2 gets wrong about the schema: `artist_links` carried **two**
 > unique constraints, not one. `artist_links_artist_platform_unique` was
 > replaced as planned; `artist_links_artist_id_platform_url_key`
 > (`artist_id, platform, url`) was deliberately kept — it is what stops the
