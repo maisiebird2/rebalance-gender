@@ -6,11 +6,19 @@
 //   2. Emit the Content-Security-Policy, which lives here rather than in
 //      next.config.mjs because it carries a per-request nonce.
 //
+// Plus one switch: with HOLDING_PAGE=1 set, it serves the maintenance holding
+// page (src/lib/holding-page.ts) for every route that is not exempt.
+//
 // The other security headers are static and set in next.config.mjs.
 // See documentation/SECURITY-HEADERS.md for the reasoning behind each
 // directive and how to extend the policy when a new embed is added.
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  HOLDING_RETRY_AFTER_SECONDS,
+  holdingPageHtml,
+  isHoldingExempt,
+} from "@/lib/holding-page";
 
 /**
  * Build the CSP for one request.
@@ -105,6 +113,31 @@ function requestHeadersWith(
 }
 
 export async function proxy(request: NextRequest) {
+  // Maintenance switch. The holding page is a self-contained document
+  // returned straight from here — no layout, no data, no nonce — so it
+  // cannot fail, and it goes out as a 503 with Retry-After so search engines
+  // treat the outage as temporary rather than indexing it. Confirmation
+  // links, login, admin and the edit/revise routes are exempt so moderation
+  // carries on. Flip it from Vercel's environment variables plus a redeploy;
+  // see documentation/REBRAND-ALL-FREQUENCIES-v2.md §2.
+  if (
+    process.env.HOLDING_PAGE === "1" &&
+    !isHoldingExempt(request.nextUrl.pathname)
+  ) {
+    return new NextResponse(holdingPageHtml(), {
+      status: 503,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "retry-after": String(HOLDING_RETRY_AFTER_SECONDS),
+        "cache-control": "no-store",
+        // Inline styles and the favicon are all the document uses.
+        "content-security-policy":
+          "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "x-frame-options": "DENY",
+      },
+    });
+  }
+
   const nonce = btoa(crypto.randomUUID());
   const csp = buildCsp(nonce);
 
